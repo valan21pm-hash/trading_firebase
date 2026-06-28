@@ -25,12 +25,13 @@ function getAi() {
 }
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 app.use(express.json());
 
 const isAlpacaConfigured = !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
-const ALPACA_BASE_URL = process.env.ALPACA_PAPER_TRADING === 'false' 
+const isAlpacaLive = process.env.ALPACA_API_KEY?.startsWith('AK') || process.env.ALPACA_PAPER_TRADING === 'false';
+const ALPACA_BASE_URL = isAlpacaLive 
   ? 'https://api.alpaca.markets/v2'
   : 'https://paper-api.alpaca.markets/v2';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets/v2';
@@ -41,6 +42,7 @@ let botStatus: {
   balance: number;
   lastCheck: string | null;
   mode: 'Alpaca' | 'Simulation';
+  accountNumber?: string;
   simulationRunning?: boolean;
   simulationProgress?: number;
   simulatedPositions?: any[];
@@ -170,21 +172,48 @@ async function executeTradingCycle() {
       }
       
       const account = await response.json();
-      botStatus.balance = parseFloat(account.portfolio_value);
-      addLog(`[Alpaca] Account verificato. Equity: $${botStatus.balance.toFixed(2)} | Buying Power: $${account.buying_power}`);
+      botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
+      botStatus.accountNumber = account.account_number;
+      addLog(`[Alpaca] Account Live verificato. Equity: $${botStatus.balance.toFixed(2)} | Buying Power: $${account.buying_power}`);
       
       // Check sentiment before buying
       const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
       if (sentimentScore > 0.2) {
-          addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo con il trading.`);
+          addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca.`);
           botStatus.dailyLogicLogs?.push({
               timestamp: new Date().toISOString(),
               symbol: 'SPY',
               action: 'BUY',
               reasoning: sentimentReasoning
           });
+          
+          // Esecuzione REALE dell'ordine su Alpaca
+          const orderResponse = await fetch(`${ALPACA_BASE_URL}/orders`, {
+            method: 'POST',
+            headers: {
+              'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+              'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              symbol: 'SPY',
+              qty: 1,
+              side: 'buy',
+              type: 'market',
+              time_in_force: 'day'
+            })
+          });
+          
+          if (orderResponse.ok) {
+            const orderData = await orderResponse.json();
+            addLog(`[Alpaca] Ordine BUY eseguito per SPY! ID: ${orderData.id}`);
+          } else {
+            const errorData = await orderResponse.json();
+            addLog(`[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
+          }
+          
       } else {
-          addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Prudenza.`);
+          addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Attendo.`);
           botStatus.dailyLogicLogs?.push({
               timestamp: new Date().toISOString(),
               symbol: 'SPY',
@@ -195,15 +224,13 @@ async function executeTradingCycle() {
     } catch (error: any) {
       addLog(`[Alpaca Errore] ${error.message}`);
     }
-    // Simulate generic API call to a broker or exchange
-    // We mock a trade execution here based on random chance
+  } else {
+    // Simulazione se non ci sono le API KEY configurate
     const randomChance = Math.random();
     
     if (randomChance > 0.7) {
-      // Execute a simulated trade
-      const profit = (Math.random() * 4 - 1.5); // Random profit/loss between -1.5 and 2.5
+      const profit = (Math.random() * 4 - 1.5);
       botStatus.balance += profit;
-      
       const formattedProfit = profit >= 0 ? `+€${profit.toFixed(2)}` : `-€${Math.abs(profit).toFixed(2)}`;
       addLog(`[Simulazione] Trade Eseguito: ${formattedProfit} | Nuovo Saldo: €${botStatus.balance.toFixed(2)}`);
     } else {
@@ -352,8 +379,20 @@ app.get('/api/status', async (req, res) => {
       if (posResponse.ok) {
         positions = await posResponse.json();
       }
+      
+      const accResponse = await fetch(`${ALPACA_BASE_URL}/account`, {
+        headers: {
+          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
+        }
+      });
+      if (accResponse.ok) {
+        const account = await accResponse.json();
+        botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
+        botStatus.accountNumber = account.account_number;
+      }
     } catch (e) {
-      console.error('Error fetching positions', e);
+      console.error('Error fetching Alpaca data', e);
     }
   }
 
