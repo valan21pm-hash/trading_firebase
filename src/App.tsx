@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare } from 'lucide-react';
 import type { BotStateResponse, BotStatus } from './types';
 
 const EQUITIES_SYMBOLS = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
@@ -10,13 +10,6 @@ export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [marketAnalysis, setMarketAnalysis] = useState<{ analysis: string; improvementPrompt: string } | null>(null);
-  
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareStartDate, setCompareStartDate] = useState('');
-  const [compareEndDate, setCompareEndDate] = useState('');
-  const [compareAnalysis, setCompareAnalysis] = useState<string | null>(null);
 
   const fetchStatus = async () => {
     try {
@@ -67,43 +60,6 @@ export default function App() {
     }
   };
 
-  const studyMarkets = async () => {
-    setAnalysisLoading(true);
-    setMarketAnalysis(null);
-    try {
-      const res = await fetch('/api/study-markets', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setMarketAnalysis(data);
-      }
-    } catch (error) {
-      console.error('Error studying markets:', error);
-    } finally {
-      setAnalysisLoading(false);
-    }
-  };
-
-  const compareResults = async () => {
-    if (!compareStartDate || !compareEndDate) return;
-    setCompareLoading(true);
-    setCompareAnalysis(null);
-    try {
-      const res = await fetch('/api/compare-results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate: compareStartDate, endDate: compareEndDate }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCompareAnalysis(data.analysis);
-      }
-    } catch (error) {
-      console.error('Error comparing results:', error);
-    } finally {
-      setCompareLoading(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -127,39 +83,13 @@ export default function App() {
               <span className="text-sm text-gray-500">
                 Google Cloud Run Backend
               </span>
-              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.mode === 'Alpaca' ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-blue-50 text-blue-700 ring-blue-700/10'}`}>
-                Broker: {status?.mode === 'Alpaca' ? 'Alpaca (Paper Trading)' : 'API Simulazione'}
+              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.mode === 'XTB' ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-blue-50 text-blue-700 ring-blue-700/10'}`}>
+                Broker: {status?.mode === 'XTB' ? 'XTB (Demo)' : 'API Simulazione'}
               </span>
             </div>
           </div>
           
           <div className="flex items-center gap-3">
-            <button
-              onClick={studyMarkets}
-              disabled={analysisLoading}
-              className={`p-2 px-4 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${analysisLoading ? 'bg-purple-100 text-purple-400 cursor-not-allowed' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'}`}
-              title="Avvia 100 Test e Analizza Mercato"
-            >
-              {analysisLoading ? 'Analisi in corso...' : '100 Test & Studia Mercati'}
-            </button>
-            <button
-              onClick={async () => {
-                await fetch('/api/simulate-day', { method: 'POST' });
-                fetchStatus();
-              }}
-              disabled={status?.simulationRunning}
-              className={`p-2 px-4 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${status?.simulationRunning ? 'bg-blue-100 text-blue-400 cursor-not-allowed' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-              title="Avvia test su 1 settimana"
-            >
-              {status?.simulationRunning ? 'Simulazione in corso...' : 'Backtest Veloce (1 Settimana)'}
-            </button>
-            <button
-              onClick={resetBot}
-              className="p-2 text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Ripristina Simulazione"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
             <button
               onClick={toggleBot}
               className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
@@ -456,77 +386,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Market Analysis Results */}
-        {marketAnalysis && (
-          <div className="bg-purple-50 rounded-2xl p-6 border border-purple-100 shadow-sm space-y-4">
-            <h2 className="font-semibold text-purple-900 text-lg flex items-center gap-2">
-              <Activity className="w-5 h-5" />
-              Risultati 100 Test & Analisi
-            </h2>
-            <div className="space-y-4 text-sm text-purple-800">
-              <div>
-                <h3 className="font-medium text-purple-900 mb-1">Analisi Dettagliata</h3>
-                <div className="bg-white p-4 rounded-lg border border-purple-100 whitespace-pre-wrap font-sans">
-                  {marketAnalysis.analysis}
-                </div>
-              </div>
-              <div>
-                <h3 className="font-medium text-purple-900 mb-1">Prompt Auto-Generato (Per l'AI)</h3>
-                <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-xs whitespace-pre-wrap overflow-x-auto">
-                  {marketAnalysis.improvementPrompt}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Compare Results Section */}
-        <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100 shadow-sm space-y-4 mt-6">
-          <h2 className="font-semibold text-blue-900 text-lg flex items-center gap-2">
-            <Activity className="w-5 h-5" />
-            Confronta Risultati (Reale vs Simulata)
-          </h2>
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            <div className="flex flex-col w-full sm:w-auto">
-              <label className="text-xs text-blue-700 font-medium mb-1">Dal (Inizio)</label>
-              <input
-                type="date"
-                value={compareStartDate}
-                onChange={(e) => setCompareStartDate(e.target.value)}
-                className="px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div className="flex flex-col w-full sm:w-auto">
-              <label className="text-xs text-blue-700 font-medium mb-1">Al (Fine)</label>
-              <input
-                type="date"
-                value={compareEndDate}
-                onChange={(e) => setCompareEndDate(e.target.value)}
-                className="px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div className="flex flex-col w-full sm:w-auto mt-auto">
-              <button
-                onClick={compareResults}
-                disabled={compareLoading || !compareStartDate || !compareEndDate}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${compareLoading || !compareStartDate || !compareEndDate ? 'bg-blue-200 text-blue-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-              >
-                {compareLoading ? 'Confronto in corso...' : 'Confronta'}
-              </button>
-            </div>
-          </div>
-          
-          {compareAnalysis && (
-            <div className="space-y-4 text-sm text-blue-800 mt-4">
-              <div>
-                <h3 className="font-medium text-blue-900 mb-1">Risultato del Confronto</h3>
-                <div className="bg-white p-4 rounded-lg border border-blue-100 whitespace-pre-wrap font-sans">
-                  {compareAnalysis}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
 
         {/* Logs */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
@@ -560,6 +420,89 @@ export default function App() {
               })
             )}
           </div>
+        </div>
+
+        {/* Daily Report */}
+        {status?.latestDailyReport && (
+          <div className="bg-purple-50 p-6 rounded-2xl shadow-sm border border-purple-100 mt-6">
+            <h2 className="text-lg font-medium text-purple-900 mb-3 flex items-center gap-2">
+              <Activity className="w-5 h-5" />
+              Report Motivazionale di Fine Giornata
+            </h2>
+            <div className="bg-white p-4 rounded-lg border border-purple-200 whitespace-pre-wrap font-sans text-sm text-purple-800 shadow-inner">
+              {status.latestDailyReport}
+            </div>
+            <p className="text-xs text-purple-500 mt-3">
+              Copia questo report e incollalo nella chat per correggere eventuali errori di valutazione del bot.
+            </p>
+          </div>
+        )}
+        
+        {/* Diario di Bordo (Logic Logs) */}
+        {status?.dailyLogicLogs && status.dailyLogicLogs.length > 0 && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mt-6">
+            <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-gray-500" />
+              Diario di Bordo (Ragionamento Bot)
+            </h2>
+            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
+              {[...status.dailyLogicLogs].reverse().map((log, idx) => (
+                <div key={idx} className="border-l-2 border-blue-500 pl-4 py-2">
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>{new Date(log.timestamp).toLocaleString()}</span>
+                    <span className="font-mono bg-gray-100 px-1 rounded">{log.symbol}</span>
+                  </div>
+                  <div className="text-sm font-medium mb-1">
+                    Azione scelta: <span className={log.action === 'BUY' ? 'text-green-600' : log.action === 'SELL' ? 'text-red-600' : 'text-gray-600'}>{log.action}</span>
+                  </div>
+                  <div className="text-sm text-gray-700 italic">
+                    "{log.reasoning}"
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Feedback Form */}
+        <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6 mb-6">
+           <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
+             <MessageSquare className="w-5 h-5 text-gray-500" />
+             Loop di Correzione (Invia Regole)
+           </h2>
+           <form onSubmit={async (e) => {
+             e.preventDefault();
+             const formData = new FormData(e.currentTarget);
+             const rule = formData.get('rule') as string;
+             if (!rule) return;
+             await fetch('/api/feedback', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({ rule })
+             });
+             e.currentTarget.reset();
+             fetchStatus();
+           }} className="flex flex-col gap-3">
+             <textarea 
+               name="rule" 
+               rows={3} 
+               placeholder="Es. 'Sei stato troppo aggressivo sull'oro in fase di incertezza, sii più cauto.'"
+               className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm p-3 border"
+             ></textarea>
+             <button type="submit" className="self-end bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+               Invia Regola al Bot
+             </button>
+           </form>
+           {status?.userFeedbackRules && status.userFeedbackRules.length > 0 && (
+             <div className="mt-4">
+               <h3 className="text-sm font-medium text-gray-700 mb-2">Regole Attive:</h3>
+               <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
+                 {status.userFeedbackRules.map((r, i) => (
+                   <li key={i}>{r}</li>
+                 ))}
+               </ul>
+             </div>
+           )}
         </div>
         
       </div>

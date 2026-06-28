@@ -34,6 +34,9 @@ export interface BotStatus {
   }[];
   simulatedAssets?: any;
   cash?: number;
+  latestDailyReport?: string;
+  dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
+  userFeedbackRules?: string[];
 }
 
 export interface BotStateResponse {
