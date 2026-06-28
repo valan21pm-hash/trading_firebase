@@ -1,10 +1,20 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
-import './index.css';
+# GEMINI_API_KEY: Required for Gemini AI API calls.
+# AI Studio automatically injects this at runtime from user secrets.
+# Users configure this via the Secrets panel in the AI Studio UI.
+GEMINI_API_KEY="MY_GEMINI_API_KEY"
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+# API Keys per Broker (Alpaca)
+ALPACA_API_KEY="la_tua_api_key_alpaca"
+ALPACA_SECRET_KEY="la_tua_secret_key_alpaca"
+ALPACA_PAPER_TRADING="true" # "false" se usi chiavi Live (Real)
+
+# XTB
+XTB_USER_ID="il_tuo_user_id"
+XTB_PASSWORD="la_tua_password"
+XTB_MODE="demo" # Imposta a "real" per soldi veri
+
+# Impostazioni Email (Per Report Giornaliero)
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="465"
+SMTP_USER="tuo_indirizzo@gmail.com"
+SMTP_PASS="tua_password_app"
