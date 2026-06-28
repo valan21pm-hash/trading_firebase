@@ -36,17 +36,27 @@ const ALPACA_BASE_URL = isAlpacaLive
   : 'https://paper-api.alpaca.markets/v2';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets/v2';
 
+const basePrices: Record<string, number> = {
+  // Equities
+  'SPY': 545.0, 'VOO': 500.0, 'IVV': 500.0, 'VTI': 265.0, 'QQQ': 480.0,
+  // Commodities
+  'GLD': 215.0, 'SLV': 27.0, 'USO': 75.0, 'UNG': 15.0, 'DBA': 24.0, 'DBC': 22.0, 'PDBC': 14.0, 'UGA': 68.0, 'WEAT': 6.0, 'CORN': 16.0,
+  // Bonds
+  'BND': 72.0, 'AGG': 97.0, 'TLT': 94.0, 'IEF': 95.0, 'SHY': 81.0, 'LQD': 108.0, 'HYG': 77.0, 'TIP': 106.0, 'GOVT': 23.0, 'VCIT': 79.0
+};
+
+const initialAssets: any = {};
+Object.keys(basePrices).forEach(sym => {
+  initialAssets[sym] = { cash: 0, shares: 0, avgPrice: 0, lastPrice: basePrices[sym], highestPrice: 0 };
+});
+
 // In-memory state simulating a database (e.g., Firestore)
 let botStatus: {
   active: boolean;
   balance: number;
   lastCheck: string | null;
-  mode: 'Alpaca' | 'Simulation';
+  mode: string;
   accountNumber?: string;
-  simulationRunning?: boolean;
-  simulationProgress?: number;
-  simulatedPositions?: any[];
-  simulatedAssets?: any;
   dailyPnL?: { date: string; pnl: number; balance: number; breakdown?: any[]; news?: string }[];
   cash?: number;
   latestDailyReport?: string;
@@ -56,11 +66,7 @@ let botStatus: {
   active: false,
   balance: 100.0,
   lastCheck: null as string | null,
-  mode: (isAlpacaConfigured ? 'Alpaca' : 'Simulation') as 'Alpaca' | 'Simulation',
-  simulationRunning: false,
-  simulationProgress: 0,
-  simulatedPositions: [],
-  simulatedAssets: {},
+  mode: (isAlpacaConfigured ? 'Alpaca' : 'Alpaca (Configurazione mancante)'),
   dailyPnL: [],
   cash: 100.0,
   latestDailyReport: undefined,
@@ -225,16 +231,9 @@ async function executeTradingCycle() {
       addLog(`[Alpaca Errore] ${error.message}`);
     }
   } else {
-    // Simulazione se non ci sono le API KEY configurate
-    const randomChance = Math.random();
-    
-    if (randomChance > 0.7) {
-      const profit = (Math.random() * 4 - 1.5);
-      botStatus.balance += profit;
-      const formattedProfit = profit >= 0 ? `+€${profit.toFixed(2)}` : `-€${Math.abs(profit).toFixed(2)}`;
-      addLog(`[Simulazione] Trade Eseguito: ${formattedProfit} | Nuovo Saldo: €${botStatus.balance.toFixed(2)}`);
-    } else {
-      addLog(`[Simulazione] Controllo mercato. Saldo: €${botStatus.balance.toFixed(2)}`);
+    // Nessuna azione se Alpaca non è configurato, per evitare "fake trades" non richiesti
+    if (botStatus.active) {
+      addLog(`[Alpaca] In attesa di configurazione API Key per operare sul mercato.`);
     }
   }
 }
@@ -366,9 +365,7 @@ app.post('/api/analyze-market', async (req, res) => {
 app.get('/api/status', async (req, res) => {
   let positions = [];
   
-  if (botStatus.mode === 'Simulation' && botStatus.simulatedPositions) {
-    positions = botStatus.simulatedPositions;
-  } else if (isAlpacaConfigured) {
+  if (isAlpacaConfigured) {
     try {
       const posResponse = await fetch(`${ALPACA_BASE_URL}/positions`, {
         headers: {
@@ -420,11 +417,7 @@ app.post('/api/reset', (req, res) => {
     active: false,
     balance: 100.0,
     lastCheck: null,
-    mode: (isAlpacaConfigured ? 'Alpaca' : 'Simulation') as 'Alpaca' | 'Simulation',
-    simulationRunning: false,
-    simulationProgress: 0,
-    simulatedPositions: [],
-    simulatedAssets: {},
+    mode: (isAlpacaConfigured ? 'Alpaca' : 'Alpaca (Configurazione mancante)'),
     dailyPnL: [],
     cash: 100.0,
     latestDailyReport: undefined
@@ -432,471 +425,6 @@ app.post('/api/reset', (req, res) => {
   tradeLogs = [];
   addLog('Sistema ripristinato a €100.00');
   res.json({ status: botStatus, logs: tradeLogs });
-});
-
-app.post('/api/simulate-day', async (req, res) => {
-  if (botStatus.simulationRunning) {
-    return res.status(400).json({ error: 'Simulation already running' });
-  }
-  
-  botStatus.simulationRunning = true;
-  botStatus.mode = 'Simulation';
-  botStatus.balance = 100.0;
-  botStatus.simulatedPositions = [];
-  botStatus.simulationProgress = 0;
-  
-  tradeLogs = [];
-  addLog('Inizio backtest simulato sull\'ultimo mese...');
-  
-  res.json({ success: true, message: 'Simulation started' });
-  
-  // Avvia il processo in background
-  try {
-    const start = '2026-05-26T13:30:00Z'; // 1 Mese
-    const end = '2026-06-26T20:00:00Z';
-    
-    addLog('Scaricamento dati storici da server fittizio (15Min bars, 1 mese)...');
-    const equities = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
-    const commodities = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
-    const symbols = [...equities, ...commodities];
-    let data: any = { bars: {} };
-    try {
-      const response = await fetch(`https://data.alpaca.markets/v2/stocks/bars?symbols=${symbols.join(',')}&timeframe=15Min&start=${start}&end=${end}&feed=iex&limit=10000`, {
-        headers: {
-          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
-        }
-      });
-      if (response.ok) {
-        data = await response.json();
-        addLog(`DEBUG BARS KEYS: ${Object.keys(data.bars || {}).join(', ')}`);
-      }
-    } catch (e) {
-      addLog(`Impossibile scaricare i dati storici, uso generatore casuale.`);
-    }
-    
-    // Default base prices for all 15 instruments
-    const basePrices: Record<string, number> = {
-      // Equities
-      'SPY': 545.0, 'VOO': 500.0, 'IVV': 500.0, 'VTI': 265.0, 'QQQ': 480.0,
-      // Commodities
-      'GLD': 215.0, 'SLV': 27.0, 'USO': 75.0, 'UNG': 15.0, 'DBA': 24.0, 'DBC': 22.0, 'PDBC': 14.0, 'UGA': 68.0, 'WEAT': 6.0, 'CORN': 16.0
-    };
-
-    const bars: any = {};
-    symbols.forEach(s => {
-      if (data.bars?.[s] && data.bars[s].length > 0) {
-        bars[s] = data.bars[s];
-      }
-    });
-
-    // Calendario Eventi Macroeconomici (Anticipabili)
-    const macroEventsSim = [
-      { date: '2026-05-28', type: 'positive', description: 'Rumors taglio tassi BCE', impact: 0.03 },
-      { date: '2026-06-03', type: 'negative', description: 'Timori inflazione USA persistente', impact: -0.04 },
-      { date: '2026-06-06', type: 'negative', description: 'Dati Occupazione deludenti', impact: -0.03 },
-      { date: '2026-06-12', type: 'positive', description: 'Dichiarazioni FED su soft landing', impact: 0.04 },
-      { date: '2026-06-15', type: 'negative', description: 'BCE rialzo tassi inatteso', impact: -0.05 },
-      { date: '2026-06-20', type: 'positive', description: 'Trump annuncia tagli fiscali (Colpaccio)', impact: 0.06 },
-      { date: '2026-06-24', type: 'negative', description: 'Tensioni geopolitiche globali', impact: -0.04 }
-    ];
-
-    // Find representative reference list of timestamps from a highly liquid symbol
-    let refTimestamps: string[] = [];
-    for (const refSym of ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ']) {
-      if (bars[refSym] && bars[refSym].length > 0) {
-        refTimestamps = bars[refSym].map((b: any) => b.t);
-        break;
-      }
-    }
-    
-    if (refTimestamps.length === 0 && data.bars) {
-      refTimestamps = [...new Set(Object.values(data.bars).flatMap((arr: any) => arr.map((b: any) => b.t)))].sort();
-    }
-    
-    if (refTimestamps.length === 0) {
-      addLog('Generazione refTimestamps fittizi...');
-      const startMs = new Date(start).getTime();
-      const endMs = new Date(end).getTime();
-      let currentMs = startMs;
-      while (currentMs <= endMs) {
-        const d = new Date(currentMs);
-        const day = d.getUTCDay();
-        const hours = d.getUTCHours();
-        // Solo lun-ven, dalle 13 alle 20
-        if (day >= 1 && day <= 5 && hours >= 13 && hours <= 20) {
-          refTimestamps.push(d.toISOString());
-        }
-        currentMs += 15 * 60 * 1000; // 15 Minuti
-      }
-    }
-    
-    if (refTimestamps.length === 0) {
-      throw new Error('Nessun dato temporale disponibile (nemmeno generato).');
-    }
-
-    // Generate realistic synced bars for any missing symbol
-    symbols.forEach(s => {
-      if (!bars[s] || bars[s].length === 0) {
-        let refSym = 'IVV';
-        // Find if we have reference bars, otherwise fallback to index 0 of available keys
-        let refBars = bars[refSym] || [];
-        if (refBars.length === 0) {
-          const availableKeys = Object.keys(bars);
-          if (availableKeys.length > 0) {
-            refBars = bars[availableKeys[0]];
-          }
-        }
-
-        const initialPrice = basePrices[s] || 100.0;
-        let currentPrice = initialPrice;
-        
-        bars[s] = refTimestamps.map((t, idx) => {
-          let pctChange = 0;
-          if (refBars.length > 0 && idx > 0) {
-            const prevRef = refBars.find((rb: any) => rb.t === refTimestamps[idx - 1])?.c || refBars[idx - 1]?.c;
-            const currRef = refBars.find((rb: any) => rb.t === t)?.c || refBars[idx]?.c;
-            if (prevRef && currRef) {
-              pctChange = (currRef - prevRef) / prevRef;
-            }
-          }
-          
-          // Apply percentage changes + micro-noise for high fidelity walk
-          const jitter = (Math.random() - 0.5) * 0.0006;
-          currentPrice = currentPrice * (1 + pctChange + jitter);
-          return { t, c: currentPrice };
-        });
-      }
-    });
-
-    // Injectiamo l'impatto di questi eventi macro direttamente nei prezzi del simulatore,
-    // in modo che ci sia una reale reazione del mercato (crash o rally) anticipata e poi confermata.
-    symbols.forEach(s => {
-      bars[s] = bars[s].map((b: any) => {
-        let newPrice = b.c;
-        const bDate = b.t.split('T')[0];
-        const bTime = new Date(b.t).getTime();
-
-        for (const ev of macroEventsSim) {
-           // Assumiamo che la news "scoppi" o venga confermata alle 14:00 UTC
-           const evTime = new Date(ev.date + 'T14:00:00Z').getTime(); 
-           const daysDiff = (evTime - bTime) / (1000 * 3600 * 24);
-           
-           // Anticipazione del mercato da 3 giorni prima
-           if (daysDiff >= 0 && daysDiff <= 3) {
-               const factor = (4 - daysDiff) / 4; // L'effetto cresce man mano che si avvicina
-               // Impatto cumulativo e spalmato sulle barre (assumendo ~30-40 barre al giorno)
-               // Un impact del 5% diviso 30 barre è circa 0.15% a barra per 3 giorni
-               newPrice = newPrice * (1 + (ev.impact / 40) * factor); 
-           } else if (daysDiff < 0 && daysDiff > -1) {
-               // Reazione immediata post-evento (shock residuo)
-               newPrice = newPrice * (1 + (ev.impact / 80));
-           }
-        }
-        return { ...b, c: newPrice };
-      });
-    });
-    
-    addLog(`Dati pronti per tutti gli strumenti. Esecuzione simulazione su ${refTimestamps.length} intervalli (15Min)...`);
-    
-    let portfolioCash = 100.0;
-    const maxPositions = 5;
-    
-    const assets: any = {};
-    const priceHistories: Record<string, number[]> = {};
-    symbols.forEach(s => {
-      assets[s] = { cash: 0, shares: 0, avgPrice: 0, lastPrice: bars[s][0]?.c || basePrices[s] || 100.0, highestPrice: 0 };
-      priceHistories[s] = [];
-    });
-    
-    botStatus.dailyPnL = [];
-    let currentDay = '';
-    let startOfDayBalance = 100.0;
-    let dailyTradingStopped = false;
-    
-    for (let i = 0; i < refTimestamps.length; i++) {
-      const t = refTimestamps[i];
-      const dateStr = t.split('T')[0];
-      
-      symbols.forEach(s => {
-        const b = bars[s].find((b:any) => b.t === t);
-        if (b) assets[s].lastPrice = b.c;
-        
-        // Accumulate history for moving average
-        priceHistories[s].push(assets[s].lastPrice);
-        if (priceHistories[s].length > 40) {
-          priceHistories[s].shift();
-        }
-        
-        // Update highest price seen while holding position
-        if (assets[s].shares > 0 && assets[s].lastPrice > assets[s].highestPrice) {
-          assets[s].highestPrice = assets[s].lastPrice;
-        }
-      });
-
-      // Calcola valore totale del portafoglio corrente
-      let portfolioValue = portfolioCash;
-      symbols.forEach(s => {
-        portfolioValue += assets[s].shares * assets[s].lastPrice;
-      });
-      botStatus.balance = portfolioValue;
-      botStatus.cash = portfolioCash;
-
-      // Gestione cambio giorno
-      if (currentDay && currentDay !== dateStr) {
-        const pnl = portfolioValue - startOfDayBalance;
-        const breakdown = symbols
-            .filter(sym => assets[sym].shares > 0)
-            .map(sym => ({
-                symbol: sym,
-                shares: assets[sym].shares,
-                price: assets[sym].lastPrice,
-                value: assets[sym].shares * assets[sym].lastPrice,
-                pnl: (assets[sym].lastPrice - assets[sym].avgCost) * assets[sym].shares,
-                pnlPercent: ((assets[sym].lastPrice - assets[sym].avgCost) / assets[sym].avgCost) * 100
-            }));
-            
-        botStatus.dailyPnL.push({ 
-            date: currentDay, 
-            balance: portfolioValue, 
-            pnl, 
-            breakdown,
-            news: marketEvents[currentDay] || undefined 
-        });
-        startOfDayBalance = portfolioValue;
-        dailyTradingStopped = false; // Reset per il nuovo giorno
-        
-        // Analisi notizie giornaliera
-        if (marketEvents[dateStr]) {
-            addLog(`[NEWS] ${marketEvents[dateStr]} (Data: ${dateStr})`);
-        }
-      }
-      currentDay = dateStr;
-      
-      // Verifica Obiettivo Giornaliero (+1€)
-      if (!dailyTradingStopped && (portfolioValue - startOfDayBalance >= 1.0)) {
-        addLog(`[OBIETTIVO] Profitto di +€${(portfolioValue - startOfDayBalance).toFixed(2)} raggiunto. Chiusura posizioni e stop trading.`);
-        dailyTradingStopped = true;
-        // Liquidazione forzata
-        symbols.forEach(s => {
-          if (assets[s].shares > 0) {
-            const saleValue = assets[s].shares * assets[s].lastPrice;
-            portfolioCash += saleValue;
-            addLog(`[VENDITA FORZATA] Liquidato ${s} per obiettivo giornaliero.`);
-            assets[s].shares = 0;
-            assets[s].avgPrice = 0;
-            assets[s].highestPrice = 0;
-          }
-        });
-      }
-      
-      // 1. FASE DI VENDITA: verifica posizioni esistenti
-      if (!dailyTradingStopped) {
-        symbols.forEach(s => {
-          if (assets[s].shares > 0 && priceHistories[s].length >= 40) {
-            const history = priceHistories[s];
-            const longSma = history.reduce((sum, val) => sum + val, 0) / history.length;
-            const currentPrice = assets[s].lastPrice;
-            
-            const hardStopLossPrice = assets[s].avgPrice * 0.96; // Hard Stop loss a -4%
-            const trailingStopLossPrice = assets[s].highestPrice * 0.97; // Trailing Stop a -3% dai massimi
-            
-            // Segnale di uscita: prezzo scende sotto la Long SMA (con buffer dell'1%), oppure colpisce lo stop loss (hard o trailing)
-            if (currentPrice < longSma * 0.99 || currentPrice < hardStopLossPrice || currentPrice < trailingStopLossPrice) {
-              const saleValue = assets[s].shares * currentPrice;
-              portfolioCash += saleValue;
-              
-              const pnlPct = ((currentPrice - assets[s].avgPrice) / assets[s].avgPrice) * 100;
-              let reason = currentPrice < hardStopLossPrice ? 'HARD STOP' : (currentPrice < trailingStopLossPrice ? 'TRAILING STOP' : 'TREND EXIT');
-              addLog(`[VENDITA] Liquidato ${s} a $${currentPrice.toFixed(2)} | PL: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% (${reason})`);
-              
-              assets[s].shares = 0;
-              assets[s].avgPrice = 0;
-              assets[s].highestPrice = 0;
-            }
-          }
-        });
-      }
-
-      // Aggiorna nuovamente il valore del portafoglio dopo le vendite
-      portfolioValue = portfolioCash;
-      symbols.forEach(s => {
-        portfolioValue += assets[s].shares * assets[s].lastPrice;
-      });
-
-      // Calcola Market Regime Filter basato su SPY + News
-      let isMarketUptrend = true;
-      let isMarketBooming = false;
-      if (priceHistories['SPY'] && priceHistories['SPY'].length >= 40) {
-        const spyHistory = priceHistories['SPY'];
-        const spyLongSma = spyHistory.reduce((sum, val) => sum + val, 0) / spyHistory.length;
-        
-        let newsSentiment = 0;
-        if (marketEvents[currentDay]) {
-            const { score: sentScore, reasoning: sentReasoning } = await getMarketSentiment('SPY', marketEvents[currentDay]);
-            newsSentiment = sentScore;
-            addLog(`[Sentiment AI] News: ${marketEvents[currentDay]} | Score: ${newsSentiment.toFixed(2)}`);
-            botStatus.dailyLogicLogs?.push({
-                timestamp: currentDay,
-                symbol: 'SPY',
-                action: 'HOLD',
-                reasoning: `Impact of ${marketEvents[currentDay]}: ${sentReasoning}`
-            });
-        }
-        
-        // Calcola l'anticipazione degli eventi macro (fino a 3 giorni prima)
-        let macroImpact = 0;
-        const currTime = new Date(dateStr).getTime();
-        for (const ev of macroEventsSim) {
-           const evTime = new Date(ev.date + 'T12:00:00Z').getTime();
-           const daysDiff = (evTime - currTime) / (1000 * 3600 * 24);
-           
-           if (daysDiff >= 0 && daysDiff <= 3) {
-               const factor = (4 - daysDiff) / 4;
-               macroImpact += ev.impact * factor;
-               
-               // Logga l'anticipazione solo una volta al giorno
-               if (currentDay && currentDay !== dateStr && Math.abs(ev.impact) > 0.03) {
-                   if (daysDiff > 2.5) {
-                       addLog(`[MACRO ALERT] Il mercato si aspetta: ${ev.description} tra pochi giorni. Valutazione: ${ev.type}.`);
-                   } else if (daysDiff < 0.5) {
-                       addLog(`[MACRO EVENT] OGGI: ${ev.description}. Massima attenzione.`);
-                   }
-               }
-           }
-        }
-        
-        const combinedScore = newsSentiment + macroImpact;
-
-        // Il mercato è in downtrend se la SMA è rotta O il sentiment combinato è pesantemente negativo
-        // Inoltre se prevediamo un forte evento negativo (< -0.02), ci fermiamo preventivamente
-        if (assets['SPY'].lastPrice < spyLongSma || combinedScore <= -0.02) {
-          isMarketUptrend = false;
-        }
-        
-        // Se c'è un forte momentum positivo in arrivo, diamo un boost
-        if (combinedScore >= 0.03) {
-           isMarketBooming = true; // Permetterà acquisti più aggressivi
-        }
-      }
-
-      // 2. FASE DI ACQUISTO: seleziona i trend migliori per riempire i posti disponibili
-      const activePositions = symbols.filter(s => assets[s].shares > 0);
-      const slotsAvailable = maxPositions - activePositions.length;
-      
-      if (!dailyTradingStopped && slotsAvailable > 0 && portfolioCash > 0.5 && i >= 40 && isMarketUptrend) {
-        const candidates: { symbol: string; score: number; price: number }[] = [];
-        
-        symbols.forEach(s => {
-          if (assets[s].shares === 0) {
-            const history = priceHistories[s];
-            if (history.length >= 40) {
-              const longSma = history.reduce((sum, val) => sum + val, 0) / history.length;
-              
-              const shortHistory = history.slice(-10);
-              const shortSma = shortHistory.reduce((sum, val) => sum + val, 0) / shortHistory.length;
-              
-              const currentPrice = assets[s].lastPrice;
-              
-              // Calcola forza del trend
-              const score = (currentPrice - longSma) / longSma;
-              
-              // Filtro prudenza: Compra solo se Short SMA > Long SMA e se il trend è positivo (+0.05% sopra Long SMA)
-              // Se isMarketBooming, allentiamo il filtro per comprare sui dip
-              if ((shortSma > longSma && score > 0.0005) || (isMarketBooming && score > -0.01)) {
-                candidates.push({ symbol: s, score: isMarketBooming ? score + 0.02 : score, price: currentPrice });
-              }
-            }
-          }
-        });
-        
-        // Ordina i candidati per forza del trend decrescente (i migliori prima)
-        candidates.sort((a, b) => b.score - a.score);
-        
-        const toBuy = candidates.slice(0, slotsAvailable);
-        toBuy.forEach(cand => {
-          const s = cand.symbol;
-          const currentPrice = cand.price;
-          
-          // Investimento target: 20% base + bonus basato sulla forza del trend (fino a 30%)
-          // Se il mercato è in forte rialzo atteso (isMarketBooming), aumentiamo l'allocazione
-          let allocationFactor = 0.2 + Math.min(Math.max(cand.score * 5, 0), 0.1); 
-          if (isMarketBooming) {
-             allocationFactor *= 1.5; // Allocazione 50% più grande per massimizzare i guadagni
-          }
-          
-          let investAmount = portfolioValue * allocationFactor;
-          
-          if (investAmount > portfolioCash) {
-            investAmount = portfolioCash;
-          }
-          
-          if (investAmount > 0.5) {
-            assets[s].shares = investAmount / currentPrice;
-            assets[s].avgPrice = currentPrice;
-            portfolioCash -= investAmount;
-            
-            addLog(`[ACQUISTO] Selezionato ${s} a $${currentPrice.toFixed(2)} con $${investAmount.toFixed(2)} (Allocazione: ${(allocationFactor * 100).toFixed(0)}%, Distanza SMA: +${(cand.score * 100).toFixed(2)}%)`);
-          }
-        });
-      }
-
-      // Ricalcola il bilancio finale per questo intervallo
-      botStatus.balance = portfolioCash + symbols.reduce((sum, s) => sum + (assets[s].shares * assets[s].lastPrice), 0);
-      botStatus.cash = portfolioCash;
-      
-      botStatus.simulatedPositions = symbols
-        .filter(s => assets[s].shares > 0)
-        .map(s => {
-          const mv = assets[s].shares * assets[s].lastPrice;
-          const pl = mv - (assets[s].shares * assets[s].avgPrice);
-          return {
-            asset_id: `sim_${s.toLowerCase()}`,
-            symbol: s,
-            qty: assets[s].shares.toString(),
-            avg_entry_price: assets[s].avgPrice.toString(),
-            market_value: mv.toString(),
-            unrealized_pl: pl.toString(),
-            unrealized_plpc: (pl / (assets[s].shares * assets[s].avgPrice || 1)).toString()
-          };
-        });
-      
-      botStatus.simulatedAssets = JSON.parse(JSON.stringify(assets));
-      botStatus.simulationProgress = Math.floor((i / refTimestamps.length) * 100);
-      
-      await new Promise(r => setTimeout(r, 20));
-    }
-    
-    // Fine iterazione, salva ultimo giorno
-    if (currentDay) {
-      const pnl = botStatus.balance - startOfDayBalance;
-      const breakdown = symbols
-            .filter(sym => assets[sym].shares > 0)
-            .map(sym => ({
-                symbol: sym,
-                shares: assets[sym].shares,
-                price: assets[sym].lastPrice,
-                value: assets[sym].shares * assets[sym].lastPrice,
-                pnl: (assets[sym].lastPrice - assets[sym].avgCost) * assets[sym].shares,
-                pnlPercent: ((assets[sym].lastPrice - assets[sym].avgCost) / assets[sym].avgCost) * 100
-            }));
-      botStatus.dailyPnL.push({ 
-          date: currentDay, 
-          balance: botStatus.balance, 
-          pnl, 
-          breakdown,
-          news: marketEvents[currentDay] || undefined 
-      });
-    }
-    
-    botStatus.simulationProgress = 100;
-    addLog(`Simulazione 1 mese completata! Saldo finale: $${botStatus.balance.toFixed(2)}`);
-    
-  } catch(e: any) {
-    addLog(`Errore simulazione: ${e.message}`);
-  } finally {
-    botStatus.simulationRunning = false;
-  }
 });
 
 app.post('/api/study-markets', async (req, res) => {

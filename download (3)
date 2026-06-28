@@ -83,8 +83,8 @@ export default function App() {
               <span className="text-sm text-gray-500">
                 Google Cloud Run Backend
               </span>
-              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.mode === 'Alpaca' ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-blue-50 text-blue-700 ring-blue-700/10'}`}>
-                Broker: {status?.accountNumber ? `Conto Alpaca: ${status.accountNumber}` : (status?.mode === 'Alpaca' ? 'Alpaca API' : 'API Simulazione')}
+              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.accountNumber ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
+                {status?.accountNumber ? `Conto Alpaca: ${status.accountNumber}` : `Broker: ${status?.mode || 'Alpaca'}`}
               </span>
             </div>
           </div>
