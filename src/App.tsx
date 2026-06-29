@@ -33,9 +33,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const toggleBot = async () => {
+  const toggleBot = async (target?: 'paper' | 'live' | 'both') => {
     try {
-      const res = await fetch('/api/toggle', { method: 'POST' });
+      const res = await fetch('/api/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ target }),
+      });
       if (res.ok) {
         const data: BotStateResponse = await res.json();
         setStatus(data.status);
@@ -130,26 +136,49 @@ export default function App() {
               </button>
             </div>
 
-            <button
-              onClick={toggleBot}
-              className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
-                status?.active 
-                  ? 'bg-red-50 text-red-700 hover:bg-red-100' 
-                  : 'bg-gray-900 text-white hover:bg-gray-800'
-              }`}
-            >
-              {status?.active ? (
-                <>
-                  <Square className="w-4 h-4 fill-current" />
-                  Ferma Bot
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 fill-current" />
-                  Avvia Bot
-                </>
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleBot('paper')}
+                className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
+                  status?.paperActive
+                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                }`}
+              >
+                {status?.paperActive ? (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    Stop Paper
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    Start Paper
+                  </>
+                )}
+              </button>
+              
+              <button
+                onClick={() => toggleBot('live')}
+                className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
+                  status?.liveActive
+                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                }`}
+              >
+                {status?.liveActive ? (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    Stop Real
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    Start Real
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 

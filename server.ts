@@ -29,10 +29,8 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-let currentTradingMode: 'paper' | 'live' = 'paper';
-
-function getAlpacaConfig() {
-  const isLive = currentTradingMode === 'live';
+function getAlpacaConfig(mode: 'paper' | 'live') {
+  const isLive = mode === 'live';
   
   let apiKey = '';
   let secretKey = '';
@@ -90,7 +88,7 @@ let botStatus: {
   liveActive: false,
   balance: 100.0,
   lastCheck: null as string | null,
-  mode: (getAlpacaConfig().isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
+  mode: (getAlpacaConfig('paper').isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
   tradingMode: 'paper',
   dailyPnL: [],
   cash: 100.0,
@@ -183,6 +181,83 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
   }
 }
 
+async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean) {
+  const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
+  const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
+  
+  if (!isConfigured) {
+    if (force) addLog(`[Alpaca ${labelTipoConto}] API Key mancante.`);
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${baseUrl}/account`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Errore API: ${response.status} ${response.statusText}`);
+    }
+    
+    const account = await response.json();
+    botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
+    botStatus.accountNumber = account.account_number;
+    
+    addLog(`[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botStatus.balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
+    
+    // Check sentiment before buying
+    const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
+    if (sentimentScore > 0.2) {
+        addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
+        botStatus.dailyLogicLogs?.push({
+            timestamp: new Date().toISOString(),
+            symbol: 'SPY',
+            action: 'BUY',
+            reasoning: sentimentReasoning
+        });
+        
+        // Esecuzione dell'ordine su Alpaca
+        const orderResponse = await fetch(`${baseUrl}/orders`, {
+          method: 'POST',
+          headers: {
+            'APCA-API-KEY-ID': apiKey,
+            'APCA-API-SECRET-KEY': secretKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            symbol: 'SPY',
+            qty: 1,
+            side: 'buy',
+            type: 'market',
+            time_in_force: 'day'
+          })
+        });
+        
+        if (orderResponse.ok) {
+          const orderData = await orderResponse.json();
+          addLog(`[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
+        } else {
+          const errorData = await orderResponse.json();
+          addLog(`[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
+        }
+        
+    } else {
+        addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
+        botStatus.dailyLogicLogs?.push({
+            timestamp: new Date().toISOString(),
+            symbol: 'SPY',
+            action: 'HOLD',
+            reasoning: sentimentReasoning
+        });
+    }
+  } catch (error: any) {
+    addLog(`[Alpaca Errore] ${error.message}`);
+  }
+}
+
 async function executeTradingCycle(force: boolean = false) {
   if (!botStatus.active && !force) {
     addLog(`[System] Ciclo di trading ignorato: bot non attivo.`);
@@ -191,81 +266,18 @@ async function executeTradingCycle(force: boolean = false) {
   
   botStatus.lastCheck = new Date().toISOString();
   
-  // Logic for Alpaca
-  const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig();
-  if (isConfigured) {
-    try {
-      const response = await fetch(`${baseUrl}/account`, {
-        headers: {
-          'APCA-API-KEY-ID': apiKey,
-          'APCA-API-SECRET-KEY': secretKey
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Errore API: ${response.status} ${response.statusText}`);
-      }
-      
-      const account = await response.json();
-      botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
-      botStatus.accountNumber = account.account_number;
-      
-      const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
-      addLog(`[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botStatus.balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
-      
-      // Check sentiment before buying
-      const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
-      if (sentimentScore > 0.2) {
-          addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
-          botStatus.dailyLogicLogs?.push({
-              timestamp: new Date().toISOString(),
-              symbol: 'SPY',
-              action: 'BUY',
-              reasoning: sentimentReasoning
-          });
-          
-          // Esecuzione dell'ordine su Alpaca
-          const orderResponse = await fetch(`${baseUrl}/orders`, {
-            method: 'POST',
-            headers: {
-              'APCA-API-KEY-ID': apiKey,
-              'APCA-API-SECRET-KEY': secretKey,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              symbol: 'SPY',
-              qty: 1,
-              side: 'buy',
-              type: 'market',
-              time_in_force: 'day'
-            })
-          });
-          
-          if (orderResponse.ok) {
-            const orderData = await orderResponse.json();
-            addLog(`[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
-          } else {
-            const errorData = await orderResponse.json();
-            addLog(`[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
-          }
-          
-      } else {
-          addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
-          botStatus.dailyLogicLogs?.push({
-              timestamp: new Date().toISOString(),
-              symbol: 'SPY',
-              action: 'HOLD',
-              reasoning: sentimentReasoning
-          });
-      }
-    } catch (error: any) {
-      addLog(`[Alpaca Errore] ${error.message}`);
-    }
-  } else {
-    // Nessuna azione se Alpaca non è configurato, per evitare "fake trades" non richiesti
-    if (botStatus.active || force) {
-      addLog(`[Alpaca] In attesa di configurazione API Key per operare sul mercato.`);
-    }
+  let executed = false;
+  if (botStatus.paperActive || force) {
+    await executeTradingCycleForMode('paper', force);
+    executed = true;
+  }
+  if (botStatus.liveActive || force) {
+    await executeTradingCycleForMode('live', force);
+    executed = true;
+  }
+  
+  if (!executed) {
+    addLog(`[Alpaca] Nessun conto attivo per il trading.`);
   }
 }
 
@@ -396,7 +408,7 @@ app.post('/api/analyze-market', async (req, res) => {
 
 app.get('/api/status', async (req, res) => {
   let positions = [];
-  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig();
+  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig(botStatus.tradingMode);
   
   // Dynamic update of mode based on actual environment configuration and chosen trading mode
   botStatus.mode = isConfigured 
@@ -438,13 +450,41 @@ app.get('/api/status', async (req, res) => {
 });
 
 app.post('/api/toggle', (req, res) => {
-  botStatus.active = !botStatus.active;
+  const { target } = req.body || {};
+  
+  if (target === 'paper') {
+    botStatus.paperActive = !botStatus.paperActive;
+    if (botStatus.paperActive) {
+      addLog('Bot avviato sul conto Simulazione (Paper).');
+    } else {
+      addLog('Bot arrestato sul conto Simulazione (Paper).');
+    }
+  } else if (target === 'live') {
+    botStatus.liveActive = !botStatus.liveActive;
+    if (botStatus.liveActive) {
+      addLog('Bot avviato sul conto Reale (Live).');
+    } else {
+      addLog('Bot arrestato sul conto Reale (Live).');
+    }
+  } else if (target === 'both') {
+    const nextState = !(botStatus.paperActive || botStatus.liveActive);
+    botStatus.paperActive = nextState;
+    botStatus.liveActive = nextState;
+    if (nextState) {
+      addLog('Bot avviato su ENTRAMBI i conti (Paper e Reale).');
+    } else {
+      addLog('Bot arrestato su ENTRAMBI i conti (Paper e Reale).');
+    }
+  } else {
+    // backward compatibility
+    botStatus.active = !botStatus.active;
+    botStatus.paperActive = botStatus.active;
+  }
+  
+  botStatus.active = botStatus.paperActive || botStatus.liveActive;
   
   if (botStatus.active) {
-    addLog('Bot avviato. In attesa del prossimo ciclo di trading...');
     botStatus.lastCheck = new Date().toISOString();
-  } else {
-    addLog('Bot arrestato manualmente.');
   }
   
   res.json({ status: botStatus, logs: tradeLogs });
@@ -454,12 +494,11 @@ app.post('/api/set-trading-mode', (req, res) => {
   const { mode } = req.body;
   if (mode === 'paper' || mode === 'live') {
     botStatus.tradingMode = mode;
-    currentTradingMode = mode;
-    const { isConfigured } = getAlpacaConfig();
+    const { isConfigured } = getAlpacaConfig(mode);
     botStatus.mode = isConfigured 
       ? `Alpaca (${mode === 'paper' ? 'Simulazione' : 'Reale'})` 
       : 'Alpaca (Configurazione mancante)';
-    addLog(`[Sistema] Modalità di trading impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
+    addLog(`[Sistema] Visualizzazione impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
     res.json({ status: botStatus, logs: tradeLogs });
   } else {
     res.status(400).json({ success: false, message: 'Modalità di trading non valida.' });
@@ -467,8 +506,7 @@ app.post('/api/set-trading-mode', (req, res) => {
 });
 
 app.post('/api/reset', (req, res) => {
-  currentTradingMode = 'paper';
-  const { isConfigured } = getAlpacaConfig();
+  const { isConfigured } = getAlpacaConfig('paper');
   botStatus = {
     active: false,
     paperActive: false,
