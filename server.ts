@@ -29,15 +29,28 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+let currentTradingMode: 'paper' | 'live' = 'paper';
+
 function getAlpacaConfig() {
-  const isConfigured = !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
-  // Default to paper trading if botStatus is not defined yet, otherwise use current user preference
-  const tradingMode = typeof botStatus !== 'undefined' ? botStatus.tradingMode : 'paper';
-  const isLive = tradingMode === 'live';
+  const isLive = currentTradingMode === 'live';
+  
+  let apiKey = '';
+  let secretKey = '';
+  
+  if (isLive) {
+    apiKey = process.env.ALPACA_LIVE_API_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_API_KEY : '') || '';
+    secretKey = process.env.ALPACA_LIVE_SECRET_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_SECRET_KEY : '') || '';
+  } else {
+    apiKey = process.env.ALPACA_PAPER_API_KEY || (process.env.ALPACA_PAPER_TRADING !== 'false' ? process.env.ALPACA_API_KEY : '') || '';
+    secretKey = process.env.ALPACA_PAPER_SECRET_KEY || (process.env.ALPACA_PAPER_TRADING !== 'false' ? process.env.ALPACA_SECRET_KEY : '') || '';
+  }
+  
+  const isConfigured = !!(apiKey && secretKey);
   const baseUrl = isLive 
     ? 'https://api.alpaca.markets/v2'
     : 'https://paper-api.alpaca.markets/v2';
-  return { isConfigured, isLive, baseUrl };
+    
+  return { isConfigured, isLive, baseUrl, apiKey, secretKey };
 }
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets/v2';
@@ -59,6 +72,8 @@ Object.keys(basePrices).forEach(sym => {
 // In-memory state simulating a database (e.g., Firestore)
 let botStatus: {
   active: boolean;
+  paperActive: boolean;
+  liveActive: boolean;
   balance: number;
   lastCheck: string | null;
   mode: string;
@@ -71,6 +86,8 @@ let botStatus: {
   userFeedbackRules?: string[];
 } = {
   active: false,
+  paperActive: false,
+  liveActive: false,
   balance: 100.0,
   lastCheck: null as string | null,
   mode: (getAlpacaConfig().isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
@@ -175,13 +192,13 @@ async function executeTradingCycle(force: boolean = false) {
   botStatus.lastCheck = new Date().toISOString();
   
   // Logic for Alpaca
-  const { isConfigured, isLive, baseUrl } = getAlpacaConfig();
+  const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig();
   if (isConfigured) {
     try {
       const response = await fetch(`${baseUrl}/account`, {
         headers: {
-          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
         }
       });
       
@@ -211,8 +228,8 @@ async function executeTradingCycle(force: boolean = false) {
           const orderResponse = await fetch(`${baseUrl}/orders`, {
             method: 'POST',
             headers: {
-              'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-              'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+              'APCA-API-KEY-ID': apiKey,
+              'APCA-API-SECRET-KEY': secretKey,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -379,7 +396,7 @@ app.post('/api/analyze-market', async (req, res) => {
 
 app.get('/api/status', async (req, res) => {
   let positions = [];
-  const { isConfigured, baseUrl } = getAlpacaConfig();
+  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig();
   
   // Dynamic update of mode based on actual environment configuration and chosen trading mode
   botStatus.mode = isConfigured 
@@ -390,8 +407,8 @@ app.get('/api/status', async (req, res) => {
     try {
       const posResponse = await fetch(`${baseUrl}/positions`, {
         headers: {
-          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
         }
       });
       if (posResponse.ok) {
@@ -400,8 +417,8 @@ app.get('/api/status', async (req, res) => {
       
       const accResponse = await fetch(`${baseUrl}/account`, {
         headers: {
-          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
         }
       });
       if (accResponse.ok) {
@@ -437,6 +454,7 @@ app.post('/api/set-trading-mode', (req, res) => {
   const { mode } = req.body;
   if (mode === 'paper' || mode === 'live') {
     botStatus.tradingMode = mode;
+    currentTradingMode = mode;
     const { isConfigured } = getAlpacaConfig();
     botStatus.mode = isConfigured 
       ? `Alpaca (${mode === 'paper' ? 'Simulazione' : 'Reale'})` 
@@ -449,9 +467,12 @@ app.post('/api/set-trading-mode', (req, res) => {
 });
 
 app.post('/api/reset', (req, res) => {
+  currentTradingMode = 'paper';
   const { isConfigured } = getAlpacaConfig();
   botStatus = {
     active: false,
+    paperActive: false,
+    liveActive: false,
     balance: 100.0,
     lastCheck: null,
     mode: (isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
