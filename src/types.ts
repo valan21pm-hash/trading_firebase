@@ -17,13 +17,12 @@ export interface Position {
   change_today: string;
 }
 
-export interface BotStatus {
-  active: boolean;
+export interface AccountData {
   balance: number;
-  lastCheck: string | null;
+  cash?: number;
   accountNumber?: string;
-  mode: string;
-  tradingMode?: 'paper' | 'live';
+  modeLabel: string;
+  isConfigured: boolean;
   positions?: Position[];
   dailyPnL?: { 
     date: string; 
@@ -32,13 +31,23 @@ export interface BotStatus {
     news?: string;
     breakdown?: { symbol: string; shares: number; price: number; value: number; pnl?: number; pnlPercent?: number }[];
   }[];
-  cash?: number;
-  latestDailyReport?: string;
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
+  logs: string[];
+}
+
+export interface BotStatus {
+  active: boolean; // For legacy compatibility
+  paperActive: boolean;
+  liveActive: boolean;
+  lastCheck: string | null;
   userFeedbackRules?: string[];
+  latestDailyReport?: string;
+  
+  paper: AccountData;
+  live: AccountData;
 }
 
 export interface BotStateResponse {
   status: BotStatus;
-  logs: string[];
 }
+

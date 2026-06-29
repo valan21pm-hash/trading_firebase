@@ -438,55 +438,63 @@ app.post('/api/analyze-market', async (req, res) => {
 });
 
 app.get('/api/status', async (req, res) => {
-  let positions = [];
-  const mode = (req.query.mode as 'paper' | 'live') || botStatus.tradingMode || 'paper';
-  const data = botData[mode];
-  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
+  const paperConf = getAlpacaConfig('paper');
+  const liveConf = getAlpacaConfig('live');
   
-  // Dynamic update of mode based on actual environment configuration and chosen trading mode
-  botStatus.mode = isConfigured 
-    ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 
-    : 'Alpaca (Configurazione mancante)';
-  
-  if (isConfigured) {
-    try {
-      const posResponse = await fetch(`${baseUrl}/positions`, {
-        headers: {
-          'APCA-API-KEY-ID': apiKey,
-          'APCA-API-SECRET-KEY': secretKey
+  const getAccountData = async (mode: 'paper' | 'live', conf: any) => {
+    let positions = [];
+    if (conf.isConfigured) {
+      try {
+        const posResponse = await fetch(`${conf.baseUrl}/positions`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        if (posResponse.ok) {
+          positions = await posResponse.json();
         }
-      });
-      if (posResponse.ok) {
-        positions = await posResponse.json();
-      }
-      
-      const accResponse = await fetch(`${baseUrl}/account`, {
-        headers: {
-          'APCA-API-KEY-ID': apiKey,
-          'APCA-API-SECRET-KEY': secretKey
+        
+        const accResponse = await fetch(`${conf.baseUrl}/account`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        if (accResponse.ok) {
+          const account = await accResponse.json();
+          botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
+          botData[mode].accountNumber = account.account_number;
         }
-      });
-      if (accResponse.ok) {
-        const account = await accResponse.json();
-        data.balance = parseFloat(account.equity || account.portfolio_value || '0');
-        data.accountNumber = account.account_number;
+      } catch (e) {
+        console.error(`Error fetching Alpaca data for ${mode}`, e);
       }
-    } catch (e) {
-      console.error('Error fetching Alpaca data', e);
     }
-  }
+    
+    return {
+      ...botData[mode],
+      modeLabel: conf.isConfigured 
+        ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 
+        : 'Alpaca (Configurazione mancante)',
+      isConfigured: conf.isConfigured,
+      positions
+    };
+  };
+
+  const paperData = await getAccountData('paper', paperConf);
+  const liveData = await getAccountData('live', liveConf);
 
   res.json({
     status: { 
-      ...botStatus, 
-      balance: data.balance,
-      cash: data.cash,
-      accountNumber: data.accountNumber,
-      dailyPnL: data.dailyPnL,
-      dailyLogicLogs: data.dailyLogicLogs,
-      positions 
-    },
-    logs: data.logs,
+      active: botStatus.active,
+      paperActive: botStatus.paperActive,
+      liveActive: botStatus.liveActive,
+      lastCheck: botStatus.lastCheck,
+      userFeedbackRules: botStatus.userFeedbackRules,
+      latestDailyReport: botStatus.latestDailyReport,
+      paper: paperData,
+      live: liveData
+    }
   });
 });
 
@@ -517,7 +525,6 @@ app.post('/api/toggle', (req, res) => {
       addLog('system', 'Bot arrestato su ENTRAMBI i conti (Paper e Reale).');
     }
   } else {
-    // backward compatibility
     botStatus.active = !botStatus.active;
     botStatus.paperActive = botStatus.active;
   }
@@ -528,18 +535,7 @@ app.post('/api/toggle', (req, res) => {
     botStatus.lastCheck = new Date().toISOString();
   }
   
-  const data = botData[botStatus.tradingMode];
-  res.json({ 
-    status: {
-      ...botStatus,
-      balance: data.balance,
-      cash: data.cash,
-      accountNumber: data.accountNumber,
-      dailyPnL: data.dailyPnL,
-      dailyLogicLogs: data.dailyLogicLogs
-    }, 
-    logs: data.logs 
-  });
+  res.redirect(303, '/api/status');
 });
 
 app.post('/api/set-trading-mode', (req, res) => {
@@ -589,18 +585,7 @@ app.post('/api/reset', (req, res) => {
   botData.live = { balance: 100.0, cash: 100.0, accountNumber: undefined, dailyPnL: [], dailyLogicLogs: [], logs: [] };
   addLog('system', 'Sistema ripristinato a €100.00');
   
-  const data = botData['paper'];
-  res.json({ 
-    status: {
-      ...botStatus,
-      balance: data.balance,
-      cash: data.cash,
-      accountNumber: data.accountNumber,
-      dailyPnL: data.dailyPnL,
-      dailyLogicLogs: data.dailyLogicLogs
-    }, 
-    logs: data.logs 
-  });
+  res.redirect(303, '/api/status');
 });
 
 app.post('/api/study-markets', async (req, res) => {

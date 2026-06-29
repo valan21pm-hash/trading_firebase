@@ -1,14 +1,99 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare } from 'lucide-react';
-import type { BotStateResponse, BotStatus } from './types';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2 } from 'lucide-react';
+import type { BotStateResponse, BotStatus, AccountData } from './types';
 
-const EQUITIES_SYMBOLS = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
-const COMMODITIES_SYMBOLS = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
-const BONDS_SYMBOLS = ['BND', 'AGG', 'TLT', 'IEF', 'SHY', 'LQD', 'HYG', 'TIP', 'GOVT', 'VCIT'];
+function AccountPanel({ account, title, isActive, type }: { account: AccountData; title: string; isActive: boolean; type: 'paper' | 'live' }) {
+  if (!account) return null;
+
+  return (
+    <div className={`flex-1 min-w-[300px] border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white`}>
+      <div className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex justify-between items-center`}>
+        <h2 className={`font-semibold ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
+          {type === 'live' ? <TrendingUp className="w-4 h-4" /> : <Activity className="w-4 h-4" />}
+          {title}
+        </h2>
+        <span className={`px-2 py-1 text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+          {isActive ? 'ATTIVO' : 'FERMO'}
+        </span>
+      </div>
+
+      <div className="p-4 space-y-6">
+        <div className="flex justify-between items-center">
+          <div className="text-sm text-gray-500">Saldo Equity</div>
+          <div className="text-2xl font-bold text-gray-900">${(account.balance ?? 0).toFixed(2)}</div>
+        </div>
+
+        <div className="flex justify-between items-center text-sm">
+          <div className="text-gray-500">Broker</div>
+          <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
+            {account.modeLabel}
+          </div>
+        </div>
+
+        {/* Positions */}
+        {account.positions && account.positions.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Posizioni Aperte</h3>
+            <div className="space-y-2">
+              {account.positions.map((pos, i) => (
+                <div key={i} className="flex justify-between items-center text-sm bg-gray-50 p-2 rounded">
+                  <div>
+                    <span className="font-bold">{pos.symbol}</span>
+                    <span className="text-gray-500 text-xs ml-2">{pos.qty} quote</span>
+                  </div>
+                  <div className={`font-medium ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Logic Logs */}
+        {account.dailyLogicLogs && account.dailyLogicLogs.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Ultimi Ragionamenti</h3>
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {[...account.dailyLogicLogs].reverse().slice(0, 10).map((log, i) => (
+                <div key={i} className="text-xs border-l-2 border-blue-400 pl-2 py-1">
+                  <div className="flex justify-between text-gray-500 mb-1">
+                    <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    <span className="font-bold">{log.symbol} ({log.action})</span>
+                  </div>
+                  <div className="text-gray-700">{log.reasoning}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* System Logs */}
+        <div className="mt-4">
+          <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Log Operativi</h3>
+          <div className="bg-gray-900 text-gray-300 p-3 rounded-lg text-xs font-mono h-40 overflow-y-auto flex flex-col gap-1">
+            {account.logs?.length > 0 ? (
+              account.logs.map((log, i) => (
+                <div key={i} className={`${
+                  log.includes('Acquistato') || log.includes('ACQUISTO') ? 'text-green-400' : 
+                  log.includes('Venduto') || log.includes('VENDITA') ? 'text-red-400' : 
+                  log.includes('Errore') ? 'text-red-500 font-bold' :
+                  'text-gray-400'
+                }`}>{log}</div>
+              ))
+            ) : (
+              <div className="text-gray-500">Nessun log disponibile...</div>
+            )}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchStatus = async () => {
@@ -17,7 +102,6 @@ export default function App() {
       if (res.ok) {
         const data: BotStateResponse = await res.json();
         setStatus(data.status);
-        setLogs(data.logs);
       }
     } catch (error) {
       console.error('Error fetching bot status:', error);
@@ -28,7 +112,6 @@ export default function App() {
 
   useEffect(() => {
     fetchStatus();
-    // Refresh status every 5 seconds
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -37,48 +120,15 @@ export default function App() {
     try {
       const res = await fetch('/api/toggle', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target }),
       });
       if (res.ok) {
         const data: BotStateResponse = await res.json();
         setStatus(data.status);
-        setLogs(data.logs);
       }
     } catch (error) {
       console.error('Error toggling bot:', error);
-    }
-  };
-
-  const resetBot = async () => {
-    try {
-      const res = await fetch('/api/reset', { method: 'POST' });
-      if (res.ok) {
-        const data: BotStateResponse = await res.json();
-        setStatus(data.status);
-        setLogs(data.logs);
-      }
-    } catch (error) {
-      console.error('Error resetting bot:', error);
-    }
-  };
-
-  const setTradingMode = async (mode: 'paper' | 'live') => {
-    try {
-      const res = await fetch('/api/set-trading-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode })
-      });
-      if (res.ok) {
-        const data: BotStateResponse = await res.json();
-        setStatus(data.status);
-        setLogs(data.logs);
-      }
-    } catch (error) {
-      console.error('Error setting trading mode:', error);
     }
   };
 
@@ -92,411 +142,64 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-4 sm:p-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
               <Activity className="w-6 h-6 text-blue-600" />
-              Motore di Trading
+              Pannello di Controllo Trading
             </h1>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-sm text-gray-500">
-                Google Cloud Run Backend
-              </span>
-              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.accountNumber ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
-                {status?.accountNumber ? `Conto Alpaca: ${status.accountNumber}` : `Broker: ${status?.mode || 'Alpaca'}`}
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-            {/* Selettore Tipo di Conto */}
-            <div className="flex items-center justify-between gap-1 bg-gray-100 p-1 rounded-xl self-stretch sm:self-auto border border-gray-200">
-              <button
-                onClick={() => setTradingMode('paper')}
-                className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
-                  status?.tradingMode === 'paper'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-              >
-                Simulazione
-              </button>
-              <button
-                onClick={() => setTradingMode('live')}
-                className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
-                  status?.tradingMode === 'live'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-              >
-                Soldi Reali
-              </button>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => toggleBot('paper')}
-                className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
-                  status?.paperActive
-                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                }`}
-              >
-                {status?.paperActive ? (
-                  <>
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                    Stop Paper
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    Start Paper
-                  </>
-                )}
-              </button>
-              
-              <button
-                onClick={() => toggleBot('live')}
-                className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
-                  status?.liveActive
-                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                }`}
-              >
-                {status?.liveActive ? (
-                  <>
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                    Stop Real
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    Start Real
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Cloud Scheduler Info */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-2xl shadow-sm border border-blue-100">
-          <div className="space-y-2">
-            <h2 className="text-base font-semibold text-indigo-900 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-indigo-600" />
-              Configurazione Cloud Scheduler (Ogni 2 Minuti, Lun-Ven)
-            </h2>
-            <p className="text-sm text-indigo-700">
-              Per far funzionare il bot 24 ore su 24 ogni 2 minuti (esclusi sabato e domenica) in modalità serverless a consumo (completamente nella quota gratuita), configura un job su Google Cloud Scheduler con i seguenti parametri:
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-              <div className="bg-white p-3 rounded-xl border border-indigo-100 text-xs shadow-sm">
-                <span className="text-gray-400 block mb-1 uppercase tracking-wider font-semibold">Frequenza (Cron)</span>
-                <code className="text-indigo-600 font-mono font-bold text-sm bg-indigo-50/50 px-2 py-1 rounded block w-fit">*/2 * * * 1-5</code>
-                <span className="text-gray-500 block mt-1">Ogni 2 minuti, Lunedì-Venerdì, 24/24h</span>
-              </div>
-              <div className="bg-white p-3 rounded-xl border border-indigo-100 text-xs shadow-sm md:col-span-2">
-                <span className="text-gray-400 block mb-1 uppercase tracking-wider font-semibold">Target URL</span>
-                <code className="text-indigo-600 font-mono font-bold text-xs bg-indigo-50/50 px-2 py-1 rounded block break-all">
-                  {typeof window !== 'undefined' ? window.location.origin : 'https://tradingfirebase-26035486497.europe-west1.run.app'}/run-strategy
-                </code>
-                <span className="text-gray-500 block mt-1">Metodo HTTP: <strong className="text-indigo-700">GET</strong> o <strong className="text-indigo-700">POST</strong></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-2 text-gray-500 mb-2">
-              <Activity className="w-4 h-4" />
-              <span className="text-sm font-medium">Stato Servizio</span>
-            </div>
-            <div className="text-2xl font-semibold flex items-center gap-2">
-              <div className={`w-2.5 h-2.5 rounded-full ${status?.active ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
-              {status?.active ? 'Attivo' : 'In Pausa'}
-            </div>
-          </div>
-          
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-2 text-gray-500 mb-2">
-              <Wallet className="w-4 h-4" />
-              <span className="text-sm font-medium">Saldo Corrente</span>
-            </div>
-            <div className="text-2xl font-semibold tracking-tight">
-              €{(status?.balance ?? 0).toFixed(2)}
-            </div>
-            {status?.cash !== undefined && (
-              <div className="text-xs text-gray-500 mt-1 font-mono">
-                Liquidità: €{(status?.cash ?? 0).toFixed(2)}
-              </div>
-            )}
+            <p className="text-sm text-gray-500 mt-1">Gestisci separatamente i conti Simulazione (Paper) e Reale (Live)</p>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-2 text-gray-500 mb-2">
-              <Clock className="w-4 h-4" />
-              <span className="text-sm font-medium">Ultimo Controllo</span>
-            </div>
-            <div className="text-sm font-medium text-gray-900">
-              {status?.lastCheck 
-                ? new Date(status.lastCheck).toLocaleTimeString() 
-                : 'Nessun controllo effettuato'}
-            </div>
-          </div>
-        </div>
-
-        {/* Positions Grid */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-          <div className="p-4 border-b border-gray-100 bg-gray-50/50">
-            <h2 className="font-medium text-gray-900 flex items-center gap-2">
-              <Wallet className="w-5 h-5 text-gray-400" />
-              Resoconto Strategie
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+          <div className="flex gap-2">
+            <button
+              onClick={() => toggleBot('paper')}
+              className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
+                status?.paperActive
+                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+            >
+              {status?.paperActive ? (
+                <><Square className="w-3.5 h-3.5 fill-current" /> Stop Paper</>
+              ) : (
+                <><Play className="w-3.5 h-3.5 fill-current" /> Start Paper</>
+              )}
+            </button>
             
-            {/* Colonna 1: Azioni (Equities) */}
-            <div>
-              <div className="bg-blue-50/50 p-3 border-b border-gray-100 text-center">
-                <h3 className="text-sm font-semibold text-blue-900">Azioni (Equities)</h3>
-              </div>
-              <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
-                {EQUITIES_SYMBOLS.map((sym) => {
-                  const pos = status?.positions?.find(p => p.symbol === sym);
-                  
-                  if (pos) {
-                    const marketValue = parseFloat(pos.market_value);
-                    const pl = parseFloat(pos.unrealized_pl);
-                    const plpc = parseFloat(pos.unrealized_plpc) * 100;
-                    
-                    return (
-                      <div key={sym} className="flex flex-col gap-1.5 p-3 bg-white rounded-xl border border-blue-100 shadow-sm transition-all duration-200 hover:shadow">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-gray-900 text-sm">{sym}</span>
-                            <span className="text-[9px] bg-blue-100 text-blue-800 font-semibold px-1 py-0.5 rounded">ACTIVE</span>
-                          </div>
-                          <span className="font-bold text-blue-900 text-sm">${marketValue.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-gray-400 font-mono">Qtà: {parseFloat(pos.qty).toFixed(4)}</span>
-                          <span className={`font-semibold ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {pl >= 0 ? '+' : ''}${pl.toFixed(2)} ({plpc.toFixed(2)}%)
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-700 text-sm">{sym}</span>
-                          <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
-                        </div>
-                        <span className="text-xs font-mono text-gray-500">
-                          In attesa
-                        </span>
-                      </div>
-                    );
-                  }
-                })}
-              </div>
-            </div>
-
-            {/* Colonna 2: Materie Prime (Commodities) */}
-            <div>
-              <div className="bg-amber-50/50 p-3 border-b border-gray-100 text-center">
-                <h3 className="text-sm font-semibold text-amber-900">Materie Prime</h3>
-              </div>
-              <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
-                {COMMODITIES_SYMBOLS.map((sym) => {
-                  const pos = status?.positions?.find(p => p.symbol === sym);
-                  
-                  if (pos) {
-                    const marketValue = parseFloat(pos.market_value);
-                    const pl = parseFloat(pos.unrealized_pl);
-                    const plpc = parseFloat(pos.unrealized_plpc) * 100;
-                    
-                    return (
-                      <div key={sym} className="flex flex-col gap-1.5 p-3 bg-white rounded-xl border border-amber-100 shadow-sm transition-all duration-200 hover:shadow">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-gray-900 text-sm">{sym}</span>
-                            <span className="text-[9px] bg-amber-100 text-amber-800 font-semibold px-1 py-0.5 rounded">ACTIVE</span>
-                          </div>
-                          <span className="font-bold text-amber-900 text-sm">${marketValue.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-gray-400 font-mono">Qtà: {parseFloat(pos.qty).toFixed(4)}</span>
-                          <span className={`font-semibold ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {pl >= 0 ? '+' : ''}${pl.toFixed(2)} ({plpc.toFixed(2)}%)
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-700 text-sm">{sym}</span>
-                          <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
-                        </div>
-                        <span className="text-xs font-mono text-gray-500">
-                          In attesa
-                        </span>
-                      </div>
-                    );
-                  }
-                })}
-              </div>
-            </div>
-
-            {/* Colonna 3: Obbligazioni (Bonds) */}
-            <div>
-              <div className="bg-emerald-50/50 p-3 border-b border-gray-100 text-center">
-                <h3 className="text-sm font-semibold text-emerald-900">Obbligazioni (Bonds)</h3>
-              </div>
-              <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
-                {BONDS_SYMBOLS.map((sym) => {
-                  const pos = status?.positions?.find(p => p.symbol === sym);
-                  
-                  if (pos) {
-                    const marketValue = parseFloat(pos.market_value);
-                    const pl = parseFloat(pos.unrealized_pl);
-                    const plpc = parseFloat(pos.unrealized_plpc) * 100;
-                    
-                    return (
-                      <div key={sym} className="flex flex-col gap-1.5 p-3 bg-white rounded-xl border border-emerald-100 shadow-sm transition-all duration-200 hover:shadow">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-gray-900 text-sm">{sym}</span>
-                            <span className="text-[9px] bg-emerald-100 text-emerald-800 font-semibold px-1 py-0.5 rounded">ACTIVE</span>
-                          </div>
-                          <span className="font-bold text-emerald-900 text-sm">${marketValue.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-gray-400 font-mono">Qtà: {parseFloat(pos.qty).toFixed(4)}</span>
-                          <span className={`font-semibold ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {pl >= 0 ? '+' : ''}${pl.toFixed(2)} ({plpc.toFixed(2)}%)
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-700 text-sm">{sym}</span>
-                          <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
-                        </div>
-                        <span className="text-xs font-mono text-gray-500">
-                          In attesa
-                        </span>
-                      </div>
-                    );
-                  }
-                })}
-              </div>
-            </div>
-
+            <button
+              onClick={() => toggleBot('live')}
+              className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
+                status?.liveActive
+                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
+              }`}
+            >
+              {status?.liveActive ? (
+                <><Square className="w-3.5 h-3.5 fill-current" /> Stop Real</>
+              ) : (
+                <><Play className="w-3.5 h-3.5 fill-current" /> Start Real</>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Daily PnL */}
-        {status?.dailyPnL && status.dailyPnL.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-            <div className="p-4 border-b border-gray-100 bg-gray-50/50">
-              <h2 className="font-medium text-gray-900">Resoconto Giornaliero (P&L)</h2>
-            </div>
-            <div className="divide-y divide-gray-100">
-              {status.dailyPnL.map((day, idx) => (
-                <div key={idx} className="p-4 flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-gray-700">{day.date}</span>
-                    <div className="flex items-center gap-4 text-sm">
-                      <span className="text-gray-500">Saldo: ${(day.balance ?? 0).toFixed(2)}</span>
-                      <span className={`font-bold ${(day.pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {(day.pnl ?? 0) >= 0 ? '+' : ''}${(day.pnl ?? 0).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                  {day.news && (
-                    <div className="text-sm text-amber-700 bg-amber-50 p-2 rounded flex items-start gap-2">
-                      <span className="font-bold">News:</span> {day.news}
-                    </div>
-                  )}
-                  {day.breakdown && day.breakdown.length > 0 && (
-                    <div className="bg-gray-50 rounded-lg p-3 text-xs">
-                      <div className="text-gray-500 mb-2 font-medium">Composizione Portafoglio a fine giornata:</div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                        {day.breakdown.map((item, bIdx) => (
-                          <div key={bIdx} className="bg-white p-2 rounded border border-gray-200">
-                            <div className="font-bold text-gray-800 flex justify-between items-center">
-                              <span>{item.symbol}</span>
-                              {item.pnl !== undefined && item.pnlPercent !== undefined && (
-                                <span className={(item.pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                  {(item.pnl ?? 0) >= 0 ? '+' : ''}${(item.pnl ?? 0).toFixed(2)} ({(item.pnl ?? 0) >= 0 ? '+' : ''}{(item.pnlPercent ?? 0).toFixed(2)}%)
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-gray-500">Qtà: {(item.shares ?? 0).toFixed(4)}</div>
-                            <div className="text-gray-500">Prezzo: ${(item.price ?? 0).toFixed(2)}</div>
-                            <div className="text-gray-700 font-medium">Valore: ${(item.value ?? 0).toFixed(2)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-
-
-        {/* Logs */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
-          <div className="p-4 border-b border-gray-100 bg-gray-50/50">
-            <h2 className="font-medium text-gray-900">Registro Operazioni (Server)</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {logs.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center mt-4">Nessun evento registrato.</p>
-            ) : (
-              logs.map((log, index) => {
-                // Extract timestamp and message
-                const match = log.match(/^\[(.*?)\] (.*)$/);
-                if (match) {
-                  const [_, timestamp, message] = match;
-                  const time = new Date(timestamp).toLocaleTimeString();
-                  
-                  // Colorize profit/loss
-                  let msgClass = "text-gray-700";
-                  if (message.includes('+€')) msgClass = "text-green-600 font-medium";
-                  if (message.includes('-€')) msgClass = "text-red-600 font-medium";
-
-                  return (
-                    <div key={index} className="text-sm font-mono flex gap-4 p-2 hover:bg-gray-50 rounded">
-                      <span className="text-gray-400 shrink-0">{time}</span>
-                      <span className={msgClass}>{message}</span>
-                    </div>
-                  );
-                }
-                return <div key={index} className="text-sm font-mono text-gray-700 p-2">{log}</div>;
-              })
-            )}
-          </div>
+        {/* Dual Panels */}
+        <div className="flex flex-col lg:flex-row gap-6">
+          {status?.paper && (
+            <AccountPanel account={status.paper} title="Conto Simulazione (Paper)" isActive={!!status.paperActive} type="paper" />
+          )}
+          {status?.live && (
+            <AccountPanel account={status.live} title="Conto Reale (Live)" isActive={!!status.liveActive} type="live" />
+          )}
         </div>
 
-        {/* Daily Report */}
+        {/* Daily Report Motivation */}
         {status?.latestDailyReport && (
-          <div className="bg-purple-50 p-6 rounded-2xl shadow-sm border border-purple-100 mt-6">
+          <div className="bg-purple-50 p-6 rounded-2xl shadow-sm border border-purple-100 mt-6 mb-6">
             <h2 className="text-lg font-medium text-purple-900 mb-3 flex items-center gap-2">
               <Activity className="w-5 h-5" />
               Report Motivazionale di Fine Giornata
@@ -504,43 +207,14 @@ export default function App() {
             <div className="bg-white p-4 rounded-lg border border-purple-200 whitespace-pre-wrap font-sans text-sm text-purple-800 shadow-inner">
               {status.latestDailyReport}
             </div>
-            <p className="text-xs text-purple-500 mt-3">
-              Copia questo report e incollalo nella chat per correggere eventuali errori di valutazione del bot.
-            </p>
-          </div>
-        )}
-        
-        {/* Diario di Bordo (Logic Logs) */}
-        {status?.dailyLogicLogs && status.dailyLogicLogs.length > 0 && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mt-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-gray-500" />
-              Diario di Bordo (Ragionamento Bot)
-            </h2>
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
-              {[...status.dailyLogicLogs].reverse().map((log, idx) => (
-                <div key={idx} className="border-l-2 border-blue-500 pl-4 py-2">
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>{new Date(log.timestamp).toLocaleString()}</span>
-                    <span className="font-mono bg-gray-100 px-1 rounded">{log.symbol}</span>
-                  </div>
-                  <div className="text-sm font-medium mb-1">
-                    Azione scelta: <span className={log.action === 'BUY' ? 'text-green-600' : log.action === 'SELL' ? 'text-red-600' : 'text-gray-600'}>{log.action}</span>
-                  </div>
-                  <div className="text-sm text-gray-700 italic">
-                    "{log.reasoning}"
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
         {/* Feedback Form */}
-        <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6 mb-6">
+        <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6">
            <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
              <MessageSquare className="w-5 h-5 text-gray-500" />
-             Loop di Correzione (Invia Regole)
+             Loop di Correzione (Invia Regole al Bot)
            </h2>
            <form onSubmit={async (e) => {
              e.preventDefault();
@@ -557,12 +231,12 @@ export default function App() {
            }} className="flex flex-col gap-3">
              <textarea 
                name="rule" 
-               rows={3} 
+               rows={2} 
                placeholder="Es. 'Sei stato troppo aggressivo sull'oro in fase di incertezza, sii più cauto.'"
                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm p-3 border"
              ></textarea>
              <button type="submit" className="self-end bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-               Invia Regola al Bot
+               Invia Regola
              </button>
            </form>
            {status?.userFeedbackRules && status.userFeedbackRules.length > 0 && (
@@ -576,7 +250,7 @@ export default function App() {
              </div>
            )}
         </div>
-        
+
       </div>
     </div>
   );
