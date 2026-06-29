@@ -231,11 +231,24 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
     botData[mode].accountNumber = account.account_number;
     
-    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
+    const buyingPower = parseFloat(account.buying_power || '0');
+    
+    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${buyingPower.toFixed(2)}`);
     
     // Check sentiment before buying
     const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
     if (sentimentScore > 0.2) {
+        if (buyingPower < 10) {
+            addLog(mode, `[Mercato] Sentiment positivo per SPY, ma potere d'acquisto insufficiente ($${buyingPower.toFixed(2)}).`);
+            botData[mode].dailyLogicLogs.push({
+                timestamp: new Date().toISOString(),
+                symbol: 'SPY',
+                action: 'SKIP',
+                reasoning: 'Insufficient buying power'
+            });
+            return;
+        }
+
         addLog(mode, `[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
         botData[mode].dailyLogicLogs.push({
             timestamp: new Date().toISOString(),
@@ -254,7 +267,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           },
           body: JSON.stringify({
             symbol: 'SPY',
-            qty: 1,
+            notional: 10,
             side: 'buy',
             type: 'market',
             time_in_force: 'day'
