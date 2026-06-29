@@ -98,14 +98,39 @@ let botStatus: {
 };
 let tradeLogs: string[] = [];
 
-function addLog(message: string) {
-  const timestamp = new Date().toISOString();
-  tradeLogs.unshift(`[${timestamp}] ${message}`);
-  // Keep only the last 100 logs
-  if (tradeLogs.length > 100) {
-    tradeLogs = tradeLogs.slice(0, 100);
+const botData = {
+  paper: {
+    balance: 100.0,
+    cash: 100.0,
+    accountNumber: undefined as string | undefined,
+    dailyPnL: [] as any[],
+    dailyLogicLogs: [] as any[],
+    logs: [] as string[]
+  },
+  live: {
+    balance: 100.0,
+    cash: 100.0,
+    accountNumber: undefined as string | undefined,
+    dailyPnL: [] as any[],
+    dailyLogicLogs: [] as any[],
+    logs: [] as string[]
   }
-  console.log(message);
+};
+
+function addLog(mode: 'paper' | 'live' | 'system', message: string) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `[${timestamp}] ${message}`;
+  
+  if (mode === 'paper' || mode === 'system') {
+    botData.paper.logs.unshift(logMsg);
+    if (botData.paper.logs.length > 100) botData.paper.logs = botData.paper.logs.slice(0, 100);
+  }
+  if (mode === 'live' || mode === 'system') {
+    botData.live.logs.unshift(logMsg);
+    if (botData.live.logs.length > 100) botData.live.logs = botData.live.logs.slice(0, 100);
+  }
+  
+  console.log(logMsg);
 }
 
 const marketEvents: Record<string, string> = {
@@ -186,7 +211,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
   
   if (!isConfigured) {
-    if (force) addLog(`[Alpaca ${labelTipoConto}] API Key mancante.`);
+    if (force) addLog(mode, `[Alpaca ${labelTipoConto}] API Key mancante.`);
     return;
   }
   
@@ -203,16 +228,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     }
     
     const account = await response.json();
-    botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
-    botStatus.accountNumber = account.account_number;
+    botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
+    botData[mode].accountNumber = account.account_number;
     
-    addLog(`[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botStatus.balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
+    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
     
     // Check sentiment before buying
     const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
     if (sentimentScore > 0.2) {
-        addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
-        botStatus.dailyLogicLogs?.push({
+        addLog(mode, `[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
+        botData[mode].dailyLogicLogs.push({
             timestamp: new Date().toISOString(),
             symbol: 'SPY',
             action: 'BUY',
@@ -238,15 +263,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         
         if (orderResponse.ok) {
           const orderData = await orderResponse.json();
-          addLog(`[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
+          addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
         } else {
           const errorData = await orderResponse.json();
-          addLog(`[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
+          addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
         }
         
     } else {
-        addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
-        botStatus.dailyLogicLogs?.push({
+        addLog(mode, `[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
+        botData[mode].dailyLogicLogs.push({
             timestamp: new Date().toISOString(),
             symbol: 'SPY',
             action: 'HOLD',
@@ -254,13 +279,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         });
     }
   } catch (error: any) {
-    addLog(`[Alpaca Errore] ${error.message}`);
+    addLog(mode, `[Alpaca Errore] ${error.message}`);
   }
 }
 
 async function executeTradingCycle(force: boolean = false) {
   if (!botStatus.active && !force) {
-    addLog(`[System] Ciclo di trading ignorato: bot non attivo.`);
+    addLog('system', `[System] Ciclo di trading ignorato: bot non attivo.`);
     return;
   }
   
@@ -277,20 +302,21 @@ async function executeTradingCycle(force: boolean = false) {
   }
   
   if (!executed) {
-    addLog(`[Alpaca] Nessun conto attivo per il trading.`);
+    addLog('system', `[Alpaca] Nessun conto attivo per il trading.`);
   }
 }
 
 async function generateAndSendDailyReport() {
   try {
-    addLog('[Report Giornaliero] Inizio generazione report...');
+    addLog('system', '[Report Giornaliero] Inizio generazione report...');
     
     // Raccoglie dati sull'andamento giornaliero (se presenti)
     const todayStr = new Date().toISOString().split('T')[0];
-    const todaysPnL = botStatus.dailyPnL?.find(d => d.date === todayStr);
+    const todaysPnLPaper = botData.paper.dailyPnL?.find(d => d.date === todayStr);
+    const todaysPnLLive = botData.live.dailyPnL?.find(d => d.date === todayStr);
     
     // Limit logs per non sforare context window
-    const recentLogs = tradeLogs.slice(0, 100).join('\n');
+    const recentLogs = botData.paper.logs.slice(0, 50).join('\n') + '\n\n' + botData.live.logs.slice(0, 50).join('\n');
     
     const prompt = `Sei l'analista esperto del bot di trading. La giornata di mercato si è conclusa (o sta per concludersi).
 Genera un report motivazionale in cui descrivi in dettaglio le motivazioni delle scelte fatte dal bot durante le ultime sessioni di trading.
@@ -300,21 +326,26 @@ I tuoi obiettivi:
 3. Includere alla fine del report una sezione "PROMPT DI CORREZIONE" che l'utente può semplicemente copiare e incollare per migliorare il bot.
 Il formato deve essere professionale e leggibile. 
 
-Dati recenti (PNL di oggi):
-${JSON.stringify(todaysPnL || 'Nessun dato di PNL consolidato per oggi')}
+Dati recenti (PNL Paper):
+${JSON.stringify(todaysPnLPaper || 'Nessun dato di PNL consolidato per oggi')}
+
+Dati recenti (PNL Live):
+${JSON.stringify(todaysPnLLive || 'Nessun dato di PNL consolidato per oggi')}
 
 Ultimi log di esecuzione (azioni, eventi):
 ${recentLogs}
 
-Log della logica decisionale del bot (ragionamento interno):
-${JSON.stringify(botStatus.dailyLogicLogs?.slice(-50) || 'Nessun log logico')}
+Log della logica decisionale del bot (ragionamento interno Paper):
+${JSON.stringify(botData.paper.dailyLogicLogs?.slice(-25) || 'Nessun log logico')}
+
+Log della logica decisionale del bot (ragionamento interno Live):
+${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')}
 `;
 
     const response = await getAi().models.generateContent({
       model: "gemini-3.1-flash-lite",
       contents: prompt,
     });
-    
     const reportText = response.text || 'Nessun report generato.';
     botStatus.latestDailyReport = reportText;
     
@@ -332,7 +363,7 @@ ${JSON.stringify(botStatus.dailyLogicLogs?.slice(-50) || 'Nessun log logico')}
         },
       });
     } else {
-      addLog('[Report Giornaliero] Credenziali SMTP assenti. Uso Ethereal per test (non arriverà alla tua mail reale).');
+      addLog('system', '[Report Giornaliero] Credenziali SMTP assenti. Uso Ethereal per test (non arriverà alla tua mail reale).');
       const testAccount = await nodemailer.createTestAccount();
       transporter = nodemailer.createTransport({
         host: "smtp.ethereal.email",
@@ -352,22 +383,22 @@ ${JSON.stringify(botStatus.dailyLogicLogs?.slice(-50) || 'Nessun log logico')}
       text: reportText,
     });
 
-    addLog(`[Report Giornaliero] Email inviata: ${nodemailer.getTestMessageUrl(info) || 'Successo'}`);
+    addLog('system', `[Report Giornaliero] Email inviata: ${nodemailer.getTestMessageUrl(info) || 'Successo'}`);
   } catch (error: any) {
-    addLog(`[Report Giornaliero Errore] ${error.message}`);
+    addLog('system', `[Report Giornaliero Errore] ${error.message}`);
     console.error(error);
   }
 }
 
 // Endpoint per trigger report (supporta sia Cloud Scheduler che manuale)
 app.all(['/run-daily-report', '/api/trigger-daily-report'], async (req, res) => {
-  addLog('[Trigger Report] Ricevuta richiesta di generazione report da Cloud Scheduler o manuale...');
+  addLog('system', '[Trigger Report] Ricevuta richiesta di generazione report da Cloud Scheduler o manuale...');
   try {
     await generateAndSendDailyReport();
-    addLog('[Trigger Report] Generazione report completata. Rispondo OK.');
+    addLog('system', '[Trigger Report] Generazione report completata. Rispondo OK.');
     res.status(200).send('OK');
   } catch (error: any) {
-    addLog(`[Trigger Report Errore] Errore critico nel report: ${error.message}`);
+    addLog('system', `[Trigger Report Errore] Errore critico nel report: ${error.message}`);
     res.status(200).send(`ERROR_BUT_HANDLED: ${error.message}`);
   }
 });
@@ -380,7 +411,7 @@ app.post('/api/feedback', (req, res) => {
       botStatus.userFeedbackRules = [];
     }
     botStatus.userFeedbackRules.push(rule);
-    addLog(`[Feedback Utente] Aggiunta nuova regola: ${rule}`);
+    addLog('system', `[Feedback Utente] Aggiunta nuova regola: ${rule}`);
     res.json({ success: true, message: 'Regola aggiunta con successo.' });
   } else {
     res.status(400).json({ success: false, message: 'Regola non valida.' });
@@ -388,14 +419,14 @@ app.post('/api/feedback', (req, res) => {
 });
 
 app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
-  addLog('[Trigger Strategy] Ricevuta richiesta di attivazione strategia da Cloud Scheduler o manuale...');
+  addLog('system', '[Trigger Strategy] Ricevuta richiesta di attivazione strategia da Cloud Scheduler o manuale...');
   try {
     // Forziamo l'esecuzione per evitare che lo stato in-memory 'active=false' (dovuto a cold start) blocchi il bot
     await executeTradingCycle(true);
-    addLog('[Trigger Strategy] Ciclo di trading completato con successo. Rispondo OK.');
+    addLog('system', '[Trigger Strategy] Ciclo di trading completato con successo. Rispondo OK.');
     res.status(200).send('OK');
   } catch (error: any) {
-    addLog(`[Trigger Strategy Errore] Errore critico nel ciclo di trading: ${error.message}`);
+    addLog('system', `[Trigger Strategy Errore] Errore critico nel ciclo di trading: ${error.message}`);
     res.status(200).send(`ERROR_BUT_HANDLED: ${error.message}`);
   }
 });
@@ -408,11 +439,13 @@ app.post('/api/analyze-market', async (req, res) => {
 
 app.get('/api/status', async (req, res) => {
   let positions = [];
-  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig(botStatus.tradingMode);
+  const mode = (req.query.mode as 'paper' | 'live') || botStatus.tradingMode || 'paper';
+  const data = botData[mode];
+  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
   
   // Dynamic update of mode based on actual environment configuration and chosen trading mode
   botStatus.mode = isConfigured 
-    ? `Alpaca (${botStatus.tradingMode === 'live' ? 'Reale' : 'Simulazione'})` 
+    ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 
     : 'Alpaca (Configurazione mancante)';
   
   if (isConfigured) {
@@ -435,8 +468,8 @@ app.get('/api/status', async (req, res) => {
       });
       if (accResponse.ok) {
         const account = await accResponse.json();
-        botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
-        botStatus.accountNumber = account.account_number;
+        data.balance = parseFloat(account.equity || account.portfolio_value || '0');
+        data.accountNumber = account.account_number;
       }
     } catch (e) {
       console.error('Error fetching Alpaca data', e);
@@ -444,8 +477,16 @@ app.get('/api/status', async (req, res) => {
   }
 
   res.json({
-    status: { ...botStatus, positions },
-    logs: tradeLogs,
+    status: { 
+      ...botStatus, 
+      balance: data.balance,
+      cash: data.cash,
+      accountNumber: data.accountNumber,
+      dailyPnL: data.dailyPnL,
+      dailyLogicLogs: data.dailyLogicLogs,
+      positions 
+    },
+    logs: data.logs,
   });
 });
 
@@ -455,25 +496,25 @@ app.post('/api/toggle', (req, res) => {
   if (target === 'paper') {
     botStatus.paperActive = !botStatus.paperActive;
     if (botStatus.paperActive) {
-      addLog('Bot avviato sul conto Simulazione (Paper).');
+      addLog('paper', 'Bot avviato sul conto Simulazione (Paper).');
     } else {
-      addLog('Bot arrestato sul conto Simulazione (Paper).');
+      addLog('paper', 'Bot arrestato sul conto Simulazione (Paper).');
     }
   } else if (target === 'live') {
     botStatus.liveActive = !botStatus.liveActive;
     if (botStatus.liveActive) {
-      addLog('Bot avviato sul conto Reale (Live).');
+      addLog('live', 'Bot avviato sul conto Reale (Live).');
     } else {
-      addLog('Bot arrestato sul conto Reale (Live).');
+      addLog('live', 'Bot arrestato sul conto Reale (Live).');
     }
   } else if (target === 'both') {
     const nextState = !(botStatus.paperActive || botStatus.liveActive);
     botStatus.paperActive = nextState;
     botStatus.liveActive = nextState;
     if (nextState) {
-      addLog('Bot avviato su ENTRAMBI i conti (Paper e Reale).');
+      addLog('system', 'Bot avviato su ENTRAMBI i conti (Paper e Reale).');
     } else {
-      addLog('Bot arrestato su ENTRAMBI i conti (Paper e Reale).');
+      addLog('system', 'Bot arrestato su ENTRAMBI i conti (Paper e Reale).');
     }
   } else {
     // backward compatibility
@@ -487,7 +528,18 @@ app.post('/api/toggle', (req, res) => {
     botStatus.lastCheck = new Date().toISOString();
   }
   
-  res.json({ status: botStatus, logs: tradeLogs });
+  const data = botData[botStatus.tradingMode];
+  res.json({ 
+    status: {
+      ...botStatus,
+      balance: data.balance,
+      cash: data.cash,
+      accountNumber: data.accountNumber,
+      dailyPnL: data.dailyPnL,
+      dailyLogicLogs: data.dailyLogicLogs
+    }, 
+    logs: data.logs 
+  });
 });
 
 app.post('/api/set-trading-mode', (req, res) => {
@@ -498,8 +550,20 @@ app.post('/api/set-trading-mode', (req, res) => {
     botStatus.mode = isConfigured 
       ? `Alpaca (${mode === 'paper' ? 'Simulazione' : 'Reale'})` 
       : 'Alpaca (Configurazione mancante)';
-    addLog(`[Sistema] Visualizzazione impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
-    res.json({ status: botStatus, logs: tradeLogs });
+    addLog('system', `[Sistema] Visualizzazione impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
+    
+    const data = botData[mode];
+    res.json({ 
+      status: {
+        ...botStatus,
+        balance: data.balance,
+        cash: data.cash,
+        accountNumber: data.accountNumber,
+        dailyPnL: data.dailyPnL,
+        dailyLogicLogs: data.dailyLogicLogs
+      }, 
+      logs: data.logs 
+    });
   } else {
     res.status(400).json({ success: false, message: 'Modalità di trading non valida.' });
   }
@@ -521,9 +585,22 @@ app.post('/api/reset', (req, res) => {
     dailyLogicLogs: [],
     userFeedbackRules: []
   };
-  tradeLogs = [];
-  addLog('Sistema ripristinato a €100.00');
-  res.json({ status: botStatus, logs: tradeLogs });
+  botData.paper = { balance: 100.0, cash: 100.0, accountNumber: undefined, dailyPnL: [], dailyLogicLogs: [], logs: [] };
+  botData.live = { balance: 100.0, cash: 100.0, accountNumber: undefined, dailyPnL: [], dailyLogicLogs: [], logs: [] };
+  addLog('system', 'Sistema ripristinato a €100.00');
+  
+  const data = botData['paper'];
+  res.json({ 
+    status: {
+      ...botStatus,
+      balance: data.balance,
+      cash: data.cash,
+      accountNumber: data.accountNumber,
+      dailyPnL: data.dailyPnL,
+      dailyLogicLogs: data.dailyLogicLogs
+    }, 
+    logs: data.logs 
+  });
 });
 
 app.post('/api/study-markets', async (req, res) => {
