@@ -59,6 +59,23 @@ export default function App() {
     }
   };
 
+  const setTradingMode = async (mode: 'paper' | 'live') => {
+    try {
+      const res = await fetch('/api/set-trading-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
+      if (res.ok) {
+        const data: BotStateResponse = await res.json();
+        setStatus(data.status);
+        setLogs(data.logs);
+      }
+    } catch (error) {
+      console.error('Error setting trading mode:', error);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -88,10 +105,34 @@ export default function App() {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+            {/* Selettore Tipo di Conto */}
+            <div className="flex items-center justify-between gap-1 bg-gray-100 p-1 rounded-xl self-stretch sm:self-auto border border-gray-200">
+              <button
+                onClick={() => setTradingMode('paper')}
+                className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                  status?.tradingMode === 'paper'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                Simulazione
+              </button>
+              <button
+                onClick={() => setTradingMode('live')}
+                className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                  status?.tradingMode === 'live'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                Soldi Reali
+              </button>
+            </div>
+
             <button
               onClick={toggleBot}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
+              className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
                 status?.active 
                   ? 'bg-red-50 text-red-700 hover:bg-red-100' 
                   : 'bg-gray-900 text-white hover:bg-gray-800'

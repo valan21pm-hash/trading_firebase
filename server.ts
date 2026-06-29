@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import nodemailer from 'nodemailer';
@@ -28,11 +29,17 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-const isAlpacaConfigured = !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
-const isAlpacaLive = process.env.ALPACA_API_KEY?.startsWith('AK') || process.env.ALPACA_PAPER_TRADING === 'false';
-const ALPACA_BASE_URL = isAlpacaLive 
-  ? 'https://api.alpaca.markets/v2'
-  : 'https://paper-api.alpaca.markets/v2';
+function getAlpacaConfig() {
+  const isConfigured = !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
+  // Default to paper trading if botStatus is not defined yet, otherwise use current user preference
+  const tradingMode = typeof botStatus !== 'undefined' ? botStatus.tradingMode : 'paper';
+  const isLive = tradingMode === 'live';
+  const baseUrl = isLive 
+    ? 'https://api.alpaca.markets/v2'
+    : 'https://paper-api.alpaca.markets/v2';
+  return { isConfigured, isLive, baseUrl };
+}
+
 const ALPACA_DATA_URL = 'https://data.alpaca.markets/v2';
 
 const basePrices: Record<string, number> = {
@@ -55,6 +62,7 @@ let botStatus: {
   balance: number;
   lastCheck: string | null;
   mode: string;
+  tradingMode: 'paper' | 'live';
   accountNumber?: string;
   dailyPnL?: { date: string; pnl: number; balance: number; breakdown?: any[]; news?: string }[];
   cash?: number;
@@ -65,7 +73,8 @@ let botStatus: {
   active: false,
   balance: 100.0,
   lastCheck: null as string | null,
-  mode: (isAlpacaConfigured ? 'Alpaca' : 'Alpaca (Configurazione mancante)'),
+  mode: (getAlpacaConfig().isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
+  tradingMode: 'paper',
   dailyPnL: [],
   cash: 100.0,
   latestDailyReport: undefined,
@@ -166,9 +175,10 @@ async function executeTradingCycle(force: boolean = false) {
   botStatus.lastCheck = new Date().toISOString();
   
   // Logic for Alpaca
-  if (isAlpacaConfigured) {
+  const { isConfigured, isLive, baseUrl } = getAlpacaConfig();
+  if (isConfigured) {
     try {
-      const response = await fetch(`${ALPACA_BASE_URL}/account`, {
+      const response = await fetch(`${baseUrl}/account`, {
         headers: {
           'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
           'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
@@ -182,12 +192,14 @@ async function executeTradingCycle(force: boolean = false) {
       const account = await response.json();
       botStatus.balance = parseFloat(account.equity || account.portfolio_value || '0');
       botStatus.accountNumber = account.account_number;
-      addLog(`[Alpaca] Account Live verificato. Equity: $${botStatus.balance.toFixed(2)} | Buying Power: $${account.buying_power}`);
+      
+      const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
+      addLog(`[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botStatus.balance.toFixed(2)} | Potere d'Acquisto: $${account.buying_power}`);
       
       // Check sentiment before buying
       const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
       if (sentimentScore > 0.2) {
-          addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca.`);
+          addLog(`[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
           botStatus.dailyLogicLogs?.push({
               timestamp: new Date().toISOString(),
               symbol: 'SPY',
@@ -195,8 +207,8 @@ async function executeTradingCycle(force: boolean = false) {
               reasoning: sentimentReasoning
           });
           
-          // Esecuzione REALE dell'ordine su Alpaca
-          const orderResponse = await fetch(`${ALPACA_BASE_URL}/orders`, {
+          // Esecuzione dell'ordine su Alpaca
+          const orderResponse = await fetch(`${baseUrl}/orders`, {
             method: 'POST',
             headers: {
               'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
@@ -214,14 +226,14 @@ async function executeTradingCycle(force: boolean = false) {
           
           if (orderResponse.ok) {
             const orderData = await orderResponse.json();
-            addLog(`[Alpaca] Ordine BUY eseguito per SPY! ID: ${orderData.id}`);
+            addLog(`[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
           } else {
             const errorData = await orderResponse.json();
             addLog(`[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
           }
           
       } else {
-          addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Attendo.`);
+          addLog(`[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
           botStatus.dailyLogicLogs?.push({
               timestamp: new Date().toISOString(),
               symbol: 'SPY',
@@ -367,10 +379,16 @@ app.post('/api/analyze-market', async (req, res) => {
 
 app.get('/api/status', async (req, res) => {
   let positions = [];
+  const { isConfigured, baseUrl } = getAlpacaConfig();
   
-  if (isAlpacaConfigured) {
+  // Dynamic update of mode based on actual environment configuration and chosen trading mode
+  botStatus.mode = isConfigured 
+    ? `Alpaca (${botStatus.tradingMode === 'live' ? 'Reale' : 'Simulazione'})` 
+    : 'Alpaca (Configurazione mancante)';
+  
+  if (isConfigured) {
     try {
-      const posResponse = await fetch(`${ALPACA_BASE_URL}/positions`, {
+      const posResponse = await fetch(`${baseUrl}/positions`, {
         headers: {
           'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
           'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
@@ -380,7 +398,7 @@ app.get('/api/status', async (req, res) => {
         positions = await posResponse.json();
       }
       
-      const accResponse = await fetch(`${ALPACA_BASE_URL}/account`, {
+      const accResponse = await fetch(`${baseUrl}/account`, {
         headers: {
           'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
           'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || ''
@@ -415,15 +433,34 @@ app.post('/api/toggle', (req, res) => {
   res.json({ status: botStatus, logs: tradeLogs });
 });
 
+app.post('/api/set-trading-mode', (req, res) => {
+  const { mode } = req.body;
+  if (mode === 'paper' || mode === 'live') {
+    botStatus.tradingMode = mode;
+    const { isConfigured } = getAlpacaConfig();
+    botStatus.mode = isConfigured 
+      ? `Alpaca (${mode === 'paper' ? 'Simulazione' : 'Reale'})` 
+      : 'Alpaca (Configurazione mancante)';
+    addLog(`[Sistema] Modalità di trading impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
+    res.json({ status: botStatus, logs: tradeLogs });
+  } else {
+    res.status(400).json({ success: false, message: 'Modalità di trading non valida.' });
+  }
+});
+
 app.post('/api/reset', (req, res) => {
+  const { isConfigured } = getAlpacaConfig();
   botStatus = {
     active: false,
     balance: 100.0,
     lastCheck: null,
-    mode: (isAlpacaConfigured ? 'Alpaca' : 'Alpaca (Configurazione mancante)'),
+    mode: (isConfigured ? 'Alpaca (Simulazione)' : 'Alpaca (Configurazione mancante)'),
+    tradingMode: 'paper',
     dailyPnL: [],
     cash: 100.0,
-    latestDailyReport: undefined
+    latestDailyReport: undefined,
+    dailyLogicLogs: [],
+    userFeedbackRules: []
   };
   tradeLogs = [];
   addLog('Sistema ripristinato a €100.00');

@@ -23,6 +23,7 @@ export interface BotStatus {
   lastCheck: string | null;
   accountNumber?: string;
   mode: string;
+  tradingMode?: 'paper' | 'live';
   positions?: Position[];
   dailyPnL?: { 
     date: string; 
