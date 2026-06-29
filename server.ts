@@ -36,11 +36,11 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
   let secretKey = '';
   
   if (isLive) {
-    apiKey = process.env.ALPACA_LIVE_API_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_API_KEY : '') || '';
-    secretKey = process.env.ALPACA_LIVE_SECRET_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_SECRET_KEY : '') || '';
+    apiKey = process.env.ALPACA_LIVE_API_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_API_KEY : process.env.ALPACA_API_KEY) || '';
+    secretKey = process.env.ALPACA_LIVE_SECRET_KEY || (process.env.ALPACA_PAPER_TRADING === 'false' ? process.env.ALPACA_SECRET_KEY : process.env.ALPACA_SECRET_KEY) || '';
   } else {
-    apiKey = process.env.ALPACA_PAPER_API_KEY || (process.env.ALPACA_PAPER_TRADING !== 'false' ? process.env.ALPACA_API_KEY : '') || '';
-    secretKey = process.env.ALPACA_PAPER_SECRET_KEY || (process.env.ALPACA_PAPER_TRADING !== 'false' ? process.env.ALPACA_SECRET_KEY : '') || '';
+    apiKey = process.env.ALPACA_PAPER_API_KEY || process.env.ALPACA_API_KEY || '';
+    secretKey = process.env.ALPACA_PAPER_SECRET_KEY || process.env.ALPACA_SECRET_KEY || '';
   }
   
   const isConfigured = !!(apiKey && secretKey);

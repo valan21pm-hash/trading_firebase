@@ -2,19 +2,35 @@ import { useEffect, useState } from 'react';
 import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2 } from 'lucide-react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 
-function AccountPanel({ account, title, isActive, type }: { account: AccountData; title: string; isActive: boolean; type: 'paper' | 'live' }) {
+function AccountPanel({ account, title, isActive, type, onToggle }: { account: AccountData; title: string; isActive: boolean; type: 'paper' | 'live', onToggle: (type: 'paper' | 'live') => void }) {
   if (!account) return null;
 
   return (
-    <div className={`flex-1 min-w-[300px] border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white`}>
-      <div className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex justify-between items-center`}>
-        <h2 className={`font-semibold ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
-          {type === 'live' ? <TrendingUp className="w-4 h-4" /> : <Activity className="w-4 h-4" />}
-          {title}
-        </h2>
-        <span className={`px-2 py-1 text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-          {isActive ? 'ATTIVO' : 'FERMO'}
-        </span>
+    <div className={`flex-1 border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white shadow-sm`}>
+      <div className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center`}>
+        <div className="flex items-center gap-3">
+            <h2 className={`font-semibold ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
+              {type === 'live' ? <TrendingUp className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+              {title}
+            </h2>
+            <span className={`px-2 py-1 text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+              {isActive ? 'ATTIVO' : 'FERMO'}
+            </span>
+        </div>
+        <button
+            onClick={() => onToggle(type)}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+            isActive
+                ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                : type === 'live' ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+            }`}
+        >
+            {isActive ? (
+            <><Square className="w-4 h-4 fill-current" /> Ferma Bot {type === 'live' ? 'Live' : 'Paper'}</>
+            ) : (
+            <><Play className="w-4 h-4 fill-current" /> Avvia Bot {type === 'live' ? 'Live' : 'Paper'}</>
+            )}
+        </button>
       </div>
 
       <div className="p-4 space-y-6">
@@ -95,6 +111,7 @@ function AccountPanel({ account, title, isActive, type }: { account: AccountData
 export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedTab, setSelectedTab] = useState<'paper' | 'live'>('paper');
 
   const fetchStatus = async () => {
     try {
@@ -154,46 +171,37 @@ export default function App() {
             <p className="text-sm text-gray-500 mt-1">Gestisci separatamente i conti Simulazione (Paper) e Reale (Live)</p>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => toggleBot('paper')}
-              className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
-                status?.paperActive
-                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
-              }`}
-            >
-              {status?.paperActive ? (
-                <><Square className="w-3.5 h-3.5 fill-current" /> Stop Paper</>
-              ) : (
-                <><Play className="w-3.5 h-3.5 fill-current" /> Start Paper</>
-              )}
-            </button>
-            
-            <button
-              onClick={() => toggleBot('live')}
-              className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-medium text-xs sm:text-sm transition-all ${
-                status?.liveActive
-                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
-              }`}
-            >
-              {status?.liveActive ? (
-                <><Square className="w-3.5 h-3.5 fill-current" /> Stop Real</>
-              ) : (
-                <><Play className="w-3.5 h-3.5 fill-current" /> Start Real</>
-              )}
-            </button>
+          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+             <button
+               onClick={() => setSelectedTab('paper')}
+               className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
+                 selectedTab === 'paper' 
+                   ? 'bg-white text-indigo-700 shadow-sm' 
+                   : 'text-gray-500 hover:text-gray-700'
+               }`}
+             >
+               Simulazione (Paper)
+             </button>
+             <button
+               onClick={() => setSelectedTab('live')}
+               className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
+                 selectedTab === 'live' 
+                   ? 'bg-white text-emerald-700 shadow-sm' 
+                   : 'text-gray-500 hover:text-gray-700'
+               }`}
+             >
+               Reale (Live)
+             </button>
           </div>
         </div>
 
-        {/* Dual Panels */}
-        <div className="flex flex-col lg:flex-row gap-6">
-          {status?.paper && (
-            <AccountPanel account={status.paper} title="Conto Simulazione (Paper)" isActive={!!status.paperActive} type="paper" />
+        {/* Selected Panel */}
+        <div>
+          {selectedTab === 'paper' && status?.paper && (
+            <AccountPanel account={status.paper} title="Conto Simulazione (Paper)" isActive={!!status.paperActive} type="paper" onToggle={toggleBot} />
           )}
-          {status?.live && (
-            <AccountPanel account={status.live} title="Conto Reale (Live)" isActive={!!status.liveActive} type="live" />
+          {selectedTab === 'live' && status?.live && (
+            <AccountPanel account={status.live} title="Conto Reale (Live)" isActive={!!status.liveActive} type="live" onToggle={toggleBot} />
           )}
         </div>
 
