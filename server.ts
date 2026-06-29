@@ -280,16 +280,30 @@ const marketEvents: Record<string, string> = {
 const sentimentCache = new Map<string, {score: number, reasoning: string}>();
 let isQuotaExceeded = false;
 
-// Core trading logic extracted for flexibility
-async function getMarketSentiment(symbol: string, context?: string): Promise<{score: number, reasoning: string}> {
+// Bulk market sentiment to execute multiple analyses in a single API request and avoid rate limit issues
+async function getBulkMarketSentiment(symbols: string[], context?: string): Promise<Record<string, {score: number, reasoning: string}>> {
   const today = new Date().toISOString().split('T')[0];
-  const cacheKey = `${symbol}:${context || 'default'}:${context ? '' : today}`;
-  if (sentimentCache.has(cacheKey)) {
-    return sentimentCache.get(cacheKey)!;
-  }
+  const results: Record<string, {score: number, reasoning: string}> = {};
   
+  const missingSymbols: string[] = [];
+  for (const sym of symbols) {
+    const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}`;
+    if (sentimentCache.has(cacheKey)) {
+      results[sym] = sentimentCache.get(cacheKey)!;
+    } else {
+      missingSymbols.push(sym);
+    }
+  }
+
+  if (missingSymbols.length === 0) {
+    return results;
+  }
+
   if (isQuotaExceeded) {
-      return {score: 0, reasoning: 'Quota exceeded / rate limited'}; // Return neutral if quota was previously exceeded
+    for (const sym of missingSymbols) {
+      results[sym] = { score: 0, reasoning: 'Quota limitata o superata' };
+    }
+    return results;
   }
 
   try {
@@ -297,43 +311,85 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
       ? `\n\nUSER FEEDBACK RULES TO FOLLOW:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
       : '';
 
-    const prompt = context 
-      ? `Analyze market sentiment for ${symbol} considering this event: ${context}.${feedbackRules}\nReturn a JSON object: {"score": <number between -1 (bearish) and 1 (bullish)>, "reasoning": "<short explanation>"}.`
-      : `Analyze recent market sentiment for ${symbol}.${feedbackRules}\nReturn a JSON object: {"score": <number between -1 (bearish) and 1 (bullish)>, "reasoning": "<short explanation>"}.`;
-      
+    const prompt = context
+      ? `Analizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "In crescita grazie a notizie positive"}\n}`
+      : `Analizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo"}\n}`;
+
     const response = await getAi().models.generateContent({
       model: "gemini-3.1-flash-lite",
       contents: prompt,
     });
-    
-    // We try to parse the JSON output from the model
-    let parsed: any = {};
+
+    let parsed: Record<string, any> = {};
     try {
-       // Sometimes model wraps JSON in markdown blocks
        const cleanedText = (response.text || '{}').replace(/```json|```/g, '').trim();
        parsed = JSON.parse(cleanedText);
     } catch(e) {
-       console.error("Failed to parse Gemini JSON output:", response.text);
+       console.error("Failed to parse Gemini bulk JSON output:", response.text);
     }
 
-    const sentimentScore = parseFloat(parsed.score || '0');
-    const resultScore = isNaN(sentimentScore) ? 0 : Math.max(-1, Math.min(1, sentimentScore));
-    const resultReasoning = parsed.reasoning || 'Nessuna spiegazione dettagliata disponibile';
-    
-    const result = { score: resultScore, reasoning: resultReasoning };
-    sentimentCache.set(cacheKey, result);
-    return result;
+    for (const sym of missingSymbols) {
+      const entry = parsed[sym] || {};
+      const sentimentScore = parseFloat(entry.score || '0');
+      const resultScore = isNaN(sentimentScore) ? 0 : Math.max(-1, Math.min(1, sentimentScore));
+      const resultReasoning = entry.reasoning || 'Nessuna spiegazione dettagliata disponibile';
+      
+      const result = { score: resultScore, reasoning: resultReasoning };
+      const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}`;
+      sentimentCache.set(cacheKey, result);
+      results[sym] = result;
+    }
+
+    return results;
   } catch (error: any) {
-    // If rate limited or service unavailable, handle gracefully
     const message = error.message || JSON.stringify(error);
     if (message.includes('429') || message.includes('503') || message.includes('RESOURCE_EXHAUSTED')) {
       console.warn(`API limit hit or service unavailable. Disabling further sentiment analysis.`);
       isQuotaExceeded = true;
-      return {score: 0, reasoning: 'Quota exceeded'};
     }
-    console.error(`Error fetching sentiment for ${symbol}:`, error);
-    return {score: 0, reasoning: 'Error fetching sentiment'};
+    console.error(`Error fetching bulk sentiment:`, error);
+    for (const sym of missingSymbols) {
+      results[sym] = { score: 0, reasoning: 'Errore nel recupero del sentiment' };
+    }
+    return results;
   }
+}
+
+// Single-symbol wrapper using the bulk logic for backward compatibility
+async function getMarketSentiment(symbol: string, context?: string): Promise<{score: number, reasoning: string}> {
+  const results = await getBulkMarketSentiment([symbol], context);
+  return results[symbol] || { score: 0, reasoning: 'Errore recupero sentiment' };
+}
+
+async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl}/clock`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+    if (response.ok) {
+      const data: any = await response.json();
+      return !!data.is_open;
+    }
+  } catch (error) {
+    console.error('[Market Open Check Error] Errore nel recupero dello stato della borsa da Alpaca:', error);
+  }
+  
+  // Fallback in caso di errore API: controlla orario standard USA (lunedì-venerdì, 13:30 - 21:00 UTC)
+  const now = new Date();
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) {
+    return false; // Weekend chiuso
+  }
+  
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const timeInMinutes = hour * 60 + minute;
+  
+  // 13:30 - 21:00 UTC (9:30 AM - 4:00 PM EST/EDT)
+  return timeInMinutes >= 810 && timeInMinutes <= 1260;
 }
 
 async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean) {
@@ -343,6 +399,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   if (!isConfigured) {
     if (force) addLog(mode, `[Alpaca ${labelTipoConto}] API Key mancante.`);
     return;
+  }
+
+  // Verifichiamo se la borsa è aperta (salvo esecuzione forzata manualmente)
+  if (!force) {
+    const open = await isAlpacaMarketOpen(baseUrl, apiKey, secretKey);
+    if (!open) {
+      addLog(mode, `[Borsa] La borsa è chiusa in questo momento. Ciclo automatico ignorato per evitare ordini fuori orario.`);
+      return;
+    }
   }
   
   try {
@@ -361,66 +426,143 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
     botData[mode].accountNumber = account.account_number;
     
-    const buyingPower = parseFloat(account.buying_power || '0');
-    const amountToBuy = mode === 'paper' ? 1000 : 10;
+    let currentBuyingPower = parseFloat(account.buying_power || '0');
+    const amountToBuy = mode === 'paper' ? 1000 : 2;
     
-    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${buyingPower.toFixed(2)}`);
+    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
-    // Check sentiment before buying
-    const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
-    if (sentimentScore > 0.2) {
-        if (buyingPower < amountToBuy) {
-            addLog(mode, `[Mercato] Sentiment positivo per SPY, ma potere d'acquisto insufficiente ($${buyingPower.toFixed(2)} richiesti $${amountToBuy.toFixed(2)}).`);
-            botData[mode].dailyLogicLogs.push({
-                timestamp: new Date().toISOString(),
-                symbol: 'SPY',
-                action: 'SKIP',
-                reasoning: `Insufficient buying power (required $${amountToBuy})`
-            });
-            return;
+    // Recupero delle posizioni aperte correnti per gestire vendite o monitoraggio
+    let openPositions: any[] = [];
+    try {
+      const posResponse = await fetch(`${baseUrl}/positions`, {
+        headers: {
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
         }
+      });
+      if (posResponse.ok) {
+        openPositions = await posResponse.json();
+      }
+    } catch (e: any) {
+      addLog(mode, `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
+    }
 
-        addLog(mode, `[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto di $${amountToBuy} su Alpaca (${labelTipoConto}).`);
+    const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
+    const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
+    const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES];
+
+    // Ottieni i simboli di tutte le posizioni aperte (es. AAPL) che non sono nell'elenco predefinito
+    const openSymbols = openPositions.map((p: any) => p.symbol);
+    const symbolsToAnalyze = Array.from(new Set([...ALL_TRADED_SYMBOLS, ...openSymbols]));
+
+    addLog(mode, `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
+    const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
+
+    // 1. Fase di Vendita (Sell/Close phase): Gestiamo la chiusura delle posizioni se non soddisfano più i requisiti (score <= 0)
+    const closedSymbolsThisCycle = new Set<string>();
+    for (const pos of openPositions) {
+      const symbol = pos.symbol;
+      const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
+      
+      // Se il sentiment è neutro o ribassista (<= 0), chiudiamo la posizione per proteggere il capitale o su richiesta (come per AAPL)
+      if (sentimentScore <= 0) {
+        addLog(mode, `[Portafoglio] Sentiment per ${symbol} è neutro/negativo (${sentimentScore.toFixed(2)}). Procedo alla CHIUSURA della posizione.`);
         botData[mode].dailyLogicLogs.push({
-            timestamp: new Date().toISOString(),
-            symbol: 'SPY',
-            action: 'BUY',
-            reasoning: sentimentReasoning
+          timestamp: new Date().toISOString(),
+          symbol,
+          action: 'SELL',
+          reasoning: `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`
         });
-        
-        // Esecuzione dell'ordine su Alpaca
-        const orderResponse = await fetch(`${baseUrl}/orders`, {
-          method: 'POST',
-          headers: {
-            'APCA-API-KEY-ID': apiKey,
-            'APCA-API-SECRET-KEY': secretKey,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            symbol: 'SPY',
-            notional: amountToBuy,
-            side: 'buy',
-            type: 'market',
-            time_in_force: 'day'
-          })
-        });
-        
-        if (orderResponse.ok) {
-          const orderData = await orderResponse.json();
-          addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per SPY! ID: ${orderData.id}`);
-        } else {
-          const errorData = await orderResponse.json();
-          addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine: ${errorData.message}`);
+
+        try {
+          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}`, {
+            method: 'DELETE',
+            headers: {
+              'APCA-API-KEY-ID': apiKey,
+              'APCA-API-SECRET-KEY': secretKey
+            }
+          });
+          if (closeResponse.ok) {
+            addLog(mode, `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
+            closedSymbolsThisCycle.add(symbol);
+          } else {
+            const errData = await closeResponse.json();
+            addLog(mode, `[Alpaca Errore Chiusura] Impossibile chiudere posizione su ${symbol}: ${errData.message}`);
+          }
+        } catch (err: any) {
+          addLog(mode, `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
         }
-        
-    } else {
-        addLog(mode, `[Mercato] Sentiment neutro/negativo per SPY: ${sentimentScore.toFixed(2)}. Nessuna operazione.`);
-        botData[mode].dailyLogicLogs.push({
-            timestamp: new Date().toISOString(),
-            symbol: 'SPY',
-            action: 'HOLD',
-            reasoning: sentimentReasoning
-        });
+      } else {
+        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning})`);
+      }
+    }
+
+    // 2. Fase di Acquisto (Buy phase): Acquista solo gli asset predefiniti che hanno un forte sentiment positivo (> 0.2)
+    for (const symbol of ALL_TRADED_SYMBOLS) {
+      // Evitiamo di ricomprare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
+      const hasOpenPosition = openSymbols.includes(symbol) && !closedSymbolsThisCycle.has(symbol);
+      if (hasOpenPosition) {
+        // Loggiamo che manteniamo l'asset esistente senza ricomprarlo
+        continue;
+      }
+
+      // Check sentiment before buying from the pre-fetched bulk object
+      const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' }; 
+      if (sentimentScore > 0.2) {
+          if (currentBuyingPower < amountToBuy) {
+              addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
+              botData[mode].dailyLogicLogs.push({
+                  timestamp: new Date().toISOString(),
+                  symbol,
+                  action: 'SKIP',
+                  reasoning: `Insufficient buying power (required $${amountToBuy})`
+              });
+              continue;
+          }
+
+          addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto di $${amountToBuy} su Alpaca (${labelTipoConto}).`);
+          botData[mode].dailyLogicLogs.push({
+              timestamp: new Date().toISOString(),
+              symbol,
+              action: 'BUY',
+              reasoning: sentimentReasoning
+          });
+          
+          // Esecuzione dell'ordine su Alpaca
+          const orderResponse = await fetch(`${baseUrl}/orders`, {
+            method: 'POST',
+            headers: {
+              'APCA-API-KEY-ID': apiKey,
+              'APCA-API-SECRET-KEY': secretKey,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              symbol,
+              notional: amountToBuy,
+              side: 'buy',
+              type: 'market',
+              time_in_force: 'day'
+            })
+          });
+          
+          if (orderResponse.ok) {
+            const orderData = await orderResponse.json();
+            addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
+            currentBuyingPower -= amountToBuy;
+          } else {
+            const errorData = await orderResponse.json();
+            addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+          }
+          
+      } else {
+          // Se non abbiamo posizioni aperte e il sentiment non è favorevole, non facciamo nulla
+          botData[mode].dailyLogicLogs.push({
+              timestamp: new Date().toISOString(),
+              symbol,
+              action: 'HOLD',
+              reasoning: sentimentReasoning
+          });
+      }
     }
   } catch (error: any) {
     addLog(mode, `[Alpaca Errore] ${error.message}`);
