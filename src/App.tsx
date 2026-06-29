@@ -28,11 +28,10 @@ export default function App() {
 
   useEffect(() => {
     fetchStatus();
-    // Refresh status every 5 seconds, or 500ms if simulation is running
-    const delay = status?.simulationRunning ? 500 : 5000;
-    const interval = setInterval(fetchStatus, delay);
+    // Refresh status every 5 seconds
+    const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [status?.simulationRunning]);
+  }, []);
 
   const toggleBot = async () => {
     try {
@@ -83,8 +82,8 @@ export default function App() {
               <span className="text-sm text-gray-500">
                 Google Cloud Run Backend
               </span>
-              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.mode === 'XTB' ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-blue-50 text-blue-700 ring-blue-700/10'}`}>
-                Broker: {status?.mode === 'XTB' ? 'XTB (Demo)' : 'API Simulazione'}
+              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${status?.accountNumber ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
+                {status?.accountNumber ? `Conto Alpaca: ${status.accountNumber}` : `Broker: ${status?.mode || 'Alpaca'}`}
               </span>
             </div>
           </div>
@@ -110,6 +109,33 @@ export default function App() {
                 </>
               )}
             </button>
+          </div>
+        </div>
+
+        {/* Cloud Scheduler Info */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-2xl shadow-sm border border-blue-100">
+          <div className="space-y-2">
+            <h2 className="text-base font-semibold text-indigo-900 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-indigo-600" />
+              Configurazione Cloud Scheduler (Ogni 2 Minuti, Lun-Ven)
+            </h2>
+            <p className="text-sm text-indigo-700">
+              Per far funzionare il bot 24 ore su 24 ogni 2 minuti (esclusi sabato e domenica) in modalità serverless a consumo (completamente nella quota gratuita), configura un job su Google Cloud Scheduler con i seguenti parametri:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+              <div className="bg-white p-3 rounded-xl border border-indigo-100 text-xs shadow-sm">
+                <span className="text-gray-400 block mb-1 uppercase tracking-wider font-semibold">Frequenza (Cron)</span>
+                <code className="text-indigo-600 font-mono font-bold text-sm bg-indigo-50/50 px-2 py-1 rounded block w-fit">*/2 * * * 1-5</code>
+                <span className="text-gray-500 block mt-1">Ogni 2 minuti, Lunedì-Venerdì, 24/24h</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-indigo-100 text-xs shadow-sm md:col-span-2">
+                <span className="text-gray-400 block mb-1 uppercase tracking-wider font-semibold">Target URL</span>
+                <code className="text-indigo-600 font-mono font-bold text-xs bg-indigo-50/50 px-2 py-1 rounded block break-all">
+                  {typeof window !== 'undefined' ? window.location.origin : 'https://tradingfirebase-26035486497.europe-west1.run.app'}/run-strategy
+                </code>
+                <span className="text-gray-500 block mt-1">Metodo HTTP: <strong className="text-indigo-700">GET</strong> o <strong className="text-indigo-700">POST</strong></span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -154,24 +180,6 @@ export default function App() {
           </div>
         </div>
 
-        {status?.simulationRunning && (
-          <div className="bg-white rounded-2xl shadow-sm border border-blue-100 p-6 mb-6 overflow-hidden relative">
-             <div className="absolute inset-0 bg-blue-50/50" />
-             <div className="relative z-10 flex flex-col gap-2">
-                <div className="flex justify-between text-sm font-medium text-blue-900">
-                  <span>Simulazione giornata in corso (Fast-Forward)...</span>
-                  <span>{status.simulationProgress || 0}%</span>
-                </div>
-                <div className="w-full bg-blue-200/50 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-200 ease-out"
-                    style={{ width: `${status.simulationProgress || 0}%` }}
-                  />
-                </div>
-             </div>
-          </div>
-        )}
-
         {/* Positions Grid */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
           <div className="p-4 border-b border-gray-100 bg-gray-50/50">
@@ -190,7 +198,6 @@ export default function App() {
               <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
                 {EQUITIES_SYMBOLS.map((sym) => {
                   const pos = status?.positions?.find(p => p.symbol === sym);
-                  const assetInfo = status?.simulatedAssets?.[sym];
                   
                   if (pos) {
                     const marketValue = parseFloat(pos.market_value);
@@ -215,7 +222,6 @@ export default function App() {
                       </div>
                     );
                   } else {
-                    const price = assetInfo?.lastPrice;
                     return (
                       <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
                         <div className="flex items-center gap-1.5">
@@ -223,7 +229,7 @@ export default function App() {
                           <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
                         </div>
                         <span className="text-xs font-mono text-gray-500">
-                          {price ? `$${price.toFixed(2)}` : 'In attesa'}
+                          In attesa
                         </span>
                       </div>
                     );
@@ -240,7 +246,6 @@ export default function App() {
               <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
                 {COMMODITIES_SYMBOLS.map((sym) => {
                   const pos = status?.positions?.find(p => p.symbol === sym);
-                  const assetInfo = status?.simulatedAssets?.[sym];
                   
                   if (pos) {
                     const marketValue = parseFloat(pos.market_value);
@@ -265,7 +270,6 @@ export default function App() {
                       </div>
                     );
                   } else {
-                    const price = assetInfo?.lastPrice;
                     return (
                       <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
                         <div className="flex items-center gap-1.5">
@@ -273,7 +277,7 @@ export default function App() {
                           <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
                         </div>
                         <span className="text-xs font-mono text-gray-500">
-                          {price ? `$${price.toFixed(2)}` : 'In attesa'}
+                          In attesa
                         </span>
                       </div>
                     );
@@ -290,7 +294,6 @@ export default function App() {
               <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
                 {BONDS_SYMBOLS.map((sym) => {
                   const pos = status?.positions?.find(p => p.symbol === sym);
-                  const assetInfo = status?.simulatedAssets?.[sym];
                   
                   if (pos) {
                     const marketValue = parseFloat(pos.market_value);
@@ -315,7 +318,6 @@ export default function App() {
                       </div>
                     );
                   } else {
-                    const price = assetInfo?.lastPrice;
                     return (
                       <div key={sym} className="flex items-center justify-between p-2.5 bg-gray-50/60 rounded-lg border border-gray-100/80 transition-all duration-200">
                         <div className="flex items-center gap-1.5">
@@ -323,7 +325,7 @@ export default function App() {
                           <span className="text-[9px] text-gray-400 font-medium bg-gray-100 px-1 py-0.5 rounded border border-gray-200/50">CASH</span>
                         </div>
                         <span className="text-xs font-mono text-gray-500">
-                          {price ? `$${price.toFixed(2)}` : 'In attesa'}
+                          In attesa
                         </span>
                       </div>
                     );

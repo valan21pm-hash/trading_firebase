@@ -21,10 +21,9 @@ export interface BotStatus {
   active: boolean;
   balance: number;
   lastCheck: string | null;
-  mode: 'Alpaca' | 'Simulation';
+  accountNumber?: string;
+  mode: string;
   positions?: Position[];
-  simulationRunning?: boolean;
-  simulationProgress?: number;
   dailyPnL?: { 
     date: string; 
     pnl: number; 
@@ -32,7 +31,6 @@ export interface BotStatus {
     news?: string;
     breakdown?: { symbol: string; shares: number; price: number; value: number; pnl?: number; pnlPercent?: number }[];
   }[];
-  simulatedAssets?: any;
   cash?: number;
   latestDailyReport?: string;
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];

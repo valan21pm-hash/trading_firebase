@@ -19,7 +19,6 @@ EXPOSE 3000
 
 # Variabili d'ambiente utili per la produzione
 ENV NODE_ENV=production
-ENV PORT=3000
 
 # Avvia l'app
 CMD ["npm", "start"]
