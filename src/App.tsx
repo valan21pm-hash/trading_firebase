@@ -117,8 +117,13 @@ export default function App() {
     try {
       const res = await fetch('/api/status');
       if (res.ok) {
-        const data: BotStateResponse = await res.json();
-        setStatus(data.status);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data: BotStateResponse = await res.json();
+          setStatus(data.status);
+        } else {
+          console.warn('Expected JSON response from /api/status, received alternative content type.');
+        }
       }
     } catch (error) {
       console.error('Error fetching bot status:', error);

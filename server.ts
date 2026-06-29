@@ -39,11 +39,17 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
   console.log(`[Alpaca Config Diagnostic] Found keys containing ALPACA:`, foundKeys);
 
   const findEnvVar = (patterns: string[], fallbacks: string[] = []): string => {
-    // Try exact or prefix matches in order
+    // Try exact or prefix/substring matches in order
     for (const pattern of patterns) {
       const up = pattern.toUpperCase();
-      const match = Object.keys(process.env).find(k => k.toUpperCase() === up || k.toUpperCase().startsWith(up));
-      if (match && process.env[match]) return process.env[match]!;
+      const match = Object.keys(process.env).find(k => {
+        const envKey = k.toUpperCase();
+        return envKey === up || envKey.startsWith(up) || up.startsWith(envKey);
+      });
+      if (match && process.env[match]) {
+        console.log(`[Alpaca Config] Matched pattern ${pattern} to environment variable: ${match} (length: ${process.env[match]?.length || 0})`);
+        return process.env[match]!;
+      }
     }
     // Try fallback keys exactly
     for (const fb of fallbacks) {
