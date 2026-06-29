@@ -32,29 +32,49 @@ app.use(express.json());
 function getAlpacaConfig(mode: 'paper' | 'live') {
   const isLive = mode === 'live';
   
+  // Safe diagnostic log of what environment keys are visible starting with ALPACA
+  const foundKeys = Object.keys(process.env)
+    .filter(k => k.toUpperCase().includes('ALPACA'))
+    .map(k => `${k} (len: ${process.env[k]?.length || 0})`);
+  console.log(`[Alpaca Config Diagnostic] Found keys containing ALPACA:`, foundKeys);
+
+  const findEnvVar = (patterns: string[], fallbacks: string[] = []): string => {
+    // Try exact or prefix matches in order
+    for (const pattern of patterns) {
+      const up = pattern.toUpperCase();
+      const match = Object.keys(process.env).find(k => k.toUpperCase() === up || k.toUpperCase().startsWith(up));
+      if (match && process.env[match]) return process.env[match]!;
+    }
+    // Try fallback keys exactly
+    for (const fb of fallbacks) {
+      const up = fb.toUpperCase();
+      const match = Object.keys(process.env).find(k => k.toUpperCase() === up);
+      if (match && process.env[match]) return process.env[match]!;
+    }
+    return '';
+  };
+
   let apiKey = '';
   let secretKey = '';
   
   if (isLive) {
-    apiKey = process.env.ALPACA_LIVE_API_KEY || 
-             process.env.ALPACA_LIVE_API_K || 
-             process.env.ALPACA_LIVE_API || 
-             process.env.ALPACA_API_KEY || '';
-             
-    secretKey = process.env.ALPACA_LIVE_SECRET_KEY || 
-                process.env.ALPACA_LIVE_SECRET || 
-                process.env.ALPACA_LIVE_SECR || 
-                process.env.ALPACA_SECRET_KEY || '';
+    apiKey = findEnvVar(
+      ['APCA_LIVE_KEY', 'ALPACA_LIVE_API_KEY', 'ALPACA_LIVE_API_KE', 'ALPACA_LIVE_API', 'ALPACA_LIVE_AP'],
+      ['ALPACA_API_KEY']
+    );
+    secretKey = findEnvVar(
+      ['APCA_LIVE_SEC', 'ALPACA_LIVE_SECRET_KEY', 'ALPACA_LIVE_SECRET', 'ALPACA_LIVE_SECR', 'ALPACA_LIVE_SEC'],
+      ['ALPACA_SECRET_KEY']
+    );
   } else {
-    apiKey = process.env.ALPACA_PAPER_API_KEY || 
-             process.env.ALPACA_PAPER_API_K || 
-             process.env.ALPACA_PAPER_API || 
-             process.env.ALPACA_API_KEY || '';
-             
-    secretKey = process.env.ALPACA_PAPER_SECRET_KEY || 
-                process.env.ALPACA_PAPER_SECR || 
-                process.env.ALPACA_PAPER_SECRET || 
-                process.env.ALPACA_SECRET_KEY || '';
+    apiKey = findEnvVar(
+      ['APCA_PAPER_KEY', 'ALPACA_PAPER_API_KEY', 'ALPACA_PAPER_API_K', 'ALPACA_PAPER_API', 'ALPACA_PAPER_AP'],
+      ['ALPACA_API_KEY']
+    );
+    secretKey = findEnvVar(
+      ['APCA_PAPER_SEC', 'ALPACA_PAPER_SECRET_KEY', 'ALPACA_PAPER_SECR', 'ALPACA_PAPER_SECRET', 'ALPACA_PAPER_SEC'],
+      ['ALPACA_SECRET_KEY']
+    );
   }
   
   const isConfigured = !!(apiKey && secretKey);
@@ -246,24 +266,25 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     botData[mode].accountNumber = account.account_number;
     
     const buyingPower = parseFloat(account.buying_power || '0');
+    const amountToBuy = mode === 'paper' ? 1000 : 10;
     
     addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${buyingPower.toFixed(2)}`);
     
     // Check sentiment before buying
     const { score: sentimentScore, reasoning: sentimentReasoning } = await getMarketSentiment('SPY'); 
     if (sentimentScore > 0.2) {
-        if (buyingPower < 10) {
-            addLog(mode, `[Mercato] Sentiment positivo per SPY, ma potere d'acquisto insufficiente ($${buyingPower.toFixed(2)}).`);
+        if (buyingPower < amountToBuy) {
+            addLog(mode, `[Mercato] Sentiment positivo per SPY, ma potere d'acquisto insufficiente ($${buyingPower.toFixed(2)} richiesti $${amountToBuy.toFixed(2)}).`);
             botData[mode].dailyLogicLogs.push({
                 timestamp: new Date().toISOString(),
                 symbol: 'SPY',
                 action: 'SKIP',
-                reasoning: 'Insufficient buying power'
+                reasoning: `Insufficient buying power (required $${amountToBuy})`
             });
             return;
         }
 
-        addLog(mode, `[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto su Alpaca (${labelTipoConto}).`);
+        addLog(mode, `[Mercato] Sentiment positivo per SPY: ${sentimentScore.toFixed(2)}. Procedo all'acquisto di $${amountToBuy} su Alpaca (${labelTipoConto}).`);
         botData[mode].dailyLogicLogs.push({
             timestamp: new Date().toISOString(),
             symbol: 'SPY',
@@ -281,7 +302,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           },
           body: JSON.stringify({
             symbol: 'SPY',
-            notional: 10,
+            notional: amountToBuy,
             side: 'buy',
             type: 'market',
             time_in_force: 'day'
