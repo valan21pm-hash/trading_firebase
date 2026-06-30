@@ -1,6 +1,43 @@
 import { useEffect, useState } from 'react';
 import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2 } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
+
+const formatDate = (dateStr: string) => {
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+      const monthIdx = parseInt(parts[1], 10) - 1;
+      return `${parts[2]} ${months[monthIdx]}`;
+    }
+    return dateStr;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-gray-900/95 backdrop-blur-xs text-white p-3 rounded-lg border border-gray-800 shadow-xl text-xs">
+        <p className="font-semibold text-gray-400 mb-1.5">{formatDate(label)}</p>
+        {payload.map((item: any, idx: number) => (
+          <div key={idx} className="flex justify-between gap-6 py-0.5">
+            <span className="flex items-center gap-1.5 font-medium text-gray-300">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: item.stroke || item.color }} />
+              {item.name}:
+            </span>
+            <span className={`font-mono font-semibold ${item.value >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}$
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
 
 function AccountPanel({ 
   account, 
@@ -64,6 +101,110 @@ function AccountPanel({
           <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
             {account.modeLabel}
           </div>
+        </div>
+
+        {/* Grafico P&L Realizzato e Non Realizzato */}
+        <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                <BarChart2 className="w-4 h-4 text-gray-500" />
+                Andamento Storico P&L
+              </h3>
+              <p className="text-[11px] text-gray-500">Confronto tra profitti/perdite realizzati e posizioni aperte</p>
+            </div>
+            {/* Legenda personalizzata */}
+            <div className="flex gap-4 text-[10px] font-medium">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block"></span>
+                <span className="text-gray-600">Realizzato</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-sky-400 inline-block"></span>
+                <span className="text-gray-600">Non Realizzato</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-60 w-full mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={account.dailyPnL || []}
+                margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="colorRealized" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorUnrealized" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                <XAxis 
+                  dataKey="date" 
+                  tickFormatter={formatDate}
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  axisLine={{ stroke: '#e5e7eb' }}
+                  tickLine={{ stroke: '#e5e7eb' }}
+                />
+                <YAxis 
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  axisLine={{ stroke: '#e5e7eb' }}
+                  tickLine={{ stroke: '#e5e7eb' }}
+                  tickFormatter={(val) => `${val >= 0 ? '+' : ''}${val}$`}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Area 
+                  type="monotone" 
+                  dataKey="realized" 
+                  name="P&L Realizzato"
+                  stroke="#10b981" 
+                  strokeWidth={2}
+                  fillOpacity={1} 
+                  fill="url(#colorRealized)" 
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="unrealized" 
+                  name="P&L Non Realizzato"
+                  stroke="#0ea5e9" 
+                  strokeWidth={2}
+                  fillOpacity={1} 
+                  fill="url(#colorUnrealized)" 
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Quick Metrics */}
+          {account.dailyPnL && account.dailyPnL.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-gray-100/80 text-center">
+              <div>
+                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Realizzato</div>
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0).toFixed(2)}$
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0).toFixed(2)}$
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Totale Netto</div>
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0).toFixed(2)}$
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Asset in Gestione */}

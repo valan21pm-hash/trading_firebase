@@ -28,6 +28,8 @@ export interface AccountData {
     date: string; 
     pnl: number; 
     balance: number;
+    realized?: number;
+    unrealized?: number;
     news?: string;
     breakdown?: { symbol: string; shares: number; price: number; value: number; pnl?: number; pnlPercent?: number }[];
   }[];
