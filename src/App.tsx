@@ -1,8 +1,28 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2 } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2 } from 'lucide-react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 
-function AccountPanel({ account, title, isActive, type, onToggle }: { account: AccountData; title: string; isActive: boolean; type: 'paper' | 'live', onToggle: (type: 'paper' | 'live') => void }) {
+function AccountPanel({ 
+  account, 
+  title, 
+  isActive, 
+  type, 
+  onToggle,
+  onClosePosition,
+  closingSymbols,
+  confirmCloseSymbol,
+  setConfirmCloseSymbol
+}: { 
+  account: AccountData; 
+  title: string; 
+  isActive: boolean; 
+  type: 'paper' | 'live'; 
+  onToggle: (type: 'paper' | 'live') => void;
+  onClosePosition: (symbol: string, type: 'paper' | 'live') => Promise<void>;
+  closingSymbols: string[];
+  confirmCloseSymbol: { symbol: string; type: 'paper' | 'live' } | null;
+  setConfirmCloseSymbol: (state: { symbol: string; type: 'paper' | 'live' } | null) => void;
+}) {
   if (!account) return null;
 
   return (
@@ -120,22 +140,72 @@ function AccountPanel({ account, title, isActive, type, onToggle }: { account: A
           <div className="mt-4">
             <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Posizioni Aperte</h3>
             <div className="space-y-2">
-              {account.positions.map((pos, i) => (
-                <div key={i} className="flex justify-between items-center text-sm bg-gray-50 p-2 rounded">
-                  <div>
-                    <span className="font-bold">{pos.symbol}</span>
-                    <span className="text-gray-500 text-xs ml-2">{pos.qty} quote</span>
+              {account.positions.map((pos, i) => {
+                const qtyNum = parseFloat(pos.qty);
+                const formattedQty = qtyNum % 1 === 0 ? qtyNum.toString() : qtyNum.toFixed(4);
+                const avgPrice = parseFloat(pos.avg_entry_price || '0');
+                const currPrice = parseFloat(pos.current_price || '0');
+                return (
+                  <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-sm bg-gray-50 p-3 rounded-lg border border-gray-100 gap-2 sm:gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                      <div>
+                        <span className="font-bold text-gray-900 text-base">{pos.symbol}</span>
+                        <span className="text-gray-500 text-xs block sm:inline sm:ml-2">({formattedQty} quote)</span>
+                      </div>
+                      <div className="flex gap-4 text-xs text-gray-600 mt-1 sm:mt-0">
+                        <div>
+                          <span className="text-gray-400 block sm:inline">Prezzo acq: </span>
+                          <span className="font-mono font-medium text-gray-800">${avgPrice.toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block sm:inline">Quot. attuale: </span>
+                          <span className="font-mono font-medium text-gray-800">${currPrice.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 self-end sm:self-auto">
+                      <div className={`font-semibold flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
+                        {pos.unrealized_plpc !== undefined && (
+                          <span className="text-xs font-semibold opacity-95 px-1.5 py-0.5 rounded bg-current/10">
+                            ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
+                          </span>
+                        )}
+                      </div>
+
+                      {confirmCloseSymbol?.symbol === pos.symbol && confirmCloseSymbol?.type === type ? (
+                        <div className="flex items-center gap-1.5 ml-2 bg-red-50 p-1 rounded-md border border-red-200">
+                          <button
+                            onClick={() => onClosePosition(pos.symbol, type)}
+                            disabled={closingSymbols.includes(pos.symbol)}
+                            className="px-2 py-0.5 text-xs font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {closingSymbols.includes(pos.symbol) ? '...' : 'Chiudi'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmCloseSymbol(null)}
+                            disabled={closingSymbols.includes(pos.symbol)}
+                            className="p-0.5 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors cursor-pointer disabled:opacity-50"
+                            title="Annulla"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmCloseSymbol({ symbol: pos.symbol, type })}
+                          disabled={closingSymbols.includes(pos.symbol)}
+                          className="ml-2 p-1 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                          title="Chiudi Posizione"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Chiudi</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className={`font-medium flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
-                    {pos.unrealized_plpc !== undefined && (
-                      <span className="text-xs font-normal opacity-90 px-1 py-0.5 rounded bg-current/10">
-                        ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -186,6 +256,40 @@ export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'paper' | 'live'>('paper');
+
+  const [closingSymbols, setClosingSymbols] = useState<string[]>([]);
+  const [confirmCloseSymbol, setConfirmCloseSymbol] = useState<{ symbol: string; type: 'paper' | 'live' } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const handleClosePosition = async (symbol: string, type: 'paper' | 'live') => {
+    setClosingSymbols(prev => [...prev, symbol]);
+    setConfirmCloseSymbol(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch('/api/close-position', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: type, symbol })
+      });
+      if (res.ok) {
+        setSuccessMessage(`Chiusura della posizione di ${symbol} avviata con successo su Alpaca.`);
+        setTimeout(() => setSuccessMessage(null), 5000);
+        fetchStatus();
+      } else {
+        const data = await res.json().catch(() => ({ message: 'Errore durante la chiusura.' }));
+        setErrorMessage(`Impossibile chiudere la posizione di ${symbol}: ${data.message}`);
+        setTimeout(() => setErrorMessage(null), 6000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(`Errore di rete: ${err.message}`);
+      setTimeout(() => setErrorMessage(null), 6000);
+    } finally {
+      setClosingSymbols(prev => prev.filter(s => s !== symbol));
+    }
+  };
 
   const fetchStatus = async () => {
     try {
@@ -274,13 +378,51 @@ export default function App() {
           </div>
         </div>
 
+        {/* Alerts */}
+        {successMessage && (
+          <div className="p-4 bg-green-50 text-green-800 border border-green-200 rounded-xl text-sm font-medium flex justify-between items-center shadow-sm animate-pulse">
+            <span>{successMessage}</span>
+            <button onClick={() => setSuccessMessage(null)} className="text-green-600 hover:text-green-800 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        {errorMessage && (
+          <div className="p-4 bg-red-50 text-red-800 border border-red-200 rounded-xl text-sm font-medium flex justify-between items-center shadow-sm">
+            <span>{errorMessage}</span>
+            <button onClick={() => setErrorMessage(null)} className="text-red-600 hover:text-red-800 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Selected Panel */}
         <div>
           {selectedTab === 'paper' && status?.paper && (
-            <AccountPanel account={status.paper} title="Conto Simulazione (Paper)" isActive={!!status.paperActive} type="paper" onToggle={toggleBot} />
+            <AccountPanel 
+              account={status.paper} 
+              title="Conto Simulazione (Paper)" 
+              isActive={!!status.paperActive} 
+              type="paper" 
+              onToggle={toggleBot} 
+              onClosePosition={handleClosePosition}
+              closingSymbols={closingSymbols}
+              confirmCloseSymbol={confirmCloseSymbol}
+              setConfirmCloseSymbol={setConfirmCloseSymbol}
+            />
           )}
           {selectedTab === 'live' && status?.live && (
-            <AccountPanel account={status.live} title="Conto Reale (Live)" isActive={!!status.liveActive} type="live" onToggle={toggleBot} />
+            <AccountPanel 
+              account={status.live} 
+              title="Conto Reale (Live)" 
+              isActive={!!status.liveActive} 
+              type="live" 
+              onToggle={toggleBot} 
+              onClosePosition={handleClosePosition}
+              closingSymbols={closingSymbols}
+              confirmCloseSymbol={confirmCloseSymbol}
+              setConfirmCloseSymbol={setConfirmCloseSymbol}
+            />
           )}
         </div>
 

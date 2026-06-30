@@ -381,6 +381,83 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
   return results[symbol] || { score: 0, reasoning: 'Errore recupero sentiment' };
 }
 
+async function getMarketMinutesToClose(baseUrl: string, apiKey: string, secretKey: string): Promise<number | null> {
+  try {
+    const response = await fetch(`${baseUrl}/clock`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+    if (response.ok) {
+      const data: any = await response.json();
+      if (!data.is_open) return null;
+      const nextClose = new Date(data.next_close).getTime();
+      const current = new Date(data.timestamp || new Date()).getTime();
+      const diffMs = nextClose - current;
+      const diffMins = diffMs / (1000 * 60);
+      return diffMins;
+    }
+  } catch (error) {
+    console.error('[Market Close Check Error] Errore nel calcolo dei minuti alla chiusura:', error);
+  }
+  
+  // Fallback in caso di errore API: controlla orario standard USA (lunedì-venerdì, chiusura alle 21:00 UTC)
+  const now = new Date();
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) {
+    return null; // Weekend chiuso
+  }
+  
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const timeInMinutes = hour * 60 + minute;
+  
+  // Utilizziamo 1260 minuti (21:00 UTC, corrispondenti alle 16:00 EST/EDT) come chiusura standard
+  if (timeInMinutes >= 810 && timeInMinutes <= 1260) {
+    return 1260 - timeInMinutes;
+  }
+  return null;
+}
+
+async function getLatestPrice(symbol: string, apiKey: string, secretKey: string): Promise<number> {
+  try {
+    const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/trades/latest`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && data.trade && data.trade.p) {
+        return parseFloat(data.trade.p);
+      }
+    }
+  } catch (err) {
+    console.error(`[Price Fetch Error] Errore nel recupero dell'ultimo prezzo per ${symbol} tramite trades/latest:`, err);
+  }
+
+  try {
+    const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/snapshot`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && data.latestTrade && data.latestTrade.p) {
+        return parseFloat(data.latestTrade.p);
+      }
+    }
+  } catch (err) {
+    console.error(`[Price Fetch Error] Errore nel recupero dell'ultimo prezzo per ${symbol} tramite snapshot:`, err);
+  }
+
+  return basePrices[symbol] || 100.0;
+}
+
 async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl}/clock`, {
@@ -451,6 +528,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     
     addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
+    // Recupero della distanza dalla chiusura del mercato per valutare il Check-Point pre-chiusura
+    const minutesToClose = await getMarketMinutesToClose(baseUrl, apiKey, secretKey);
+    const isPreCloseWindow = minutesToClose !== null && minutesToClose > 0 && minutesToClose <= 15;
+    
+    if (isPreCloseWindow) {
+      addLog(mode, `[Check-Point EOD] Mancano ${minutesToClose.toFixed(1)} minuti alla chiusura della borsa. Attivazione delle regole speciali pre-chiusura.`);
+    } else {
+      addLog(mode, `[Intraday] Mancano ${minutesToClose ? minutesToClose.toFixed(1) + ' minuti' : 'N/A'} alla chiusura. Operatività standard attiva.`);
+    }
+    
     // Recupero delle posizioni aperte correnti per gestire vendite o monitoraggio
     let openPositions: any[] = [];
     try {
@@ -494,15 +581,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     addLog(mode, `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
 
-    // 1. Fase di Vendita (Sell/Close phase): Gestiamo la chiusura delle posizioni se non soddisfano più i requisiti (score <= 0)
+    // 1. Fase di Vendita (Sell/Close phase): Chiudiamo solo se il sentiment è neutro o negativo (<= 0) per limitare le perdite. I profitti vengono gestiti manualmente dall'utente.
     const closedSymbolsThisCycle = new Set<string>();
     for (const pos of openPositions) {
       const symbol = pos.symbol;
       const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
       
-      // Se il sentiment è neutro o ribassista (<= 0), chiudiamo la posizione per proteggere il capitale o su richiesta (come per AAPL)
       if (sentimentScore <= 0) {
-        addLog(mode, `[Portafoglio] Sentiment per ${symbol} è neutro/negativo (${sentimentScore.toFixed(2)}). Procedo alla CHIUSURA della posizione.`);
+        addLog(mode, `[Portafoglio] Sentiment per ${symbol} è neutro/negativo (${sentimentScore.toFixed(2)}). Procedo alla CHIUSURA della posizione per gestire il rischio/perdita.`);
         botData[mode].dailyLogicLogs.push({
           timestamp: new Date().toISOString(),
           symbol,
@@ -529,77 +615,53 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode, `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
         }
       } else {
-        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning})`);
-        
-        // Verifichiamo se c'è un trailing stop attivo per questa posizione
-        const hasTrailingStop = openOrders.some((o: any) => o.symbol === symbol && o.side === 'sell' && o.type === 'trailing_stop');
-        if (!hasTrailingStop) {
-          const qtyNum = parseFloat(pos.qty);
-          const integerQty = Math.floor(qtyNum);
-          
-          if (integerQty > 0) {
-            addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} (${pos.qty} quote). Poiché Alpaca non supporta Trailing Stop per quote frazionarie, imposto il Trailing Stop (1.5%) sulla sola parte intera di ${integerQty} quote...`);
-            try {
-              const trailingResponse = await fetch(`${baseUrl}/orders`, {
-                method: 'POST',
-                headers: {
-                  'APCA-API-KEY-ID': apiKey,
-                  'APCA-API-SECRET-KEY': secretKey,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  symbol,
-                  qty: integerQty.toString(),
-                  side: 'sell',
-                  type: 'trailing_stop',
-                  trail_percent: '1.5',
-                  time_in_force: 'gtc'
-                })
-              });
-              
-              if (trailingResponse.ok) {
-                const trailingData = await trailingResponse.json();
-                addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
-              } else {
-                const errData = await trailingResponse.json();
-                addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop per ${symbol}: ${errData.message}`);
-              }
-            } catch (err: any) {
-              addLog(mode, `[Trailing Stop Errore] Errore di rete nella creazione del trailing stop per ${symbol}: ${err.message}`);
-            }
-          } else {
-            addLog(mode, `[Trailing Stop Info] Impossibile impostare Trailing Stop su ${symbol} perché la quantità è inferiore a 1 quota (${pos.qty}). Sarà gestito interamente tramite sentiment.`);
-          }
-        } else {
-          addLog(mode, `[Trailing Stop] Trailing Stop del 1.5% già attivo su Alpaca per ${symbol}.`);
-        }
+        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Gestione dei profitti affidata all'utente.`);
       }
     }
 
-    // 2. Fase di Acquisto (Buy phase): Acquista solo gli asset predefiniti che hanno un forte sentiment positivo (> 0.2)
+    // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2) usando quote frazionarie (notional)
     for (const symbol of ALL_TRADED_SYMBOLS) {
-      // Evitiamo di ricomprare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
+      // Evitiamo di acquistare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
       const hasOpenPosition = openSymbols.includes(symbol) && !closedSymbolsThisCycle.has(symbol);
       if (hasOpenPosition) {
-        // Loggiamo che manteniamo l'asset esistente senza ricomprarlo
         continue;
       }
 
       // Check sentiment before buying from the pre-fetched bulk object
       const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' }; 
       if (sentimentScore > 0.2) {
+          // Calcolo dinamico dell'importo da investire in base alla forza del sentiment (fino a un massimo di 5$ su conto reale)
+          let amountToBuy = 5;
+          if (mode === 'live') {
+            if (sentimentScore > 0.6) {
+              amountToBuy = 5.0;
+            } else if (sentimentScore > 0.4) {
+              amountToBuy = 3.5;
+            } else {
+              amountToBuy = 2.0;
+            }
+          } else {
+            if (sentimentScore > 0.6) {
+              amountToBuy = 1000;
+            } else if (sentimentScore > 0.4) {
+              amountToBuy = 700;
+            } else {
+              amountToBuy = 400;
+            }
+          }
+
           if (currentBuyingPower < amountToBuy) {
               addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
               botData[mode].dailyLogicLogs.push({
                   timestamp: new Date().toISOString(),
                   symbol,
                   action: 'SKIP',
-                  reasoning: `Insufficient buying power (required $${amountToBuy})`
+                  reasoning: `Potere d'acquisto insufficiente (richiesti $${amountToBuy.toFixed(2)})`
               });
               continue;
           }
 
-          addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto di $${amountToBuy} su Alpaca (${labelTipoConto}).`);
+          addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
           botData[mode].dailyLogicLogs.push({
               timestamp: new Date().toISOString(),
               symbol,
@@ -607,89 +669,37 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               reasoning: sentimentReasoning
           });
           
-          // Esecuzione dell'ordine su Alpaca
-          const orderResponse = await fetch(`${baseUrl}/orders`, {
-            method: 'POST',
-            headers: {
-              'APCA-API-KEY-ID': apiKey,
-              'APCA-API-SECRET-KEY': secretKey,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              symbol,
-              notional: amountToBuy,
-              side: 'buy',
-              type: 'market',
-              time_in_force: 'day'
-            })
-          });
-          
-          if (orderResponse.ok) {
-            const orderData = await orderResponse.json();
-            addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
-            currentBuyingPower -= amountToBuy;
-
-            // Tentiamo di impostare subito il Trailing Stop del 1.5% per questa nuova posizione.
-            // Aspettiamo 2 secondi affinché l'ordine market venga eseguito ed entri in posizione su Alpaca.
-            setTimeout(async () => {
-              try {
-                const singlePosRes = await fetch(`${baseUrl}/positions/${symbol}`, {
-                  headers: {
-                    'APCA-API-KEY-ID': apiKey,
-                    'APCA-API-SECRET-KEY': secretKey
-                  }
-                });
-                if (singlePosRes.ok) {
-                  const updatedPos: any = await singlePosRes.json();
-                  const qty = updatedPos.qty;
-                  const qtyNum = parseFloat(qty);
-                  const integerQty = Math.floor(qtyNum);
-                  
-                  if (integerQty > 0) {
-                    addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}). Imposto il Trailing Stop del 1.5% sulla sola parte intera di ${integerQty} quote...`);
-                    
-                    const trailingResponse = await fetch(`${baseUrl}/orders`, {
-                      method: 'POST',
-                      headers: {
-                        'APCA-API-KEY-ID': apiKey,
-                        'APCA-API-SECRET-KEY': secretKey,
-                        'Content-Type': 'application/json'
-                      },
-                      body: JSON.stringify({
-                        symbol,
-                        qty: integerQty.toString(),
-                        side: 'sell',
-                        type: 'trailing_stop',
-                        trail_percent: '1.5',
-                        time_in_force: 'gtc'
-                      })
-                    });
-                    
-                    if (trailingResponse.ok) {
-                      const trailingData: any = await trailingResponse.json();
-                      addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
-                    } else {
-                      const errData: any = await trailingResponse.json();
-                      addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop immediato per ${symbol}: ${errData.message}`);
-                    }
-                  } else {
-                    addLog(mode, `[Trailing Stop Info] Impossibile impostare Trailing Stop su ${symbol} perché la quantità è inferiore a 1 quota (${qty}). Sarà gestito interamente tramite sentiment.`);
-                  }
-                } else {
-                  addLog(mode, `[Trailing Stop Info] Non è stato possibile recuperare subito la quantità per ${symbol}. Il Trailing Stop verrà applicato automaticamente all'inizio del prossimo ciclo.`);
-                }
-              } catch (err: any) {
-                addLog(mode, `[Trailing Stop Errore] Errore di rete nell'impostazione immediata del trailing stop per ${symbol}: ${err.message}`);
-              }
-            }, 2000);
-
-          } else {
-            const errorData = await orderResponse.json();
-            addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+          // Esecuzione dell'ordine frazionario (notional) su Alpaca
+          try {
+            const orderResponse = await fetch(`${baseUrl}/orders`, {
+              method: 'POST',
+              headers: {
+                'APCA-API-KEY-ID': apiKey,
+                'APCA-API-SECRET-KEY': secretKey,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                symbol,
+                notional: amountToBuy.toString(),
+                side: 'buy',
+                type: 'market',
+                time_in_force: 'day'
+              })
+            });
+            
+            if (orderResponse.ok) {
+              const orderData = await orderResponse.json();
+              addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
+              currentBuyingPower -= amountToBuy;
+            } else {
+              const errorData = await orderResponse.json();
+              addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+            }
+          } catch (err: any) {
+            addLog(mode, `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
           }
           
       } else {
-          // Se non abbiamo posizioni aperte e il sentiment non è favorevole, non facciamo nulla
           botData[mode].dailyLogicLogs.push({
               timestamp: new Date().toISOString(),
               symbol,
@@ -982,6 +992,61 @@ app.post('/api/set-trading-mode', (req, res) => {
     });
   } else {
     res.status(400).json({ success: false, message: 'Modalità di trading non valida.' });
+  }
+});
+
+app.post('/api/close-position', async (req, res) => {
+  const { mode, symbol } = req.body;
+  if (!symbol || (mode !== 'paper' && mode !== 'live')) {
+    return res.status(400).json({ success: false, message: 'Parametri non validi.' });
+  }
+
+  const conf = getAlpacaConfig(mode);
+  if (!conf.isConfigured) {
+    return res.status(400).json({ success: false, message: 'Alpaca non configurato per questa modalità.' });
+  }
+
+  const labelTipoConto = mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)';
+  addLog(mode, `[Manuale] Richiesta di chiusura posizione per ${symbol} sul conto ${labelTipoConto}...`);
+
+  try {
+    // 1. Cancella prima tutti gli ordini aperti per questo simbolo (es. trailing stop attivi)
+    addLog(mode, `[Manuale] Cancellazione di eventuali ordini aperti per ${symbol}...`);
+    const cancelOrdersRes = await fetch(`${conf.baseUrl}/orders?symbol=${symbol}`, {
+      method: 'DELETE',
+      headers: {
+        'APCA-API-KEY-ID': conf.apiKey,
+        'APCA-API-SECRET-KEY': conf.secretKey
+      }
+    });
+
+    if (!cancelOrdersRes.ok) {
+      const errText = await cancelOrdersRes.text();
+      console.warn(`[Manuale Warning] Impossibile cancellare gli ordini aperti per ${symbol}: ${errText}`);
+    }
+
+    // 2. Chiudi la posizione su Alpaca
+    addLog(mode, `[Manuale] Chiusura della posizione di ${symbol} su Alpaca...`);
+    const closeRes = await fetch(`${conf.baseUrl}/positions/${symbol}`, {
+      method: 'DELETE',
+      headers: {
+        'APCA-API-KEY-ID': conf.apiKey,
+        'APCA-API-SECRET-KEY': conf.secretKey
+      }
+    });
+
+    if (closeRes.ok) {
+      const closeData = await closeRes.json();
+      addLog(mode, `[Manuale] Posizione di ${symbol} chiusa con successo! ID Ordine di liquidazione: ${closeData.id}`);
+      return res.json({ success: true, message: `Posizione di ${symbol} chiusa con successo!` });
+    } else {
+      const errData = await closeRes.json().catch(() => ({ message: 'Errore sconosciuto' }));
+      addLog(mode, `[Manuale Errore] Impossibile chiudere la posizione di ${symbol}: ${errData.message}`);
+      return res.status(500).json({ success: false, message: errData.message });
+    }
+  } catch (error: any) {
+    addLog(mode, `[Manuale Errore] Errore di rete nella chiusura della posizione per ${symbol}: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message });
   }
 });
 
