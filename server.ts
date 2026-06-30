@@ -4,6 +4,26 @@ import path from 'path';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
+import { initializeApp as initFirebaseApp, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+
+let db: any = null;
+
+try {
+  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (serviceAccountKey) {
+    const serviceAccount = JSON.parse(serviceAccountKey);
+    initFirebaseApp({
+      credential: cert(serviceAccount)
+    });
+    db = getFirestore();
+    console.log('[Firebase] Successfully initialized Firebase Admin and Firestore connection.');
+  } else {
+    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT_KEY not found in environment.');
+  }
+} catch (error: any) {
+  console.error('[Firebase] Error initializing Firebase:', error);
+}
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -265,6 +285,122 @@ const botData = {
   }
 };
 
+async function saveBotStatus() {
+  if (!db) return;
+  try {
+    await db.collection('settings').doc('bot').set({
+      active: botStatus.active,
+      paperActive: botStatus.paperActive,
+      liveActive: botStatus.liveActive,
+      tradingMode: botStatus.tradingMode,
+      userFeedbackRules: botStatus.userFeedbackRules || [],
+      latestDailyReport: botStatus.latestDailyReport || null,
+      latestDailyDebrief: botStatus.latestDailyDebrief || null,
+      lastCheck: botStatus.lastCheck || null
+    }, { merge: true });
+  } catch (err: any) {
+    console.error('[Firebase] Error saving bot status:', err);
+  }
+}
+
+async function saveBotData(mode: 'paper' | 'live') {
+  if (!db) return;
+  try {
+    await db.collection('bot_data').doc(mode).set({
+      balance: botData[mode].balance,
+      cash: botData[mode].cash,
+      accountNumber: botData[mode].accountNumber || null,
+      dailyPnL: botData[mode].dailyPnL || [],
+      logs: botData[mode].logs || []
+    }, { merge: true });
+  } catch (err: any) {
+    console.error(`[Firebase] Error saving bot data for ${mode}:`, err);
+  }
+}
+
+async function saveLogicLog(mode: 'paper' | 'live', log: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }) {
+  if (!db) return;
+  try {
+    await db.collection('logic_logs').add({
+      mode,
+      timestamp: log.timestamp,
+      symbol: log.symbol,
+      action: log.action,
+      reasoning: log.reasoning,
+      price: log.price || null
+    });
+  } catch (err: any) {
+    console.error('[Firebase] Error saving logic log:', err);
+  }
+}
+
+async function addLogicLog(mode: 'paper' | 'live', log: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }) {
+  if (!botData[mode].dailyLogicLogs) {
+    botData[mode].dailyLogicLogs = [];
+  }
+  botData[mode].dailyLogicLogs.push(log);
+  if (botData[mode].dailyLogicLogs.length > 500) {
+    botData[mode].dailyLogicLogs = botData[mode].dailyLogicLogs.slice(-500);
+  }
+  saveLogicLog(mode, log).catch(err => console.error('[Firebase] Error saving logic log:', err));
+}
+
+async function loadStateFromFirestore() {
+  if (!db) return;
+  try {
+    console.log('[Firebase] Loading state from Firestore...');
+    const statusDoc = await db.collection('settings').doc('bot').get();
+    if (statusDoc.exists) {
+      const data = statusDoc.data();
+      botStatus.active = data.active ?? botStatus.active;
+      botStatus.paperActive = data.paperActive ?? botStatus.paperActive;
+      botStatus.liveActive = data.liveActive ?? botStatus.liveActive;
+      botStatus.tradingMode = data.tradingMode ?? botStatus.tradingMode;
+      botStatus.userFeedbackRules = data.userFeedbackRules ?? botStatus.userFeedbackRules;
+      botStatus.latestDailyReport = data.latestDailyReport ?? botStatus.latestDailyReport;
+      botStatus.latestDailyDebrief = data.latestDailyDebrief ?? botStatus.latestDailyDebrief;
+      botStatus.lastCheck = data.lastCheck ?? botStatus.lastCheck;
+      console.log('[Firebase] Loaded botStatus successfully.');
+    }
+
+    for (const mode of ['paper', 'live'] as const) {
+      const dataDoc = await db.collection('bot_data').doc(mode).get();
+      if (dataDoc.exists) {
+        const d = dataDoc.data();
+        botData[mode].balance = d.balance ?? botData[mode].balance;
+        botData[mode].cash = d.cash ?? botData[mode].cash;
+        botData[mode].accountNumber = d.accountNumber ?? botData[mode].accountNumber;
+        botData[mode].dailyPnL = d.dailyPnL ?? botData[mode].dailyPnL;
+        botData[mode].logs = d.logs ?? botData[mode].logs;
+        console.log(`[Firebase] Loaded account data for ${mode} successfully.`);
+      }
+
+      // Load last 500 logic logs for this mode to populate in-memory list
+      const logsSnap = await db.collection('logic_logs')
+        .where('mode', '==', mode)
+        .orderBy('timestamp', 'desc')
+        .limit(500)
+        .get();
+      
+      const loadedLogicLogs: any[] = [];
+      logsSnap.forEach((doc: any) => {
+        const data = doc.data();
+        loadedLogicLogs.push({
+          timestamp: data.timestamp,
+          symbol: data.symbol,
+          action: data.action,
+          reasoning: data.reasoning,
+          price: data.price
+        });
+      });
+      botData[mode].dailyLogicLogs = loadedLogicLogs.reverse();
+      console.log(`[Firebase] Loaded ${loadedLogicLogs.length} logic logs for ${mode}.`);
+    }
+  } catch (err: any) {
+    console.error('[Firebase] Error loading state from Firestore:', err);
+  }
+}
+
 function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   const timestamp = new Date().toISOString();
   const logMsg = `[${timestamp}] ${message}`;
@@ -272,10 +408,12 @@ function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   if (mode === 'paper' || mode === 'system') {
     botData.paper.logs.unshift(logMsg);
     if (botData.paper.logs.length > 100) botData.paper.logs = botData.paper.logs.slice(0, 100);
+    saveBotData('paper').catch(err => console.error('[Firebase Error] Error saving paper logs:', err));
   }
   if (mode === 'live' || mode === 'system') {
     botData.live.logs.unshift(logMsg);
     if (botData.live.logs.length > 100) botData.live.logs = botData.live.logs.slice(0, 100);
+    saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live logs:', err));
   }
   
   console.log(logMsg);
@@ -595,7 +733,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       
       if (sentimentScore <= 0) {
         addLog(mode, `[Portafoglio] Sentiment per ${symbol} è neutro/negativo (${sentimentScore.toFixed(2)}). Procedo alla CHIUSURA della posizione per gestire il rischio/perdita.`);
-        botData[mode].dailyLogicLogs.push({
+        addLogicLog(mode, {
           timestamp: new Date().toISOString(),
           symbol,
           action: 'SELL',
@@ -658,7 +796,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
           if (currentBuyingPower < amountToBuy) {
               addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
-              botData[mode].dailyLogicLogs.push({
+              addLogicLog(mode, {
                   timestamp: new Date().toISOString(),
                   symbol,
                   action: 'SKIP',
@@ -668,7 +806,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           }
 
           addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
-          botData[mode].dailyLogicLogs.push({
+          addLogicLog(mode, {
               timestamp: new Date().toISOString(),
               symbol,
               action: 'BUY',
@@ -706,7 +844,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           }
           
       } else {
-          botData[mode].dailyLogicLogs.push({
+          addLogicLog(mode, {
               timestamp: new Date().toISOString(),
               symbol,
               action: 'HOLD',
@@ -784,6 +922,7 @@ ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')
     });
     const reportText = response.text || 'Nessun report generato.';
     botStatus.latestDailyReport = reportText;
+    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on report update:', err));
     
     // Invia email
     let transporter;
@@ -927,11 +1066,106 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       suggestedRule: result.suggestedRule,
       timestamp: new Date().toISOString()
     };
+    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
     addLog('system', '[Debriefing AI] Debriefing generato con successo.');
     res.json({ success: true, debrief: botStatus.latestDailyDebrief });
   } catch (error: any) {
     addLog('system', `[Debriefing AI Errore] ${error.message}`);
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Endpoint per Debriefing di un intervallo di date personalizzato assistito da AI
+app.post('/api/generate-range-debrief', async (req, res) => {
+  const { startDate, endDate, mode } = req.body;
+  if (!startDate || !endDate || !mode || (mode !== 'paper' && mode !== 'live')) {
+    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live') richiesti." });
+  }
+
+  addLog('system', `[Debriefing Periodico AI] Inizio generazione analisi per periodo da ${startDate} a ${endDate} (Conto: ${mode})...`);
+  try {
+    let rangeLogicLogs: any[] = [];
+    if (db) {
+      const querySnap = await db.collection('logic_logs')
+        .where('mode', '==', mode)
+        .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
+        .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
+        .orderBy('timestamp', 'asc')
+        .limit(300)
+        .get();
+      
+      querySnap.forEach((doc: any) => {
+        rangeLogicLogs.push(doc.data());
+      });
+    } else {
+      // Fallback in-memory
+      rangeLogicLogs = (botData[mode].dailyLogicLogs || []).filter(l => {
+        return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
+      });
+    }
+
+    const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
+      ? botStatus.userFeedbackRules.join('\n- ')
+      : 'Nessuna regola personalizzata attualmente attiva';
+
+    const prompt = `Sei un analista finanziario quantitativo Senior e coach esperto di trading algoritmico.
+Stai conducendo una Valutazione di Periodo (Period Debriefing) con il bot di trading. Analizza accuratamente i dati operativi raccolti in questo intervallo per identificare trend, correlazioni di medio periodo e proporre ottimizzazioni strategiche.
+
+PERIODO DI ANALISI: Da ${startDate} a ${endDate}
+CONTO ANALIZZATO: ${mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'}
+REGULATION_RULES IN VIGORE:
+${currentRules}
+
+LOG DECISIONALI ESTRATTI NEL PERIODO:
+${JSON.stringify(rangeLogicLogs.slice(-150))}
+
+ISTRUZIONI DI ANALISI:
+1. **Analisi del Trend di Periodo**: Valuta la coerenza complessiva delle decisioni (BUY, SELL, HOLD, SKIP) prese in questo intervallo. Identifica pattern ricorrenti di guadagno o di perdita.
+2. **Correlazioni e Anomalie**: Identifica eventuali reazioni anomale del mercato o risposte del bot di fronte ad eventi macro o movimenti di prezzo.
+3. **Miglioramenti Strategici**: Suggerisci affinamenti operativi strutturati per questo orizzonte temporale.
+4. **Regola Ottimizzata Proposta**: Formula una regola chiara, sintetica e in italiano, pronta da inserire come feedback rule del bot (massimo 150 caratteri). Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
+
+Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
+
+    const response = await getAi().models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            analysis: {
+              type: Type.STRING,
+              description: "Resoconto di analisi approfondita del periodo strutturato in Markdown."
+            },
+            suggestedRule: {
+              type: Type.STRING,
+              description: "Una singola regola di trading suggerita basata sul periodo analizzato, chiara, precisa, in italiano, pronta da copiare e incollare (massimo 150 caratteri)."
+            }
+          },
+          required: ["analysis", "suggestedRule"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("Risposta vuota da parte del modello AI.");
+    }
+
+    const result = JSON.parse(text.trim());
+    
+    addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo.');
+    res.json({ 
+      success: true, 
+      analysis: result.analysis, 
+      suggestedRule: result.suggestedRule 
+    });
+  } catch (error: any) {
+    addLog('system', `[Debriefing Periodico AI Errore] ${error.message}`);
     console.error(error);
     res.status(500).json({ success: false, error: error.message });
   }
@@ -946,6 +1180,7 @@ app.post('/api/feedback', (req, res) => {
     }
     botStatus.userFeedbackRules.push(rule);
     addLog('system', `[Feedback Utente] Aggiunta nuova regola: ${rule}`);
+    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule addition:', err));
     res.json({ success: true, message: 'Regola aggiunta con successo.' });
   } else {
     res.status(400).json({ success: false, message: 'Regola non valida.' });
@@ -1148,6 +1383,8 @@ app.post('/api/toggle', (req, res) => {
     botStatus.lastCheck = new Date().toISOString();
   }
   
+  saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on toggle:', err));
+  
   res.redirect(303, '/api/status');
 });
 
@@ -1160,6 +1397,8 @@ app.post('/api/set-trading-mode', (req, res) => {
       ? `Alpaca (${mode === 'paper' ? 'Simulazione' : 'Reale'})` 
       : 'Alpaca (Configurazione mancante)';
     addLog('system', `[Sistema] Visualizzazione impostata su: ${mode === 'paper' ? 'Conto Simulazione (Paper)' : 'Conto Reale (Live)'}`);
+    
+    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on trading mode switch:', err));
     
     const data = botData[mode];
     res.json({ 
@@ -1176,6 +1415,62 @@ app.post('/api/set-trading-mode', (req, res) => {
   } else {
     res.status(400).json({ success: false, message: 'Modalità di trading non valida.' });
   }
+});
+
+app.get('/api/operations', async (req, res) => {
+  const mode = (req.query.mode as 'paper' | 'live') || 'paper';
+  if (mode !== 'paper' && mode !== 'live') {
+    return res.status(400).json({ success: false, error: "La modalità deve essere 'paper' o 'live'." });
+  }
+
+  const conf = getAlpacaConfig(mode);
+  let activities: any[] = [];
+  let positions: any[] = [];
+  let errorAlpaca = null;
+
+  if (conf.isConfigured) {
+    try {
+      // 1. Fetch activities (FILL only)
+      const actResponse = await fetch(`${conf.baseUrl}/account/activities?activity_types=FILL`, {
+        headers: {
+          'APCA-API-KEY-ID': conf.apiKey,
+          'APCA-API-SECRET-KEY': conf.secretKey
+        }
+      });
+      if (actResponse.ok) {
+        activities = await actResponse.json();
+      } else {
+        const errText = await actResponse.text();
+        console.warn(`[Alpaca activities warning] Impossibile recuperare attività: ${errText}`);
+      }
+
+      // 2. Fetch active positions
+      const posResponse = await fetch(`${conf.baseUrl}/positions`, {
+        headers: {
+          'APCA-API-KEY-ID': conf.apiKey,
+          'APCA-API-SECRET-KEY': conf.secretKey
+        }
+      });
+      if (posResponse.ok) {
+        positions = await posResponse.json();
+      }
+    } catch (err: any) {
+      console.error('[Alpaca Operations error]', err);
+      errorAlpaca = err.message;
+    }
+  }
+
+  const logicLogs = botData[mode].dailyLogicLogs || [];
+
+  res.json({
+    success: true,
+    mode,
+    isAlpacaConfigured: conf.isConfigured,
+    activities, 
+    positions, 
+    dailyLogicLogs: logicLogs,
+    errorAlpaca
+  });
 });
 
 app.post('/api/close-position', async (req, res) => {
@@ -1233,6 +1528,113 @@ app.post('/api/close-position', async (req, res) => {
   }
 });
 
+app.post('/api/panic-liquidate', async (req, res) => {
+  addLog('system', '[💥 PANICO] RICEVUTO ORDINE DI LIQUIDAZIONE TOTALE IMMEDIATA (PANIC BUTTON)!');
+  
+  // 1. Spegniamo immediatamente il bot su tutte le modalità per sicurezza
+  botStatus.active = false;
+  botStatus.paperActive = false;
+  botStatus.liveActive = false;
+  saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on panic:', err));
+  addLog('system', '[💥 PANICO] Bot di trading arrestato su TUTTI i conti per evitare riaperture automatiche.');
+
+  const results: { mode: string; success: boolean; message: string }[] = [];
+
+  for (const mode of ['paper', 'live'] as const) {
+    const conf = getAlpacaConfig(mode);
+    const label = mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)';
+    
+    if (!conf.isConfigured) {
+      results.push({ mode, success: true, message: `Conto ${label} non configurato, nessuna azione richiesta.` });
+      continue;
+    }
+
+    try {
+      addLog(mode, `[💥 PANICO] Richiesta liquidazione globale per il conto ${label}...`);
+      
+      // Chiamata all'endpoint di liquidazione totale di Alpaca
+      const closeAllRes = await fetch(`${conf.baseUrl}/positions?cancel_orders=true`, {
+        method: 'DELETE',
+        headers: {
+          'APCA-API-KEY-ID': conf.apiKey,
+          'APCA-API-SECRET-KEY': conf.secretKey
+        }
+      });
+
+      if (closeAllRes.ok) {
+        addLog(mode, `[💥 PANICO] Liquidazione globale avviata con successo per il conto ${label}!`);
+        results.push({ mode, success: true, message: `Liquidazione globale avviata con successo per il conto ${label}.` });
+      } else {
+        const errText = await closeAllRes.text();
+        addLog(mode, `[💥 PANICO Warning] Chiamata bulk fallita per il conto ${label}: ${errText}. Tento liquidazione singola...`);
+        
+        // Fallback: recuperiamo le posizioni aperte e le chiudiamo una ad una
+        const posResponse = await fetch(`${conf.baseUrl}/positions`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        
+        if (posResponse.ok) {
+          const positions = await posResponse.json();
+          if (Array.isArray(positions) && positions.length > 0) {
+            let closedCount = 0;
+            for (const pos of positions) {
+              const symbol = pos.symbol;
+              // Cancella ordini per quel simbolo
+              await fetch(`${conf.baseUrl}/orders?symbol=${symbol}`, {
+                method: 'DELETE',
+                headers: {
+                  'APCA-API-KEY-ID': conf.apiKey,
+                  'APCA-API-SECRET-KEY': conf.secretKey
+                }
+              }).catch(() => {});
+
+              // Chiudi la posizione
+              const singleClose = await fetch(`${conf.baseUrl}/positions/${symbol}`, {
+                method: 'DELETE',
+                headers: {
+                  'APCA-API-KEY-ID': conf.apiKey,
+                  'APCA-API-SECRET-KEY': conf.secretKey
+                }
+              });
+
+              if (singleClose.ok) {
+                closedCount++;
+                addLog(mode, `[💥 PANICO] Posizione fallback di ${symbol} chiusa.`);
+              } else {
+                addLog(mode, `[💥 PANICO Errore] Impossibile chiudere posizione fallback di ${symbol}.`);
+              }
+            }
+            results.push({ 
+              mode, 
+              success: closedCount > 0, 
+              message: `Liquidate ${closedCount}/${positions.length} posizioni tramite procedura di fallback sul conto ${label}.` 
+            });
+          } else {
+            results.push({ mode, success: true, message: `Nessuna posizione aperta da liquidare sul conto ${label}.` });
+          }
+        } else {
+          results.push({ mode, success: false, message: `Impossibile connettersi ad Alpaca per recuperare le posizioni sul conto ${label}.` });
+        }
+      }
+    } catch (err: any) {
+      addLog(mode, `[💥 PANICO Errore] Errore di rete durante la liquidazione del conto ${label}: ${err.message}`);
+      results.push({ mode, success: false, message: `Errore di rete per ${label}: ${err.message}` });
+    }
+  }
+
+  const allSuccess = results.every(r => r.success);
+  res.json({
+    success: allSuccess,
+    results,
+    message: allSuccess 
+      ? 'Liquidazione di emergenza completata con successo su tutti i conti.' 
+      : 'Liquidazione completata con alcuni errori rilevati nei log.'
+  });
+});
+
 app.post('/api/reset', (req, res) => {
   const { isConfigured } = getAlpacaConfig('paper');
   botStatus = {
@@ -1251,6 +1653,11 @@ app.post('/api/reset', (req, res) => {
   };
   botData.paper = { balance: 100.0, cash: 100.0, accountNumber: undefined, dailyPnL: [], dailyLogicLogs: [], logs: [] };
   botData.live = { balance: 100.0, cash: 100.0, accountNumber: undefined, dailyPnL: [], dailyLogicLogs: [], logs: [] };
+  
+  saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on reset:', err));
+  saveBotData('paper').catch(err => console.error('[Firebase Error] Error saving paper data on reset:', err));
+  saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live data on reset:', err));
+  
   addLog('system', 'Sistema ripristinato a €100.00');
   
   res.redirect(303, '/api/status');
@@ -1320,6 +1727,11 @@ Rispondi esclusivamente nel seguente formato JSON:
 
 // Vite middleware for development
 async function startServer() {
+  // Carica lo stato salvato da Firestore
+  await loadStateFromFirestore().catch(err => {
+    console.error('[Firebase Error] Errore durante il caricamento dello stato:', err);
+  });
+
   // Avvia l'auto-rilevamento delle credenziali in background per evitare blocchi o timeout all'avvio
   autoDetectCredentials().catch(err => {
     console.error('[Auto-Detect Error] Errore durante l\'auto-rilevamento:', err);
