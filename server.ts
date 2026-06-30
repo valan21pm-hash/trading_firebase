@@ -291,6 +291,7 @@ const marketEvents: Record<string, string> = {
 // In-memory cache for sentiment analysis
 const sentimentCache = new Map<string, {score: number, reasoning: string}>();
 let isQuotaExceeded = false;
+let quotaExceededTime = 0;
 
 // Bulk market sentiment to execute multiple analyses in a single API request and avoid rate limit issues
 async function getBulkMarketSentiment(symbols: string[], context?: string): Promise<Record<string, {score: number, reasoning: string}>> {
@@ -312,10 +313,16 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
   }
 
   if (isQuotaExceeded) {
-    for (const sym of missingSymbols) {
-      results[sym] = { score: 0, reasoning: 'Quota limitata o superata' };
+    const elapsedMinutes = (Date.now() - quotaExceededTime) / (60 * 1000);
+    if (elapsedMinutes >= 5) {
+      console.log(`[Quota Cooldown] Sono passati ${elapsedMinutes.toFixed(1)} minuti dalla saturazione della quota. Provo a ripristinare il servizio...`);
+      isQuotaExceeded = false;
+    } else {
+      for (const sym of missingSymbols) {
+        results[sym] = { score: 0, reasoning: `Quota limitata o superata (attendi altri ${(5 - elapsedMinutes).toFixed(1)} minuti)` };
+      }
+      return results;
     }
-    return results;
   }
 
   try {
@@ -358,6 +365,7 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
     if (message.includes('429') || message.includes('503') || message.includes('RESOURCE_EXHAUSTED')) {
       console.warn(`API limit hit or service unavailable. Disabling further sentiment analysis.`);
       isQuotaExceeded = true;
+      quotaExceededTime = Date.now();
     }
     console.error(`Error fetching bulk sentiment:`, error);
     for (const sym of missingSymbols) {
