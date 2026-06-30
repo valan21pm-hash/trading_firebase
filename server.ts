@@ -53,12 +53,18 @@ async function autoDetectCredentials() {
   for (const k of paperKeys) {
     for (const s of paperSecrets) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
         const res = await fetch('https://paper-api.alpaca.markets/v2/account', {
           headers: {
             'APCA-API-KEY-ID': k,
             'APCA-API-SECRET-KEY': s
-          }
+          },
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
+        
         if (res.status === 200) {
           resolvedCredentials.paper = { apiKey: k, secretKey: s, isConfigured: true };
           paperSuccess = true;
@@ -88,12 +94,18 @@ async function autoDetectCredentials() {
   for (const k of liveKeys) {
     for (const s of liveSecrets) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
         const res = await fetch('https://api.alpaca.markets/v2/account', {
           headers: {
             'APCA-API-KEY-ID': k,
             'APCA-API-SECRET-KEY': s
-          }
+          },
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
+        
         if (res.status === 200) {
           resolvedCredentials.live = { apiKey: k, secretKey: s, isConfigured: true };
           liveSuccess = true;
@@ -447,6 +459,22 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       addLog(mode, `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
     }
 
+    // Recupero degli ordini aperti correnti per verificare la presenza di trailing stop
+    let openOrders: any[] = [];
+    try {
+      const ordersResponse = await fetch(`${baseUrl}/orders?status=open`, {
+        headers: {
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
+        }
+      });
+      if (ordersResponse.ok) {
+        openOrders = await ordersResponse.json();
+      }
+    } catch (e: any) {
+      addLog(mode, `[Alpaca Ordini Errore] Impossibile recuperare ordini aperti: ${e.message}`);
+    }
+
     const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
     const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
     const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES];
@@ -494,6 +522,42 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         }
       } else {
         addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning})`);
+        
+        // Verifichiamo se c'è un trailing stop attivo per questa posizione
+        const hasTrailingStop = openOrders.some((o: any) => o.symbol === symbol && o.side === 'sell' && o.type === 'trailing_stop');
+        if (!hasTrailingStop) {
+          addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} senza Trailing Stop attivo. Creazione dell'ordine con trail_percent di 1.5%...`);
+          try {
+            const trailingResponse = await fetch(`${baseUrl}/orders`, {
+              method: 'POST',
+              headers: {
+                'APCA-API-KEY-ID': apiKey,
+                'APCA-API-SECRET-KEY': secretKey,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                symbol,
+                qty: pos.qty,
+                side: 'sell',
+                type: 'trailing_stop',
+                trail_percent: '1.5',
+                time_in_force: 'gtc'
+              })
+            });
+            
+            if (trailingResponse.ok) {
+              const trailingData = await trailingResponse.json();
+              addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
+            } else {
+              const errData = await trailingResponse.json();
+              addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop per ${symbol}: ${errData.message}`);
+            }
+          } catch (err: any) {
+            addLog(mode, `[Trailing Stop Errore] Errore di rete nella creazione del trailing stop per ${symbol}: ${err.message}`);
+          }
+        } else {
+          addLog(mode, `[Trailing Stop] Trailing Stop del 1.5% già attivo su Alpaca per ${symbol}.`);
+        }
       }
     }
 
@@ -549,6 +613,54 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             const orderData = await orderResponse.json();
             addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
             currentBuyingPower -= amountToBuy;
+
+            // Tentiamo di impostare subito il Trailing Stop del 1.5% per questa nuova posizione.
+            // Aspettiamo 2 secondi affinché l'ordine market venga eseguito ed entri in posizione su Alpaca.
+            setTimeout(async () => {
+              try {
+                const singlePosRes = await fetch(`${baseUrl}/positions/${symbol}`, {
+                  headers: {
+                    'APCA-API-KEY-ID': apiKey,
+                    'APCA-API-SECRET-KEY': secretKey
+                  }
+                });
+                if (singlePosRes.ok) {
+                  const updatedPos: any = await singlePosRes.json();
+                  const qty = updatedPos.qty;
+                  addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}). Imposto il Trailing Stop del 1.5%...`);
+                  
+                  const trailingResponse = await fetch(`${baseUrl}/orders`, {
+                    method: 'POST',
+                    headers: {
+                      'APCA-API-KEY-ID': apiKey,
+                      'APCA-API-SECRET-KEY': secretKey,
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                      symbol,
+                      qty,
+                      side: 'sell',
+                      type: 'trailing_stop',
+                      trail_percent: '1.5',
+                      time_in_force: 'gtc'
+                    })
+                  });
+                  
+                  if (trailingResponse.ok) {
+                    const trailingData: any = await trailingResponse.json();
+                    addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
+                  } else {
+                    const errData: any = await trailingResponse.json();
+                    addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop immediato per ${symbol}: ${errData.message}`);
+                  }
+                } else {
+                  addLog(mode, `[Trailing Stop Info] Non è stato possibile recuperare subito la quantità per ${symbol}. Il Trailing Stop verrà applicato automaticamente all'inizio del prossimo ciclo.`);
+                }
+              } catch (err: any) {
+                addLog(mode, `[Trailing Stop Errore] Errore di rete nell'impostazione immediata del trailing stop per ${symbol}: ${err.message}`);
+              }
+            }, 2000);
+
           } else {
             const errorData = await orderResponse.json();
             addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
@@ -938,7 +1050,10 @@ Rispondi esclusivamente nel seguente formato JSON:
 
 // Vite middleware for development
 async function startServer() {
-  await autoDetectCredentials();
+  // Avvia l'auto-rilevamento delle credenziali in background per evitare blocchi o timeout all'avvio
+  autoDetectCredentials().catch(err => {
+    console.error('[Auto-Detect Error] Errore durante l\'auto-rilevamento:', err);
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

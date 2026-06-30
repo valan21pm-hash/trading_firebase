@@ -46,6 +46,75 @@ function AccountPanel({ account, title, isActive, type, onToggle }: { account: A
           </div>
         </div>
 
+        {/* Asset in Gestione */}
+        <div className="mt-4 space-y-4">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1 flex items-center justify-between">
+              <span>Indici Gestiti</span>
+              <span className="text-xs text-gray-500 font-normal">CASH - Stato</span>
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'].map(symbol => {
+                const hasPosition = account.positions?.some(pos => pos.symbol === symbol);
+                const latestLog = account.dailyLogicLogs ? [...account.dailyLogicLogs].reverse().find(l => l.symbol === symbol) : null;
+                return (
+                  <div key={symbol} className="p-2 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between gap-1 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-gray-800">{symbol}</span>
+                      <span className="px-1 text-[9px] font-semibold bg-gray-200 text-gray-600 rounded">CASH</span>
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${hasPosition ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {hasPosition ? 'Attivo' : 'In attesa'}
+                      </span>
+                    </div>
+                    {latestLog && (
+                      <div className="text-[9px] text-gray-500 mt-1 border-t border-gray-200/60 pt-1">
+                        <span className={`font-semibold ${latestLog.action === 'BUY' ? 'text-green-600' : latestLog.action === 'SKIP' ? 'text-amber-600' : 'text-gray-500'}`}>
+                          {latestLog.action}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1 flex items-center justify-between">
+              <span>Materie Prime Gestite</span>
+              <span className="text-xs text-gray-500 font-normal">CASH - Stato</span>
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'].map(symbol => {
+                const hasPosition = account.positions?.some(pos => pos.symbol === symbol);
+                const latestLog = account.dailyLogicLogs ? [...account.dailyLogicLogs].reverse().find(l => l.symbol === symbol) : null;
+                return (
+                  <div key={symbol} className="p-2 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between gap-1 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-gray-800">{symbol}</span>
+                      <span className="px-1 text-[9px] font-semibold bg-gray-200 text-gray-600 rounded">CASH</span>
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${hasPosition ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {hasPosition ? 'Attivo' : 'In attesa'}
+                      </span>
+                    </div>
+                    {latestLog && (
+                      <div className="text-[9px] text-gray-500 mt-1 border-t border-gray-200/60 pt-1">
+                        <span className={`font-semibold ${latestLog.action === 'BUY' ? 'text-green-600' : latestLog.action === 'SKIP' ? 'text-amber-600' : 'text-gray-500'}`}>
+                          {latestLog.action}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
@@ -57,8 +126,13 @@ function AccountPanel({ account, title, isActive, type, onToggle }: { account: A
                     <span className="font-bold">{pos.symbol}</span>
                     <span className="text-gray-500 text-xs ml-2">{pos.qty} quote</span>
                   </div>
-                  <div className={`font-medium ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$
+                  <div className={`font-medium flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
+                    {pos.unrealized_plpc !== undefined && (
+                      <span className="text-xs font-normal opacity-90 px-1 py-0.5 rounded bg-current/10">
+                        ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
