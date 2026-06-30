@@ -535,36 +535,40 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         const hasTrailingStop = openOrders.some((o: any) => o.symbol === symbol && o.side === 'sell' && o.type === 'trailing_stop');
         if (!hasTrailingStop) {
           const qtyNum = parseFloat(pos.qty);
-          const isFractional = qtyNum % 1 !== 0;
-          const tif = isFractional ? 'day' : 'gtc';
-          addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} (${pos.qty} quote, frazionaria: ${isFractional}) senza Trailing Stop attivo. Creazione dell'ordine con trail_percent di 1.5% e time_in_force: ${tif}...`);
-          try {
-            const trailingResponse = await fetch(`${baseUrl}/orders`, {
-              method: 'POST',
-              headers: {
-                'APCA-API-KEY-ID': apiKey,
-                'APCA-API-SECRET-KEY': secretKey,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                symbol,
-                qty: pos.qty,
-                side: 'sell',
-                type: 'trailing_stop',
-                trail_percent: '1.5',
-                time_in_force: tif
-              })
-            });
-            
-            if (trailingResponse.ok) {
-              const trailingData = await trailingResponse.json();
-              addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
-            } else {
-              const errData = await trailingResponse.json();
-              addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop per ${symbol}: ${errData.message}`);
+          const integerQty = Math.floor(qtyNum);
+          
+          if (integerQty > 0) {
+            addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} (${pos.qty} quote). Poiché Alpaca non supporta Trailing Stop per quote frazionarie, imposto il Trailing Stop (1.5%) sulla sola parte intera di ${integerQty} quote...`);
+            try {
+              const trailingResponse = await fetch(`${baseUrl}/orders`, {
+                method: 'POST',
+                headers: {
+                  'APCA-API-KEY-ID': apiKey,
+                  'APCA-API-SECRET-KEY': secretKey,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  symbol,
+                  qty: integerQty.toString(),
+                  side: 'sell',
+                  type: 'trailing_stop',
+                  trail_percent: '1.5',
+                  time_in_force: 'gtc'
+                })
+              });
+              
+              if (trailingResponse.ok) {
+                const trailingData = await trailingResponse.json();
+                addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
+              } else {
+                const errData = await trailingResponse.json();
+                addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop per ${symbol}: ${errData.message}`);
+              }
+            } catch (err: any) {
+              addLog(mode, `[Trailing Stop Errore] Errore di rete nella creazione del trailing stop per ${symbol}: ${err.message}`);
             }
-          } catch (err: any) {
-            addLog(mode, `[Trailing Stop Errore] Errore di rete nella creazione del trailing stop per ${symbol}: ${err.message}`);
+          } else {
+            addLog(mode, `[Trailing Stop Info] Impossibile impostare Trailing Stop su ${symbol} perché la quantità è inferiore a 1 quota (${pos.qty}). Sarà gestito interamente tramite sentiment.`);
           }
         } else {
           addLog(mode, `[Trailing Stop] Trailing Stop del 1.5% già attivo su Alpaca per ${symbol}.`);
@@ -639,33 +643,37 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                   const updatedPos: any = await singlePosRes.json();
                   const qty = updatedPos.qty;
                   const qtyNum = parseFloat(qty);
-                  const isFractional = qtyNum % 1 !== 0;
-                  const tif = isFractional ? 'day' : 'gtc';
-                  addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}, frazionaria: ${isFractional}). Imposto il Trailing Stop del 1.5% con time_in_force: ${tif}...`);
+                  const integerQty = Math.floor(qtyNum);
                   
-                  const trailingResponse = await fetch(`${baseUrl}/orders`, {
-                    method: 'POST',
-                    headers: {
-                      'APCA-API-KEY-ID': apiKey,
-                      'APCA-API-SECRET-KEY': secretKey,
-                      'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                      symbol,
-                      qty,
-                      side: 'sell',
-                      type: 'trailing_stop',
-                      trail_percent: '1.5',
-                      time_in_force: tif
-                    })
-                  });
-                  
-                  if (trailingResponse.ok) {
-                    const trailingData: any = await trailingResponse.json();
-                    addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
+                  if (integerQty > 0) {
+                    addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}). Imposto il Trailing Stop del 1.5% sulla sola parte intera di ${integerQty} quote...`);
+                    
+                    const trailingResponse = await fetch(`${baseUrl}/orders`, {
+                      method: 'POST',
+                      headers: {
+                        'APCA-API-KEY-ID': apiKey,
+                        'APCA-API-SECRET-KEY': secretKey,
+                        'Content-Type': 'application/json'
+                      },
+                      body: JSON.stringify({
+                        symbol,
+                        qty: integerQty.toString(),
+                        side: 'sell',
+                        type: 'trailing_stop',
+                        trail_percent: '1.5',
+                        time_in_force: 'gtc'
+                      })
+                    });
+                    
+                    if (trailingResponse.ok) {
+                      const trailingData: any = await trailingResponse.json();
+                      addLog(mode, `[Trailing Stop] Ordine Trailing Stop (1.5%) impostato con successo per ${symbol}! ID: ${trailingData.id}`);
+                    } else {
+                      const errData: any = await trailingResponse.json();
+                      addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop immediato per ${symbol}: ${errData.message}`);
+                    }
                   } else {
-                    const errData: any = await trailingResponse.json();
-                    addLog(mode, `[Trailing Stop Errore] Impossibile impostare Trailing Stop immediato per ${symbol}: ${errData.message}`);
+                    addLog(mode, `[Trailing Stop Info] Impossibile impostare Trailing Stop su ${symbol} perché la quantità è inferiore a 1 quota (${qty}). Sarà gestito interamente tramite sentiment.`);
                   }
                 } else {
                   addLog(mode, `[Trailing Stop Info] Non è stato possibile recuperare subito la quantità per ${symbol}. Il Trailing Stop verrà applicato automaticamente all'inizio del prossimo ciclo.`);
