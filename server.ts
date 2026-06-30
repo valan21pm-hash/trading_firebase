@@ -447,7 +447,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     botData[mode].accountNumber = account.account_number;
     
     let currentBuyingPower = parseFloat(account.buying_power || '0');
-    const amountToBuy = mode === 'paper' ? 1000 : 2;
+    const amountToBuy = mode === 'paper' ? 1000 : 5;
     
     addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
