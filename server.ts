@@ -526,7 +526,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         // Verifichiamo se c'è un trailing stop attivo per questa posizione
         const hasTrailingStop = openOrders.some((o: any) => o.symbol === symbol && o.side === 'sell' && o.type === 'trailing_stop');
         if (!hasTrailingStop) {
-          addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} senza Trailing Stop attivo. Creazione dell'ordine con trail_percent di 1.5%...`);
+          const qtyNum = parseFloat(pos.qty);
+          const isFractional = qtyNum % 1 !== 0;
+          const tif = isFractional ? 'day' : 'gtc';
+          addLog(mode, `[Trailing Stop] Rilevata posizione aperta su ${symbol} (${pos.qty} quote, frazionaria: ${isFractional}) senza Trailing Stop attivo. Creazione dell'ordine con trail_percent di 1.5% e time_in_force: ${tif}...`);
           try {
             const trailingResponse = await fetch(`${baseUrl}/orders`, {
               method: 'POST',
@@ -541,7 +544,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 side: 'sell',
                 type: 'trailing_stop',
                 trail_percent: '1.5',
-                time_in_force: 'gtc'
+                time_in_force: tif
               })
             });
             
@@ -627,7 +630,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 if (singlePosRes.ok) {
                   const updatedPos: any = await singlePosRes.json();
                   const qty = updatedPos.qty;
-                  addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}). Imposto il Trailing Stop del 1.5%...`);
+                  const qtyNum = parseFloat(qty);
+                  const isFractional = qtyNum % 1 !== 0;
+                  const tif = isFractional ? 'day' : 'gtc';
+                  addLog(mode, `[Trailing Stop] Nuova posizione rilevata per ${symbol} (Quantità: ${qty}, frazionaria: ${isFractional}). Imposto il Trailing Stop del 1.5% con time_in_force: ${tif}...`);
                   
                   const trailingResponse = await fetch(`${baseUrl}/orders`, {
                     method: 'POST',
@@ -642,7 +648,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                       side: 'sell',
                       type: 'trailing_stop',
                       trail_percent: '1.5',
-                      time_in_force: 'gtc'
+                      time_in_force: tif
                     })
                   });
                   
