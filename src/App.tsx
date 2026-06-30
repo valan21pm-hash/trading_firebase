@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2 } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2, Copy, Check, Sparkles, Brain } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import ReactMarkdown from 'react-markdown';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 
 const formatDate = (dateStr: string) => {
@@ -402,6 +403,38 @@ export default function App() {
   const [confirmCloseSymbol, setConfirmCloseSymbol] = useState<{ symbol: string; type: 'paper' | 'live' } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [debriefLoading, setDebriefLoading] = useState(false);
+  const [copiedDebriefRule, setCopiedDebriefRule] = useState(false);
+
+  const handleGenerateDebrief = async () => {
+    setDebriefLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch('/api/generate-daily-debrief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.debrief) {
+          setStatus(prev => prev ? { ...prev, latestDailyDebrief: data.debrief } : null);
+          setSuccessMessage('Debriefing Giornaliero AI generato con successo!');
+          setTimeout(() => setSuccessMessage(null), 5000);
+        } else {
+          setErrorMessage(`Impossibile generare il debriefing: ${data.error || 'Errore sconosciuto'}`);
+        }
+      } else {
+        const errData = await res.json().catch(() => ({ error: 'Errore generico del server' }));
+        setErrorMessage(`Errore del server: ${errData.error || 'Generazione fallita'}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(`Errore di rete: ${err.message}`);
+    } finally {
+      setDebriefLoading(false);
+    }
+  };
 
   const handleClosePosition = async (symbol: string, type: 'paper' | 'live') => {
     setClosingSymbols(prev => [...prev, symbol]);
@@ -564,6 +597,104 @@ export default function App() {
               confirmCloseSymbol={confirmCloseSymbol}
               setConfirmCloseSymbol={setConfirmCloseSymbol}
             />
+          )}
+        </div>
+
+        {/* Debriefing Giornaliero AI */}
+        <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Brain className="w-5 h-5 text-indigo-600" />
+                Debriefing Giornaliero Assistito da AI
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Simula una riunione di fine giornata con Gemini 3.5 per analizzare decisioni, correlazioni e ottenere regole ottimizzate.
+              </p>
+            </div>
+            <button
+              onClick={handleGenerateDebrief}
+              disabled={debriefLoading}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition shadow-sm cursor-pointer ${
+                debriefLoading 
+                  ? 'bg-slate-200 text-slate-500 cursor-not-allowed animate-pulse' 
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
+              }`}
+            >
+              <Sparkles className={`w-4 h-4 ${debriefLoading ? 'animate-spin' : ''}`} />
+              {debriefLoading ? 'Analisi in corso...' : 'Avvia Riunione & Debriefing'}
+            </button>
+          </div>
+
+          {status?.latestDailyDebrief ? (
+            <div className="space-y-4">
+              {/* Output Analisi */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-inner">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-slate-400" />
+                  Rapporto della Riunione di Fine Giornata
+                </h3>
+                <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
+                  <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
+                </div>
+                {status.latestDailyDebrief.timestamp && (
+                  <div className="text-right text-[10px] text-slate-400 mt-3 flex items-center justify-end gap-1 font-mono">
+                    <Clock className="w-3 h-3" />
+                    Analizzato il: {new Date(status.latestDailyDebrief.timestamp).toLocaleString('it-IT')}
+                  </div>
+                )}
+              </div>
+
+              {/* Regola Ottimizzata da Copiare */}
+              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-indigo-600" />
+                    Regola Ottimizzata Proposta per il Bot
+                  </h3>
+                  <button
+                    onClick={() => {
+                      if (status.latestDailyDebrief) {
+                        navigator.clipboard.writeText(status.latestDailyDebrief.suggestedRule);
+                        setCopiedDebriefRule(true);
+                        setTimeout(() => setCopiedDebriefRule(false), 2000);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                  >
+                    {copiedDebriefRule ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-green-600" />
+                        <span className="text-green-700">Copiata!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copia Regola</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <textarea
+                    readOnly
+                    value={status.latestDailyDebrief.suggestedRule}
+                    rows={2}
+                    className="w-full bg-white border border-indigo-200 rounded-lg p-3 text-sm font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
+                  />
+                </div>
+                <p className="text-[11px] text-indigo-700 font-sans italic leading-normal">
+                  💡 <strong>Suggerimento:</strong> Copia questa regola e incollala nel "Loop di Correzione" sottostante per addestrare il bot a migliorare le performance future.
+                </p>
+              </div>
+            </div>
+          ) : (
+            !debriefLoading && (
+              <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+                Nessun debriefing generato per oggi. Clicca su "Avvia Riunione & Debriefing" per avviare l'analisi assistita da AI.
+              </div>
+            )
           )}
         </div>
 

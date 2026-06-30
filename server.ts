@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -222,6 +222,11 @@ let botStatus: {
   dailyPnL?: { date: string; pnl: number; balance: number; breakdown?: any[]; news?: string }[];
   cash?: number;
   latestDailyReport?: string;
+  latestDailyDebrief?: {
+    analysis: string;
+    suggestedRule: string;
+    timestamp: string;
+  };
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   userFeedbackRules?: string[];
 } = {
@@ -235,6 +240,7 @@ let botStatus: {
   dailyPnL: [],
   cash: 100.0,
   latestDailyReport: undefined,
+  latestDailyDebrief: undefined,
   dailyLogicLogs: [],
   userFeedbackRules: []
 };
@@ -581,7 +587,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     addLog(mode, `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
 
-    // 1. Fase di Vendita (Sell/Close phase): Chiudiamo solo se il sentiment è neutro o negativo (<= 0) per limitare le perdite. I profitti vengono gestiti manualmente dall'utente.
+    // 1. Fase di Vendita (Sell/Close phase): Chiudiamo se il sentiment è neutro o negativo (<= 0), gestendo in modo automatico sia perdite sia prese di profitto. L'utente conserva la possibilità di chiudere manualmente in qualsiasi momento.
     const closedSymbolsThisCycle = new Set<string>();
     for (const pos of openPositions) {
       const symbol = pos.symbol;
@@ -615,7 +621,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode, `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
         }
       } else {
-        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Gestione dei profitti affidata all'utente.`);
+        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche basate sul sentiment.`);
       }
     }
 
@@ -833,6 +839,104 @@ app.all(['/run-daily-report', '/api/trigger-daily-report'], async (req, res) => 
   }
 });
 
+// Endpoint per Debriefing Giornaliero assistito da AI
+app.post('/api/generate-daily-debrief', async (req, res) => {
+  addLog('system', '[Debriefing AI] Inizio generazione Debriefing Giornaliero con Gemini 3.5...');
+  try {
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    const todaysPnLPaper = botData.paper.dailyPnL?.find(d => d.date === todayStr) || { 
+      balance: botData.paper.balance, 
+      pnl: botData.paper.dailyPnL?.length ? botData.paper.dailyPnL[botData.paper.dailyPnL.length - 1].pnl : 0 
+    };
+    const todaysPnLLive = botData.live.dailyPnL?.find(d => d.date === todayStr) || { 
+      balance: botData.live.balance, 
+      pnl: botData.live.dailyPnL?.length ? botData.live.dailyPnL[botData.live.dailyPnL.length - 1].pnl : 0 
+    };
+    
+    const paperLogs = botData.paper.logs.slice(-40).join('\n') || 'Nessun log operativo registrato.';
+    const liveLogs = botData.live.logs.slice(-40).join('\n') || 'Nessun log operativo registrato.';
+    
+    const paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
+    const liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
+    
+    const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
+      ? botStatus.userFeedbackRules.join('\n- ')
+      : 'Nessuna regola personalizzata attualmente attiva';
+
+    const prompt = `Sei un analista finanziario quantitativo Senior e coach esperto di trading algoritmico.
+Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di trading. Analizza accuratamente i dati operativi di oggi per identificare errori, correlazioni latenti e proporre miglioramenti.
+
+DATI DI OGGI (${todayStr}):
+- PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
+- PNL/Bilancio Reale (Live): ${JSON.stringify(todaysPnLLive)}
+- Regole personalizzate attualmente in vigore:
+${currentRules}
+
+LOG LOGICA DECISIONALE (Paper):
+${paperLogicLogs}
+
+LOG LOGICA DECISIONALE (Live):
+${liveLogicLogs}
+
+ULTIMI LOG OPERATIVI (Paper):
+${paperLogs}
+
+ULTIMI LOG OPERATIVI (Live):
+${liveLogs}
+
+ISTRUZIONI DI ANALISI:
+1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mancate prese di profitto, o vendite affrettate).
+2. **Correlazioni Latenti**: Trova correlazioni latenti tra l'andamento di mercato di oggi, le notizie macro o settoriali e le performance dei ticker gestiti (SPY, QQQ, DIA, ecc.).
+3. **Scenari Alternativi**: Ipotizza scenari alternativi (es. "Se avessimo chiuso la posizione prima, avremmo gestito meglio il rischio").
+4. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot. Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
+
+Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
+
+    const response = await getAi().models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            analysis: {
+              type: Type.STRING,
+              description: "Resoconto di analisi approfondita strutturato in Markdown con sezioni 'Riesame Decisionale', 'Correlazioni Latenti' e 'Scenari Alternativi'."
+            },
+            suggestedRule: {
+              type: Type.STRING,
+              description: "Una singola regola di trading suggerita, chiara, precisa, in italiano, pronta da copiare e incollare (massimo 150 caratteri)."
+            }
+          },
+          required: ["analysis", "suggestedRule"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("Risposta vuota da parte del modello AI.");
+    }
+
+    const result = JSON.parse(text.trim());
+    
+    botStatus.latestDailyDebrief = {
+      analysis: result.analysis,
+      suggestedRule: result.suggestedRule,
+      timestamp: new Date().toISOString()
+    };
+
+    addLog('system', '[Debriefing AI] Debriefing generato con successo.');
+    res.json({ success: true, debrief: botStatus.latestDailyDebrief });
+  } catch (error: any) {
+    addLog('system', `[Debriefing AI Errore] ${error.message}`);
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API Routes
 app.post('/api/feedback', (req, res) => {
   const { rule } = req.body;
@@ -1000,6 +1104,7 @@ app.get('/api/status', async (req, res) => {
       lastCheck: botStatus.lastCheck,
       userFeedbackRules: botStatus.userFeedbackRules,
       latestDailyReport: botStatus.latestDailyReport,
+      latestDailyDebrief: botStatus.latestDailyDebrief,
       paper: paperData,
       live: liveData
     }

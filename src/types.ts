@@ -44,6 +44,11 @@ export interface BotStatus {
   lastCheck: string | null;
   userFeedbackRules?: string[];
   latestDailyReport?: string;
+  latestDailyDebrief?: {
+    analysis: string;
+    suggestedRule: string;
+    timestamp: string;
+  };
   
   paper: AccountData;
   live: AccountData;
