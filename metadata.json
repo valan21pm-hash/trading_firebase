@@ -1,8 +1,28 @@
-{
-  "name": "Trading Bot Control Panel",
-  "description": "Un pannello di controllo completo per il monitoraggio e la correzione assistita da AI di bot di trading su conti Alpaca simulati e reali, con persistenza delle regole e analisi dei log su Firebase.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}
+# GEMINI_API_KEY: Required for Gemini AI API calls.
+# AI Studio automatically injects this at runtime from user secrets.
+# Users configure this via the Secrets panel in the AI Studio UI.
+GEMINI_API_KEY="MY_GEMINI_API_KEY"
+
+# API Keys per Broker (Alpaca)
+# Puoi configurare chiavi separate per Paper (Simulazione) e Live (Soldi Reali)
+ALPACA_PAPER_API_KEY="la_tua_api_key_paper_alpaca"
+ALPACA_PAPER_SECRET_KEY="la_tua_secret_key_paper_alpaca"
+
+ALPACA_LIVE_API_KEY="la_tua_api_key_live_alpaca"
+ALPACA_LIVE_SECRET_KEY="la_tua_secret_key_live_alpaca"
+
+# Fallback se non usi le chiavi specifiche sopra
+ALPACA_API_KEY="la_tua_api_key_alpaca"
+ALPACA_SECRET_KEY="la_tua_secret_key_alpaca"
+ALPACA_PAPER_TRADING="true" # "false" se usi la chiave generica per Live (Real)
+
+# XTB
+XTB_USER_ID="il_tuo_user_id"
+XTB_PASSWORD="la_tua_password"
+XTB_MODE="demo" # Imposta a "real" per soldi veri
+
+# Impostazioni Email (Per Report Giornaliero)
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="465"
+SMTP_USER="tuo_indirizzo@gmail.com"
+SMTP_PASS="tua_password_app"
