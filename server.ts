@@ -1190,8 +1190,19 @@ app.post('/api/feedback', (req, res) => {
 app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
   addLog('system', '[Trigger Strategy] Ricevuta richiesta di attivazione strategia da Cloud Scheduler o manuale...');
   try {
-    // Forziamo l'esecuzione per evitare che lo stato in-memory 'active=false' (dovuto a cold start) blocchi il bot
-    await executeTradingCycle(true);
+    // Carichiamo lo stato più recente da Firestore per essere sicuri al 100% delle preferenze dell'utente
+    await loadStateFromFirestore().catch(err => {
+      console.error('[Firebase Error] Errore nel caricamento dello stato in trigger:', err);
+    });
+
+    if (!botStatus.active) {
+      addLog('system', '[Trigger Strategy] Ciclo di trading ignorato: il bot non è attivo.');
+      res.status(200).send('BOT_INACTIVE');
+      return;
+    }
+
+    // Eseguiamo il ciclo di trading in modo sicuro, rispettando gli stati specifici (paperActive, liveActive) e gli orari di borsa (force = false)
+    await executeTradingCycle(false);
     addLog('system', '[Trigger Strategy] Ciclo di trading completato con successo. Rispondo OK.');
     res.status(200).send('OK');
   } catch (error: any) {
