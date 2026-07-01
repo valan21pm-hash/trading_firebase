@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2, Copy, Check, Sparkles, Brain } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
+import { jsPDF } from 'jspdf';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 
 const formatDate = (dateStr: string) => {
@@ -16,6 +17,692 @@ const formatDate = (dateStr: string) => {
   } catch (e) {
     return dateStr;
   }
+};
+
+const downloadPDF = (title: string, dateInfo: string, content: string, suggestedRule?: string) => {
+  const doc = new jsPDF();
+  
+  // Header Accent bar
+  doc.setFillColor(79, 70, 229); // Indigo 600
+  doc.rect(0, 0, 210, 8, "F");
+
+  // Title
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(30, 41, 59); // Slate 800
+  doc.text(title, 14, 25);
+  
+  // Subtitle / Date Info
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(100, 116, 139); // Slate 500
+  doc.text(dateInfo, 14, 32);
+  
+  // Divider line
+  doc.setDrawColor(226, 232, 240); // Slate 200
+  doc.setLineWidth(0.5);
+  doc.line(14, 37, 196, 37);
+  
+  // Content styling
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(51, 65, 85); // Slate 700
+  
+  // Split text to fit page width
+  // A4 page width is 210mm. Margins are 14mm on each side. Printable width = 210 - 28 = 182mm
+  const splitText = doc.splitTextToSize(content, 180);
+  
+  let y = 45;
+  const pageHeight = doc.internal.pageSize.height; // 297mm
+  
+  // Loop through lines and handle page breaks
+  for (let i = 0; i < splitText.length; i++) {
+    if (y > pageHeight - 35) {
+      doc.addPage();
+      // Draw new page header bar
+      doc.setFillColor(79, 70, 229); // Indigo 600
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25; // reset y on new page
+    }
+    const line = splitText[i].trim();
+    if (!line) {
+      y += 4;
+      continue;
+    }
+    
+    // Formatting styles based on basic markdown indicators
+    if (line.startsWith('##') || line.startsWith('###')) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(67, 56, 202); // Indigo 700
+      const cleanLine = line.replace(/[\#\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 8;
+    } else if (line.startsWith('**') || line.match(/^[0-9]\./) || line.startsWith('-')) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59); // Slate 800
+      const cleanLine = line.replace(/[\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 6;
+    } else {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85); // Slate 700
+      const cleanLine = line.replace(/[\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 6;
+    }
+  }
+  
+  // Suggested Rule section at the end
+  if (suggestedRule) {
+    y += 10;
+    if (y > pageHeight - 50) {
+      doc.addPage();
+      // Draw header bar
+      doc.setFillColor(79, 70, 229);
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25;
+    }
+    
+    // Box for Suggested Rule
+    doc.setDrawColor(129, 140, 248); // Indigo 400
+    doc.setFillColor(243, 244, 246); // Gray 100
+    doc.rect(14, y, 182, 32, "FD");
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(67, 56, 202); // Indigo 700
+    doc.text("REGOLA DI TRADING SUGGERITA DALL'AI:", 18, y + 10);
+    
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(30, 41, 59); // Slate 800
+    const ruleText = doc.splitTextToSize(suggestedRule, 172);
+    doc.text(ruleText, 18, y + 18);
+  }
+  
+  // Footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.text(`Alpaca AI Trading Bot - Generato automaticamente - Pagina ${page} di ${totalPages}`, 14, pageHeight - 12);
+  }
+  
+  // Save the PDF
+  const dateStr = new Date().toISOString().split('T')[0];
+  const filename = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${dateStr}.pdf`;
+  doc.save(filename);
+};
+
+const downloadOperationsPDF = (mode: 'paper' | 'live', positions: any[], activities: any[], dailyLogicLogs: any[]) => {
+  const doc = new jsPDF();
+  const pageHeight = doc.internal.pageSize.height; // 297
+  
+  // Header Accent bar
+  doc.setFillColor(30, 41, 59); // Slate 800
+  doc.rect(0, 0, 210, 8, "F");
+
+  // Title
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(20);
+  doc.setTextColor(15, 23, 42); // Slate 900
+  doc.text("REPORT OPERAZIONI E PERFORMANCE", 14, 25);
+  
+  // Subtitle
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(100, 116, 139); // Slate 500
+  const labelTipoConto = mode === 'live' ? 'Conto Reale (Live)' : 'Conto di Simulazione (Paper)';
+  doc.text(`Generato il: ${new Date().toLocaleString('it-IT')} | Conto: ${labelTipoConto}`, 14, 32);
+  
+  // Divider line
+  doc.setDrawColor(226, 232, 240); // Slate 200
+  doc.setLineWidth(0.5);
+  doc.line(14, 36, 196, 36);
+
+  let y = 45;
+
+  // 1. ACTIVE POSITIONS SECTION
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(79, 70, 229); // Indigo 600
+  doc.text("1. POSIZIONI ATTIVE (PROFITTI/PERDITE LATENTI)", 14, y);
+  y += 6;
+
+  if (positions && positions.length > 0) {
+    // Header for positions table
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105); // Slate 600
+    doc.setFillColor(241, 245, 249); // Slate 100
+    doc.rect(14, y, 182, 7, "F");
+    
+    doc.text("SIMBOLO", 16, y + 5);
+    doc.text("QUANTITÀ", 40, y + 5);
+    doc.text("PREZZO CARICO", 70, y + 5);
+    doc.text("PREZZO CORRENTE", 110, y + 5);
+    doc.text("VALORE MERCATO", 145, y + 5);
+    doc.text("PROFITTO/PERDITA", 175, y + 5);
+    
+    y += 7;
+
+    positions.forEach((pos: any) => {
+      if (y > pageHeight - 25) {
+        doc.addPage();
+        doc.setFillColor(30, 41, 59);
+        doc.rect(0, 0, 210, 8, "F");
+        y = 20;
+      }
+
+      // Draw bottom line for each row
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, y + 6, 196, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+
+      const qty = parseFloat(pos.qty).toFixed(4);
+      const avgPrice = parseFloat(pos.avg_entry_price).toFixed(2);
+      const currentPrice = parseFloat(pos.current_price).toFixed(2);
+      const mktVal = parseFloat(pos.market_value).toFixed(2);
+      const pl = parseFloat(pos.unrealized_pl || '0');
+      const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
+
+      doc.text(pos.symbol, 16, y + 4);
+      doc.text(qty, 40, y + 4);
+      doc.text(`$${avgPrice}`, 70, y + 4);
+      doc.text(`$${currentPrice}`, 110, y + 4);
+      doc.text(`$${mktVal}`, 145, y + 4);
+
+      // Color profit/loss
+      if (pl > 0) {
+        doc.setTextColor(21, 128, 61); // Green 700
+        doc.text(`+$${pl.toFixed(2)} (+${plpc.toFixed(2)}%)`, 175, y + 4);
+      } else if (pl < 0) {
+        doc.setTextColor(185, 28, 28); // Red 700
+        doc.text(`-$${Math.abs(pl).toFixed(2)} (${plpc.toFixed(2)}%)`, 175, y + 4);
+      } else {
+        doc.setTextColor(100, 116, 139);
+        doc.text(`$0.00 (0.00%)`, 175, y + 4);
+      }
+
+      y += 8;
+    });
+  } else {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9.5);
+    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.text("Nessuna posizione attualmente aperta.", 14, y + 4);
+    y += 10;
+  }
+
+  y += 6;
+
+  // 2. EXECUTED OPERATIONS SECTION
+  if (y > pageHeight - 35) {
+    doc.addPage();
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, 210, 8, "F");
+    y = 20;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(79, 70, 229);
+  doc.text("2. REGISTRO ESECUZIONI DI MERCATO (ALPACA FILLS)", 14, y);
+  y += 6;
+
+  const fills = activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill');
+
+  if (fills && fills.length > 0) {
+    // Header for fills table
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, y, 182, 7, "F");
+    
+    doc.text("DATA / ORA", 16, y + 5);
+    doc.text("SIMBOLO", 55, y + 5);
+    doc.text("AZIONE", 80, y + 5);
+    doc.text("QUANTITÀ", 110, y + 5);
+    doc.text("PREZZO", 140, y + 5);
+    doc.text("NOTIONALE", 170, y + 5);
+    
+    y += 7;
+
+    fills.forEach((fill: any) => {
+      if (y > pageHeight - 25) {
+        doc.addPage();
+        doc.setFillColor(30, 41, 59);
+        doc.rect(0, 0, 210, 8, "F");
+        y = 20;
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, y + 6, 196, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+
+      const dateText = new Date(fill.transaction_time || fill.timestamp).toLocaleString('it-IT');
+      const side = (fill.side || '').toUpperCase();
+      const qty = parseFloat(fill.qty).toFixed(4);
+      const price = parseFloat(fill.price).toFixed(2);
+      const notional = (parseFloat(fill.qty) * parseFloat(fill.price)).toFixed(2);
+
+      doc.text(dateText, 16, y + 4);
+      doc.text(fill.symbol, 55, y + 4);
+
+      if (side === 'BUY') {
+        doc.setTextColor(21, 128, 61); // Green 700
+        doc.setFont("helvetica", "bold");
+        doc.text("ACQUISTO (BUY)", 80, y + 4);
+      } else {
+        doc.setTextColor(185, 28, 28); // Red 700
+        doc.setFont("helvetica", "bold");
+        doc.text("VENDITA (SELL)", 80, y + 4);
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+      doc.text(qty, 110, y + 4);
+      doc.text(`$${price}`, 140, y + 4);
+      doc.text(`$${notional}`, 170, y + 4);
+
+      y += 8;
+    });
+  } else {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Nessuna esecuzione registrata recentemente.", 14, y + 4);
+    y += 10;
+  }
+
+  y += 6;
+
+  // 3. BOT DECISION LOGS SECTION
+  if (y > pageHeight - 35) {
+    doc.addPage();
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, 210, 8, "F");
+    y = 20;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(79, 70, 229);
+  doc.text("3. LOG LOGICA DECISIONALE DEL BOT (LLM SENTIMENT)", 14, y);
+  y += 6;
+
+  if (dailyLogicLogs && dailyLogicLogs.length > 0) {
+    // Header for logic logs table
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, y, 182, 7, "F");
+    
+    doc.text("ORA", 16, y + 5);
+    doc.text("SIMBOLO", 40, y + 5);
+    doc.text("AZIONE", 65, y + 5);
+    doc.text("PREZZO", 90, y + 5);
+    doc.text("MOTIVAZIONE / RAGIONAMENTO SENTIMENT", 115, y + 5);
+    
+    y += 7;
+
+    const recentDecisions = dailyLogicLogs.slice(-25).reverse();
+
+    recentDecisions.forEach((log: any) => {
+      const dateText = new Date(log.timestamp).toLocaleTimeString('it-IT');
+      const reasoningText = log.reasoning || '';
+      
+      const splitReasoning = doc.splitTextToSize(reasoningText, 78);
+      const rowHeight = Math.max(splitReasoning.length * 4 + 2, 7);
+
+      if (y > pageHeight - rowHeight - 10) {
+        doc.addPage();
+        doc.setFillColor(30, 41, 59);
+        doc.rect(0, 0, 210, 8, "F");
+        y = 20;
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, y + rowHeight - 1, 196, y + rowHeight - 1);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(30, 41, 59);
+
+      doc.text(dateText, 16, y + 4);
+      doc.text(log.symbol, 40, y + 4);
+
+      const act = (log.action || '').toUpperCase();
+      if (act === 'BUY') {
+        doc.setTextColor(21, 128, 61);
+        doc.setFont("helvetica", "bold");
+        doc.text("ACQUISTO (BUY)", 65, y + 4);
+      } else if (act === 'SELL') {
+        doc.setTextColor(185, 28, 28);
+        doc.setFont("helvetica", "bold");
+        doc.text("CHIUSURA (SELL)", 65, y + 4);
+      } else if (act === 'HOLD') {
+        doc.setTextColor(79, 70, 229);
+        doc.setFont("helvetica", "bold");
+        doc.text("MANTIENI (HOLD)", 65, y + 4);
+      } else {
+        doc.setTextColor(100, 116, 139);
+        doc.setFont("helvetica", "normal");
+        doc.text("SALTA (SKIP)", 65, y + 4);
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+      doc.text(log.price ? `$${parseFloat(log.price).toFixed(2)}` : 'N/D', 90, y + 4);
+
+      doc.setTextColor(71, 85, 105);
+      doc.text(splitReasoning, 115, y + 4);
+
+      y += rowHeight;
+    });
+  } else {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Nessun log decisionale registrato in memoria.", 14, y + 4);
+    y += 10;
+  }
+
+  // Footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.text(`Alpaca AI Trading Bot - Registro Operazioni - Pagina ${page} di ${totalPages}`, 14, pageHeight - 12);
+  }
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  const filename = `registro_operazioni_${mode}_${dateStr}.pdf`;
+  doc.save(filename);
+};
+
+const downloadPDFWithOperations = (
+  title: string, 
+  dateInfo: string, 
+  content: string, 
+  suggestedRule?: string, 
+  positions: any[] = [], 
+  activities: any[] = [], 
+  dailyLogicLogs: any[] = []
+) => {
+  const doc = new jsPDF();
+  const pageHeight = doc.internal.pageSize.height; // 297mm
+  
+  // Header Accent bar
+  doc.setFillColor(79, 70, 229); // Indigo 600
+  doc.rect(0, 0, 210, 8, "F");
+
+  // Title
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(30, 41, 59); // Slate 800
+  doc.text(title, 14, 25);
+  
+  // Subtitle / Date Info
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(100, 116, 139); // Slate 500
+  doc.text(dateInfo, 14, 32);
+  
+  // Divider line
+  doc.setDrawColor(226, 232, 240); // Slate 200
+  doc.setLineWidth(0.5);
+  doc.line(14, 37, 196, 37);
+  
+  // Content styling
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(51, 65, 85); // Slate 700
+  
+  const splitText = doc.splitTextToSize(content, 180);
+  
+  let y = 45;
+  
+  // Loop through lines and handle page breaks
+  for (let i = 0; i < splitText.length; i++) {
+    if (y > pageHeight - 35) {
+      doc.addPage();
+      doc.setFillColor(79, 70, 229); // Indigo 600
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25; // reset y on new page
+    }
+    const line = splitText[i].trim();
+    if (!line) {
+      y += 4;
+      continue;
+    }
+    
+    if (line.startsWith('##') || line.startsWith('###')) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(67, 56, 202); // Indigo 700
+      const cleanLine = line.replace(/[\#\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 8;
+    } else if (line.startsWith('**') || line.match(/^[0-9]\./) || line.startsWith('-')) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59); // Slate 800
+      const cleanLine = line.replace(/[\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 6;
+    } else {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85); // Slate 700
+      const cleanLine = line.replace(/[\*]/g, '').trim();
+      doc.text(cleanLine, 14, y);
+      y += 6;
+    }
+  }
+  
+  // Suggested Rule section
+  if (suggestedRule) {
+    y += 10;
+    if (y > pageHeight - 50) {
+      doc.addPage();
+      doc.setFillColor(79, 70, 229);
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25;
+    }
+    
+    doc.setDrawColor(129, 140, 248); // Indigo 400
+    doc.setFillColor(243, 244, 246); // Gray 100
+    doc.rect(14, y, 182, 32, "FD");
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(67, 56, 202); // Indigo 700
+    doc.text("REGOLA DI TRADING SUGGERITA DALL'AI:", 18, y + 10);
+    
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(30, 41, 59); // Slate 800
+    const ruleText = doc.splitTextToSize(suggestedRule, 172);
+    doc.text(ruleText, 18, y + 18);
+    y += 38;
+  }
+
+  // APPEND ACTIVE POSITIONS TABLE
+  if (positions && positions.length > 0) {
+    y += 10;
+    if (y > pageHeight - 45) {
+      doc.addPage();
+      doc.setFillColor(79, 70, 229);
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(30, 41, 59);
+    doc.text("APPENDICE A: POSIZIONI ATTIVE AL MOMENTO DEL DEBRIEFING", 14, y);
+    y += 6;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, y, 182, 7, "F");
+    
+    doc.text("SIMBOLO", 16, y + 5);
+    doc.text("QUANTITÀ", 45, y + 5);
+    doc.text("PREZZO CARICO", 80, y + 5);
+    doc.text("PREZZO CORRENTE", 115, y + 5);
+    doc.text("PROFITTO/PERDITA LATENTE", 150, y + 5);
+    
+    y += 7;
+
+    positions.forEach((pos: any) => {
+      if (y > pageHeight - 25) {
+        doc.addPage();
+        doc.setFillColor(79, 70, 229);
+        doc.rect(0, 0, 210, 8, "F");
+        y = 25;
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, y + 6, 196, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+
+      const qty = parseFloat(pos.qty).toFixed(4);
+      const avgPrice = parseFloat(pos.avg_entry_price).toFixed(2);
+      const currentPrice = parseFloat(pos.current_price).toFixed(2);
+      const pl = parseFloat(pos.unrealized_pl || '0');
+      const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
+
+      doc.text(pos.symbol, 16, y + 4);
+      doc.text(qty, 45, y + 4);
+      doc.text(`$${avgPrice}`, 80, y + 4);
+      doc.text(`$${currentPrice}`, 115, y + 4);
+
+      if (pl > 0) {
+        doc.setTextColor(21, 128, 61); // Green 700
+        doc.text(`+$${pl.toFixed(2)} (+${plpc.toFixed(2)}%)`, 150, y + 4);
+      } else if (pl < 0) {
+        doc.setTextColor(185, 28, 28); // Red 700
+        doc.text(`-$${Math.abs(pl).toFixed(2)} (${plpc.toFixed(2)}%)`, 150, y + 4);
+      } else {
+        doc.setTextColor(100, 116, 139);
+        doc.text(`$0.00 (0.00%)`, 150, y + 4);
+      }
+
+      doc.setTextColor(30, 41, 59);
+      y += 8;
+    });
+  }
+
+  // APPEND EXECUTED TRANSACTIONS TABLE
+  const fills = activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill');
+  if (fills && fills.length > 0) {
+    y += 10;
+    if (y > pageHeight - 45) {
+      doc.addPage();
+      doc.setFillColor(79, 70, 229);
+      doc.rect(0, 0, 210, 8, "F");
+      y = 25;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(30, 41, 59);
+    doc.text("APPENDICE B: REGISTRO RECENTE OPERAZIONI DI MERCATO (FILLS)", 14, y);
+    y += 6;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, y, 182, 7, "F");
+    
+    doc.text("DATA / ORA", 16, y + 5);
+    doc.text("SIMBOLO", 55, y + 5);
+    doc.text("AZIONE", 85, y + 5);
+    doc.text("QUANTITÀ", 120, y + 5);
+    doc.text("PREZZO ESECUZIONE", 150, y + 5);
+    
+    y += 7;
+
+    // Limit to 15 recent fills in debriefing appendix for clean page layout
+    fills.slice(0, 15).forEach((fill: any) => {
+      if (y > pageHeight - 25) {
+        doc.addPage();
+        doc.setFillColor(79, 70, 229);
+        doc.rect(0, 0, 210, 8, "F");
+        y = 25;
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, y + 6, 196, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+
+      const dateText = new Date(fill.transaction_time || fill.timestamp).toLocaleString('it-IT');
+      const side = (fill.side || '').toUpperCase();
+      const qty = parseFloat(fill.qty).toFixed(4);
+      const price = parseFloat(fill.price).toFixed(2);
+
+      doc.text(dateText, 16, y + 4);
+      doc.text(fill.symbol, 55, y + 4);
+
+      if (side === 'BUY') {
+        doc.setTextColor(21, 128, 61);
+        doc.setFont("helvetica", "bold");
+        doc.text("ACQUISTO", 85, y + 4);
+      } else {
+        doc.setTextColor(185, 28, 28);
+        doc.setFont("helvetica", "bold");
+        doc.text("VENDITA", 85, y + 4);
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+      doc.text(qty, 120, y + 4);
+      doc.text(`$${price}`, 150, y + 4);
+
+      y += 8;
+    });
+  }
+
+  // Footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.text(`Alpaca AI Trading Bot - Report Completo - Pagina ${page} di ${totalPages}`, 14, pageHeight - 12);
+  }
+  
+  // Save the PDF
+  const dateStr = new Date().toISOString().split('T')[0];
+  const filename = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_completo_${dateStr}.pdf`;
+  doc.save(filename);
 };
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -405,6 +1092,125 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [debriefLoading, setDebriefLoading] = useState(false);
   const [copiedDebriefRule, setCopiedDebriefRule] = useState(false);
+  const [showPanicConfirm, setShowPanicConfirm] = useState(false);
+  const [panicLoading, setPanicLoading] = useState(false);
+
+  // Valutazioni su periodi superiori al giorno con scelta degli intervalli di tempo
+  const [rangeStartDate, setRangeStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [rangeEndDate, setRangeEndDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+  const [rangeDebrief, setRangeDebrief] = useState<{ analysis: string, suggestedRule: string } | null>(null);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [copiedRangeRule, setCopiedRangeRule] = useState(false);
+
+  // Operations and performance states
+  const [operationsData, setOperationsData] = useState<{
+    activities: any[];
+    positions: any[];
+    dailyLogicLogs: any[];
+    isAlpacaConfigured: boolean;
+  } | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+
+  const fetchOperations = async (silent = false) => {
+    try {
+      if (!silent) setOperationsLoading(true);
+      const res = await fetch(`/api/operations?mode=${selectedTab}`);
+      if (res.ok) {
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          if (data.success) {
+            setOperationsData({
+              activities: data.activities || [],
+              positions: data.positions || [],
+              dailyLogicLogs: data.dailyLogicLogs || [],
+              isAlpacaConfigured: data.isAlpacaConfigured
+            });
+          }
+        } else {
+          console.warn('Expected JSON response from /api/operations, received alternative content type.');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching operations:', err);
+    } finally {
+      if (!silent) setOperationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOperations();
+  }, [selectedTab]);
+
+  const handleGenerateRangeDebrief = async () => {
+    setRangeLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch('/api/generate-range-debrief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: rangeStartDate,
+          endDate: rangeEndDate,
+          mode: selectedTab
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setRangeDebrief({
+            analysis: data.analysis,
+            suggestedRule: data.suggestedRule
+          });
+          setSuccessMessage('Valutazione di periodo generata con successo!');
+          setTimeout(() => setSuccessMessage(null), 5000);
+        } else {
+          setErrorMessage(`Impossibile generare la valutazione di periodo: ${data.error || 'Errore sconosciuto'}`);
+        }
+      } else {
+        const errData = await res.json().catch(() => ({ error: 'Errore generico del server' }));
+        setErrorMessage(`Errore del server: ${errData.error || 'Generazione fallita'}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(`Errore di rete: ${err.message}`);
+    } finally {
+      setRangeLoading(false);
+    }
+  };
+
+  const handlePanicLiquidate = async () => {
+    setPanicLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch('/api/panic-liquidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json().catch(() => ({ success: false, message: 'Errore di risposta del server.' }));
+      if (res.ok && data.success) {
+        setSuccessMessage('💥 LIQUIDAZIONE DI EMERGENZA COMPLETATA! Tutti i conti sono stati azzerati ed il bot è stato arrestato.');
+        setTimeout(() => setSuccessMessage(null), 10000);
+        setShowPanicConfirm(false);
+        fetchStatus();
+      } else {
+        setErrorMessage(`Errore durante la liquidazione di emergenza: ${data.message || 'Errore sconosciuto'}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(`Errore di rete durante la liquidazione di emergenza: ${err.message}`);
+    } finally {
+      setPanicLoading(false);
+    }
+  };
 
   const handleGenerateDebrief = async () => {
     setDebriefLoading(true);
@@ -477,6 +1283,8 @@ export default function App() {
           console.warn('Expected JSON response from /api/status, received alternative content type.');
         }
       }
+      // Silently fetch operations data to keep lists updated in real-time
+      fetchOperations(true);
     } catch (error) {
       console.error('Error fetching bot status:', error);
     } finally {
@@ -519,8 +1327,8 @@ export default function App() {
       <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex-1">
             <h1 className="text-2xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
               <Activity className="w-6 h-6 text-blue-600" />
               Pannello di Controllo Trading
@@ -528,7 +1336,17 @@ export default function App() {
             <p className="text-sm text-gray-500 mt-1">Gestisci separatamente i conti Simulazione (Paper) e Reale (Live)</p>
           </div>
 
-          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Bottone di Panico / Panic Button */}
+            <button
+              onClick={() => setShowPanicConfirm(true)}
+              className="flex items-center gap-2 px-4.5 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer border-none"
+            >
+              <Flame className="w-4 h-4 animate-pulse" />
+              PANIC BUTTON (LIQUIDA TUTTO)
+            </button>
+
+            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
              <button
                onClick={() => setSelectedTab('paper')}
                className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
@@ -550,6 +1368,7 @@ export default function App() {
                Reale (Live)
              </button>
           </div>
+         </div>
         </div>
 
         {/* Alerts */}
@@ -600,6 +1419,226 @@ export default function App() {
           )}
         </div>
 
+        {/* Operazioni, Performance & Fills */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600" />
+                Operazioni, Performance & Fills
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Monitora in tempo reale le posizioni attive (profitti e perdite latenti), gli ordini eseguiti sul mercato e i log decisionali del bot.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => fetchOperations()}
+                disabled={operationsLoading}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition cursor-pointer"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${operationsLoading ? 'animate-spin' : ''}`} />
+                Aggiorna
+              </button>
+              <button
+                onClick={() => {
+                  if (operationsData) {
+                    downloadOperationsPDF(
+                      selectedTab,
+                      operationsData.positions || [],
+                      operationsData.activities || [],
+                      operationsData.dailyLogicLogs || []
+                    );
+                  }
+                }}
+                disabled={!operationsData || operationsLoading}
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                Scarica PDF Operazioni
+              </button>
+            </div>
+          </div>
+
+          {operationsLoading && !operationsData ? (
+            <div className="text-center py-12 text-slate-400 text-sm animate-pulse flex flex-col items-center gap-2">
+              <RotateCcw className="w-6 h-6 animate-spin text-indigo-500" />
+              Caricamento operazioni in corso...
+            </div>
+          ) : operationsData ? (
+            <div className="space-y-6">
+              {/* 1. POSIZIONI ATTIVE */}
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+                  <Activity className="w-4 h-4 text-indigo-500" />
+                  Posizioni Attive (Profitti/Perdite Latenti)
+                </h3>
+                {operationsData.positions && operationsData.positions.length > 0 ? (
+                  <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3">Simbolo</th>
+                          <th className="p-3 text-right">Quantità</th>
+                          <th className="p-3 text-right">Pzo Carico</th>
+                          <th className="p-3 text-right">Pzo Corrente</th>
+                          <th className="p-3 text-right">Val. Mercato</th>
+                          <th className="p-3 text-right">Gain / Loss Latente</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {operationsData.positions.map((pos, idx) => {
+                          const pl = parseFloat(pos.unrealized_pl || '0');
+                          const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
+                          return (
+                            <tr key={idx} className="hover:bg-slate-100/30 text-slate-700">
+                              <td className="p-3 font-bold text-slate-900">{pos.symbol}</td>
+                              <td className="p-3 text-right font-mono">{parseFloat(pos.qty).toFixed(4)}</td>
+                              <td className="p-3 text-right font-mono">${parseFloat(pos.avg_entry_price).toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono">${parseFloat(pos.current_price).toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono font-semibold">${parseFloat(pos.market_value).toFixed(2)}</td>
+                              <td className={`p-3 text-right font-mono font-bold ${
+                                pl > 0 ? 'text-green-600' : pl < 0 ? 'text-red-600' : 'text-slate-500'
+                              }`}>
+                                {pl > 0 ? '+' : ''}${pl.toFixed(2)} ({pl > 0 ? '+' : ''}{plpc.toFixed(2)}%)
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-4 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
+                    Nessuna posizione aperta. Il bot attualmente detiene solo liquidità.
+                  </div>
+                )}
+              </div>
+
+              {/* 2. REGISTRO ESECUZIONI DI MERCATO (ALPACA FILLS) */}
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+                  <TrendingUp className="w-4 h-4 text-green-600" />
+                  Registro Esecuzioni di Mercato (Alpaca Fills)
+                </h3>
+                {operationsData.activities && operationsData.activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill').length > 0 ? (
+                  <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3">Data / Ora</th>
+                          <th className="p-3">Simbolo</th>
+                          <th className="p-3">Azione</th>
+                          <th className="p-3 text-right">Quantità</th>
+                          <th className="p-3 text-right">Prezzo Eseguito</th>
+                          <th className="p-3 text-right">Controvalore</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {operationsData.activities
+                          .filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill')
+                          .slice(0, 10)
+                          .map((fill, idx) => {
+                            const isBuy = (fill.side || '').toUpperCase() === 'BUY';
+                            const amt = (parseFloat(fill.qty) * parseFloat(fill.price)).toFixed(2);
+                            return (
+                              <tr key={idx} className="hover:bg-slate-100/30">
+                                <td className="p-3 text-slate-500 font-mono">
+                                  {new Date(fill.transaction_time || fill.timestamp).toLocaleString('it-IT')}
+                                </td>
+                                <td className="p-3 font-bold text-slate-900">{fill.symbol}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    isBuy ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                  }`}>
+                                    {isBuy ? 'ACQUISTO' : 'VENDITA'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right font-mono">{parseFloat(fill.qty).toFixed(4)}</td>
+                                <td className="p-3 text-right font-mono">${parseFloat(fill.price).toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono font-semibold">${amt}</td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-4 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
+                    Nessun ordine eseguito recentemente registrato su Alpaca.
+                  </div>
+                )}
+              </div>
+
+              {/* 3. LOG LOGICA DECISIONALE DEL BOT */}
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+                  <Brain className="w-4 h-4 text-indigo-500" />
+                  Log Logica Decisionale del Bot (Ultimi Segnali)
+                </h3>
+                {operationsData.dailyLogicLogs && operationsData.dailyLogicLogs.length > 0 ? (
+                  <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3">Ora</th>
+                          <th className="p-3">Simbolo</th>
+                          <th className="p-3">Decisione</th>
+                          <th className="p-3 text-right">Prezzo</th>
+                          <th className="p-3">Motivazione Sentiment LLM</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {operationsData.dailyLogicLogs
+                          .slice(-10)
+                          .reverse()
+                          .map((log, idx) => {
+                            const act = (log.action || '').toUpperCase();
+                            return (
+                              <tr key={idx} className="hover:bg-slate-100/30">
+                                <td className="p-3 text-slate-500 font-mono">
+                                  {new Date(log.timestamp).toLocaleTimeString('it-IT')}
+                                </td>
+                                <td className="p-3 font-bold text-slate-900">{log.symbol}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    act === 'BUY' 
+                                      ? 'bg-green-100 text-green-700' 
+                                      : act === 'SELL' 
+                                      ? 'bg-red-100 text-red-700' 
+                                      : act === 'HOLD' 
+                                      ? 'bg-indigo-100 text-indigo-700' 
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {act === 'BUY' ? 'BUY' : act === 'SELL' ? 'SELL' : act === 'HOLD' ? 'HOLD' : 'SKIP'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right font-mono">
+                                  {log.price ? `$${parseFloat(log.price).toFixed(2)}` : 'N/D'}
+                                </td>
+                                <td className="p-3 text-slate-500 max-w-xs truncate" title={log.reasoning}>
+                                  {log.reasoning}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-4 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
+                    Nessuna decisione o segnale recente registrato in memoria.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+              In attesa di dati sulle operazioni. Verifica che il bot o l'interfaccia sia correttamente inizializzata.
+            </div>
+          )}
+        </div>
+
         {/* Debriefing Giornaliero AI */}
         <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
@@ -630,10 +1669,27 @@ export default function App() {
             <div className="space-y-4">
               {/* Output Analisi */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-inner">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-slate-400" />
-                  Rapporto della Riunione di Fine Giornata
-                </h3>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-slate-400" />
+                    Rapporto della Riunione di Fine Giornata
+                  </h3>
+                  <button
+                    onClick={() => downloadPDFWithOperations(
+                      'Rapporto Debriefing Giornaliero AI',
+                      `Analizzato il: ${new Date(status.latestDailyDebrief!.timestamp).toLocaleString('it-IT')}`,
+                      status.latestDailyDebrief!.analysis,
+                      status.latestDailyDebrief!.suggestedRule,
+                      operationsData?.positions || [],
+                      operationsData?.activities || [],
+                      operationsData?.dailyLogicLogs || []
+                    )}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Esporta PDF</span>
+                  </button>
+                </div>
                 <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
                   <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
                 </div>
@@ -698,6 +1754,142 @@ export default function App() {
           )}
         </div>
 
+        {/* Valutazioni su Periodi Multi-giorno con Selezione Intervalli */}
+        <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+                Valutazione & Ottimizzazione Periodica (AI)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Valuta le performance e ottimizza la strategia su intervalli di tempo superiori al singolo giorno. Seleziona date e conto di riferimento.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                Data Inizio
+              </label>
+              <input
+                type="date"
+                value={rangeStartDate}
+                onChange={(e) => setRangeStartDate(e.target.value)}
+                className="w-full text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                Data Fine
+              </label>
+              <input
+                type="date"
+                value={rangeEndDate}
+                onChange={(e) => setRangeEndDate(e.target.value)}
+                className="w-full text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <button
+                onClick={handleGenerateRangeDebrief}
+                disabled={rangeLoading}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition shadow-sm cursor-pointer ${
+                  rangeLoading 
+                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed animate-pulse' 
+                    : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
+                }`}
+              >
+                <Sparkles className={`w-4 h-4 ${rangeLoading ? 'animate-spin' : ''}`} />
+                {rangeLoading ? 'Generando Analisi...' : 'Analizza Periodo'}
+              </button>
+            </div>
+          </div>
+
+          {rangeDebrief ? (
+            <div className="space-y-4">
+              {/* Output Analisi Periodica */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-inner">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    <Activity className="w-4 h-4 text-slate-400" />
+                    Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
+                  </h3>
+                  <button
+                    onClick={() => downloadPDFWithOperations(
+                      'Rapporto Valutazione Periodica AI',
+                      `Periodo: dal ${rangeStartDate} al ${rangeEndDate}`,
+                      rangeDebrief.analysis,
+                      rangeDebrief.suggestedRule,
+                      operationsData?.positions || [],
+                      operationsData?.activities || [],
+                      operationsData?.dailyLogicLogs || []
+                    )}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Esporta PDF</span>
+                  </button>
+                </div>
+                <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
+                  <ReactMarkdown>{rangeDebrief.analysis}</ReactMarkdown>
+                </div>
+              </div>
+
+              {/* Regola Ottimizzata da Copiare */}
+              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-indigo-600" />
+                    Regola di Trading Suggerita per il Periodo
+                  </h3>
+                  <button
+                    onClick={() => {
+                      if (rangeDebrief) {
+                        navigator.clipboard.writeText(rangeDebrief.suggestedRule);
+                        setCopiedRangeRule(true);
+                        setTimeout(() => setCopiedRangeRule(false), 2000);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                  >
+                    {copiedRangeRule ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-green-600" />
+                        <span className="text-green-700">Copiata!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copia Regola</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <textarea
+                    readOnly
+                    value={rangeDebrief.suggestedRule}
+                    rows={2}
+                    className="w-full bg-white border border-indigo-200 rounded-lg p-3 text-sm font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
+                  />
+                </div>
+                <p className="text-[11px] text-indigo-700 font-sans italic leading-normal">
+                  💡 <strong>Suggerimento:</strong> Copia questa regola di medio periodo e inseriscila nel "Loop di Correzione" sottostante per addestrare il bot a ottimizzare la sua operatività futura.
+                </p>
+              </div>
+            </div>
+          ) : (
+            !rangeLoading && (
+              <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
+                Seleziona un intervallo di date e clicca su "Analizza Periodo" per generare l'analisi del periodo e ottenere nuove regole ottimizzate.
+              </div>
+            )
+          )}
+        </div>
+
         {/* Daily Report Motivation */}
         {status?.latestDailyReport && (
           <div className="bg-purple-50 p-6 rounded-2xl shadow-sm border border-purple-100 mt-6 mb-6">
@@ -751,6 +1943,72 @@ export default function App() {
              </div>
            )}
         </div>
+
+        {/* Panic Button Confirmation Modal */}
+        {showPanicConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white rounded-2xl shadow-xl border border-red-200 max-w-md w-full p-6 overflow-hidden relative animate-scale-in">
+              <div className="flex items-center gap-3 text-red-600 mb-4">
+                <div className="p-3 bg-red-100 rounded-full">
+                  <ShieldAlert className="w-6 h-6 animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 uppercase tracking-wide">
+                    ATTIVAZIONE PANIC BUTTON
+                  </h3>
+                  <p className="text-xs text-red-500 font-medium font-mono">LIQUIDAZIONE DI EMERGENZA</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-sm text-slate-600 mb-6 leading-relaxed">
+                <p className="font-semibold text-slate-800">
+                  Questa è una procedura distruttiva irreversibile. Se confermi:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-xs">
+                  <li>Il bot di trading verrà <strong>immediatamente arrestato</strong> su tutti i conti (Paper e Live).</li>
+                  <li>Tutti gli ordini pendenti su Alpaca verranno <strong>cancellati</strong>.</li>
+                  <li>Tutte le posizioni aperte su <strong>ENTRAMBI</strong> i conti (Paper e Live) verranno <strong>liquidate immediatamente al prezzo di mercato</strong>.</li>
+                </ul>
+                <p className="text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-lg border border-red-100 italic">
+                  ⚠ Attenzione: l'operazione interagirà direttamente con le API reali di Alpaca se configurate.
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowPanicConfirm(false)}
+                  disabled={panicLoading}
+                  className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition cursor-pointer disabled:opacity-50"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePanicLiquidate}
+                  disabled={panicLoading}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition cursor-pointer ${
+                    panicLoading 
+                      ? 'bg-red-400 cursor-not-allowed animate-pulse' 
+                      : 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md shadow-red-200'
+                  }`}
+                >
+                  {panicLoading ? (
+                    <>
+                      <Clock className="w-4 h-4 animate-spin" />
+                      LIQUIDAZIONE IN CORSO...
+                    </>
+                  ) : (
+                    <>
+                      <Flame className="w-4 h-4" />
+                      CONFERMA E LIQUIDA ORA
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
