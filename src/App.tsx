@@ -2774,9 +2774,35 @@ export default function App() {
            {status?.userFeedbackRules && status.userFeedbackRules.length > 0 && (
              <div className="mt-4">
                <h3 className="text-sm font-medium text-gray-700 mb-2">Regole Attive:</h3>
-               <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
+               <ul className="space-y-2 text-xs text-gray-600">
                  {status.userFeedbackRules.map((r, i) => (
-                   <li key={i}>{r}</li>
+                   <li key={i} className="flex items-center justify-between bg-gray-100 p-2 rounded-md">
+                     <span className="flex-1 break-words mr-2">{r}</span>
+                     <button
+                       onClick={async () => {
+                         try {
+                           const res = await fetch('/api/feedback/delete', {
+                             method: 'POST',
+                             headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify({ index: i })
+                           });
+                           if (res.ok) {
+                             showToast('Regola eliminata con successo!', 'success', 'Regole AI');
+                             fetchStatus();
+                           } else {
+                             const data = await res.json().catch(() => ({}));
+                             showToast(`Errore eliminazione: ${data.message}`, 'error', 'Regole AI');
+                           }
+                         } catch (err: any) {
+                           showToast(`Errore di rete: ${err.message}`, 'error', 'Regole AI');
+                         }
+                       }}
+                       className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors flex-shrink-0"
+                       title="Elimina regola"
+                     >
+                       <X className="w-3.5 h-3.5" />
+                     </button>
+                   </li>
                  ))}
                </ul>
              </div>

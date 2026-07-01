@@ -1299,11 +1299,49 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
       pnl: botData.live.dailyPnL?.length ? botData.live.dailyPnL[botData.live.dailyPnL.length - 1].pnl : 0 
     };
     
-    const paperLogs = botData.paper.logs.slice(-40).join('\n') || 'Nessun log operativo registrato.';
-    const liveLogs = botData.live.logs.slice(-40).join('\n') || 'Nessun log operativo registrato.';
+    const paperLogs = botData.paper.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
+    const liveLogs = botData.live.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
+    const oandaLogsStr = oandaBotStatus.logs.slice(0, 40).join('\n') || 'Nessun log OANDA registrato.';
     
-    const paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
-    const liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
+    let paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
+    let liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
+    let oandaLogicLogsStr = JSON.stringify(oandaBotStatus.logicLogs?.slice(0, 20) || []);
+    
+    if (db) {
+      try {
+        const startOfDay = todayStr + 'T00:00:00.000Z';
+        const endOfDay = todayStr + 'T23:59:59.999Z';
+        
+        // Alpaca logic logs completi per oggi
+        const alpacaLogsSnap = await db.collection('logic_logs')
+          .where('timestamp', '>=', startOfDay)
+          .where('timestamp', '<=', endOfDay)
+          .orderBy('timestamp', 'asc')
+          .get();
+        
+        const paperLogsArr: any[] = [];
+        const liveLogsArr: any[] = [];
+        alpacaLogsSnap.forEach((doc: any) => {
+          const data = doc.data();
+          if (data.mode === 'paper') paperLogsArr.push(data);
+          else if (data.mode === 'live') liveLogsArr.push(data);
+        });
+        if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
+        if (liveLogsArr.length > 0) liveLogicLogs = JSON.stringify(liveLogsArr);
+
+        // OANDA logic logs completi per oggi
+        const oandaLogsSnap = await db.collection('oanda_logic_logs')
+          .where('timestamp', '>=', startOfDay)
+          .where('timestamp', '<=', endOfDay)
+          .orderBy('timestamp', 'asc')
+          .get();
+        const oandaLogsArr: any[] = [];
+        oandaLogsSnap.forEach((doc: any) => oandaLogsArr.push(doc.data()));
+        if (oandaLogsArr.length > 0) oandaLogicLogsStr = JSON.stringify(oandaLogsArr);
+      } catch (err) {
+        console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero:', err);
+      }
+    }
     
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
       ? botStatus.userFeedbackRules.join('\n- ')
@@ -1315,20 +1353,27 @@ Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di tradi
 DATI DI OGGI (${todayStr}):
 - PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
 - PNL/Bilancio Reale (Live): ${JSON.stringify(todaysPnLLive)}
+- PNL/Bilancio OANDA: ${JSON.stringify(oandaBotStatus.dailyPnL?.find(d => d.date === todayStr) || { balance: oandaBotStatus.balance })}
 - Regole personalizzate attualmente in vigore:
 ${currentRules}
 
-LOG LOGICA DECISIONALE (Paper):
+LOG LOGICA DECISIONALE (Azioni - Paper):
 ${paperLogicLogs}
 
-LOG LOGICA DECISIONALE (Live):
+LOG LOGICA DECISIONALE (Azioni - Live):
 ${liveLogicLogs}
 
-ULTIMI LOG OPERATIVI (Paper):
+LOG LOGICA DECISIONALE (Forex OANDA):
+${oandaLogicLogsStr}
+
+ULTIMI LOG OPERATIVI (Azioni - Paper):
 ${paperLogs}
 
-ULTIMI LOG OPERATIVI (Live):
+ULTIMI LOG OPERATIVI (Azioni - Live):
 ${liveLogs}
+
+ULTIMI LOG OPERATIVI (Forex OANDA):
+${oandaLogsStr}
 
 ISTRUZIONI DI ANALISI:
 1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mankate prese di profitto, o vendite affrettate).
@@ -1398,8 +1443,8 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 // Endpoint per Debriefing di un intervallo di date personalizzato assistito da AI
 app.post('/api/generate-range-debrief', async (req, res) => {
   const { startDate, endDate, mode } = req.body;
-  if (!startDate || !endDate || !mode || (mode !== 'paper' && mode !== 'live')) {
-    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live') richiesti." });
+  if (!startDate || !endDate || !mode) {
+    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live'|'oanda') richiesti." });
   }
 
   addLog('system', `[Debriefing Periodico AI] Inizio generazione analisi per periodo da ${startDate} a ${endDate} (Conto: ${mode})...`);
@@ -1432,20 +1477,32 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
   try {
     let rangeLogicLogs: any[] = [];
     if (db) {
-      const querySnap = await db.collection('logic_logs')
-        .where('mode', '==', mode)
-        .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
-        .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
-        .orderBy('timestamp', 'asc')
-        .limit(300)
-        .get();
-      
-      querySnap.forEach((doc: any) => {
-        rangeLogicLogs.push(doc.data());
-      });
+      if (mode === 'paper' || mode === 'live') {
+        const querySnap = await db.collection('logic_logs')
+          .where('mode', '==', mode)
+          .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
+          .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
+          .orderBy('timestamp', 'asc')
+          .get();
+        
+        querySnap.forEach((doc: any) => {
+          rangeLogicLogs.push(doc.data());
+        });
+      } else if (mode === 'oanda') {
+        const querySnap = await db.collection('oanda_logic_logs')
+          .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
+          .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
+          .orderBy('timestamp', 'asc')
+          .get();
+        
+        querySnap.forEach((doc: any) => {
+          rangeLogicLogs.push(doc.data());
+        });
+      }
     } else {
       // Fallback in-memory
-      rangeLogicLogs = (botData[mode].dailyLogicLogs || []).filter(l => {
+      const sourceLogs = mode === 'oanda' ? (oandaBotStatus.logicLogs || []) : (botData[mode as 'paper' | 'live']?.dailyLogicLogs || []);
+      rangeLogicLogs = sourceLogs.filter(l => {
         return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
       });
     }
@@ -3395,7 +3452,7 @@ async function startServer() {
     executeTradingCycle(false).catch(err => {
       console.error('[Background Cycle Error] Errore nel ciclo di trading in background:', err);
     });
-  }, 60000); // Ogni 60 secondi
+  }, 300000); // Ogni 5 minuti
 
   // Loop molto veloce (5 secondi) per chiudere in tempo reale le posizioni in profitto
   setInterval(() => {
