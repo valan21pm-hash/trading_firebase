@@ -752,6 +752,31 @@ function AccountPanel({
 }) {
   if (!account) return null;
 
+  const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`alpaca_${type}_wrapLogs`);
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [reverseLogs, setReverseLogs] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`alpaca_${type}_reverseLogs`);
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [showTimestamps, setShowTimestamps] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`alpaca_${type}_showTimestamps`);
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`alpaca_${type}_wrapLogs`, String(wrapLogs));
+  }, [wrapLogs, type]);
+
+  useEffect(() => {
+    localStorage.setItem(`alpaca_${type}_reverseLogs`, String(reverseLogs));
+  }, [reverseLogs, type]);
+
+  useEffect(() => {
+    localStorage.setItem(`alpaca_${type}_showTimestamps`, String(showTimestamps));
+  }, [showTimestamps, type]);
+
   return (
     <div className={`flex-1 border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white shadow-sm`}>
       <div className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center`}>
@@ -1061,20 +1086,80 @@ function AccountPanel({
 
         {/* System Logs */}
         <div className="mt-4">
-          <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Log Operativi</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-1 mb-2">
+            <h3 className="text-sm font-medium text-gray-900">Log Operativi</h3>
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-gray-500">
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={wrapLogs}
+                  onChange={(e) => setWrapLogs(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-3 h-3 cursor-pointer"
+                />
+                <span>A capo automatico</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={reverseLogs}
+                  onChange={(e) => setReverseLogs(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-3 h-3 cursor-pointer"
+                />
+                <span>Ordine inverso</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showTimestamps}
+                  onChange={(e) => setShowTimestamps(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-3 h-3 cursor-pointer"
+                />
+                <span>Mostra timestamp</span>
+              </label>
+            </div>
+          </div>
           <div className="bg-gray-900 text-gray-300 p-3 rounded-lg text-xs font-mono h-40 overflow-y-auto flex flex-col gap-1">
-            {account.logs?.length > 0 ? (
-              account.logs.map((log, i) => (
-                <div key={i} className={`${
-                  log.includes('Acquistato') || log.includes('ACQUISTO') ? 'text-green-400' : 
-                  log.includes('Venduto') || log.includes('VENDITA') ? 'text-red-400' : 
-                  log.includes('Errore') ? 'text-red-500 font-bold' :
-                  'text-gray-400'
-                }`}>{log}</div>
-              ))
-            ) : (
-              <div className="text-gray-500">Nessun log disponibile...</div>
-            )}
+            {(() => {
+              const rawLogs = account.logs || [];
+              const processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
+              
+              if (processedLogs.length === 0) {
+                return <div className="text-gray-500">Nessun log disponibile...</div>;
+              }
+
+              const formatLogMsg = (msg: string) => {
+                const timestampRegex = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]\s*/;
+                const match = msg.match(timestampRegex);
+                if (match) {
+                  const rawMsg = msg.replace(timestampRegex, '');
+                  if (showTimestamps) {
+                    const date = new Date(match[1]);
+                    const formatted = isNaN(date.getTime()) ? match[1] : date.toLocaleString('it-IT');
+                    return `[${formatted}] ${rawMsg}`;
+                  } else {
+                    return rawMsg;
+                  }
+                }
+                return msg;
+              };
+
+              return processedLogs.map((log, i) => {
+                const formattedText = formatLogMsg(log);
+                return (
+                  <div
+                    key={i}
+                    className={`${
+                      log.includes('Acquistato') || log.includes('ACQUISTO') ? 'text-green-400' : 
+                      log.includes('Venduto') || log.includes('VENDITA') ? 'text-red-400' : 
+                      log.includes('Errore') ? 'text-red-500 font-bold' :
+                      'text-gray-400'
+                    } ${wrapLogs ? 'break-words whitespace-pre-wrap' : 'whitespace-nowrap overflow-x-auto truncate'}`}
+                  >
+                    {formattedText}
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
 

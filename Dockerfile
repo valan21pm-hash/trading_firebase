@@ -1,25 +1,24 @@
-# Usa un'immagine ufficiale leggera di Node.js
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copia i file delle dipendenze per sfruttare la cache di Docker
+# Copia i file di dipendenza
 COPY package*.json ./
 
 # Installa tutte le dipendenze
 RUN npm install
 
-# Copia tutto il resto del codice
+# Copia il codice
 COPY . .
 
-# Esegui la build (genera dist/ statico e compila server.ts in dist/server.cjs)
+# Esegui la build (vite build + esbuild)
 RUN npm run build
 
-# Espone la porta usata dal backend
+# Espone la porta usata dal backend (3000)
 EXPOSE 3000
 
-# Imposta l'ambiente in produzione
+# Variabili d'ambiente utili per la produzione
 ENV NODE_ENV=production
 
-# Avvia l'app tramite lo script start configurato nel package.json
+# Avvia l'app
 CMD ["npm", "start"]
