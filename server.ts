@@ -249,6 +249,7 @@ let botStatus: {
   };
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   userFeedbackRules?: string[];
+  monitoredSymbols?: string[];
 } = {
   active: false,
   paperActive: false,
@@ -262,7 +263,8 @@ let botStatus: {
   latestDailyReport: undefined,
   latestDailyDebrief: undefined,
   dailyLogicLogs: [],
-  userFeedbackRules: []
+  userFeedbackRules: [],
+  monitoredSymbols: []
 };
 let tradeLogs: string[] = [];
 
@@ -294,6 +296,7 @@ async function saveBotStatus() {
       liveActive: botStatus.liveActive,
       tradingMode: botStatus.tradingMode,
       userFeedbackRules: botStatus.userFeedbackRules || [],
+      monitoredSymbols: botStatus.monitoredSymbols || [],
       latestDailyReport: botStatus.latestDailyReport || null,
       latestDailyDebrief: botStatus.latestDailyDebrief || null,
       lastCheck: botStatus.lastCheck || null
@@ -357,6 +360,7 @@ async function loadStateFromFirestore() {
       botStatus.liveActive = data.liveActive ?? botStatus.liveActive;
       botStatus.tradingMode = data.tradingMode ?? botStatus.tradingMode;
       botStatus.userFeedbackRules = data.userFeedbackRules ?? botStatus.userFeedbackRules;
+      botStatus.monitoredSymbols = data.monitoredSymbols ?? botStatus.monitoredSymbols;
       botStatus.latestDailyReport = data.latestDailyReport ?? botStatus.latestDailyReport;
       botStatus.latestDailyDebrief = data.latestDailyDebrief ?? botStatus.latestDailyDebrief;
       botStatus.lastCheck = data.lastCheck ?? botStatus.lastCheck;
@@ -750,7 +754,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       addLog(mode, `[Scansione Azioni Errore] Errore nella scansione dinamica: ${err.message}`);
     }
 
-    const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES, ...trendingSymbols];
+    const customSymbols = botStatus.monitoredSymbols || [];
+    const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES, ...trendingSymbols, ...customSymbols];
 
     // Ottieni i simboli di tutte le posizioni aperte (es. AAPL) che non sono nell'elenco predefinito
     const openSymbols = openPositions.map((p: any) => p.symbol);
@@ -1383,11 +1388,205 @@ app.get('/api/status', async (req, res) => {
       liveActive: botStatus.liveActive,
       lastCheck: botStatus.lastCheck,
       userFeedbackRules: botStatus.userFeedbackRules,
+      monitoredSymbols: botStatus.monitoredSymbols || [],
       latestDailyReport: botStatus.latestDailyReport,
       latestDailyDebrief: botStatus.latestDailyDebrief,
       paper: paperData,
       live: liveData
     }
+  });
+});
+
+// Nuovi endpoint per la gestione degli asset con momentum e watchlist suggeriti
+let cachedMomentumAssets: any = null;
+let cachedMomentumTime: number = 0;
+
+app.get('/api/momentum-assets', async (req, res) => {
+  const now = Date.now();
+  // Cache di 12 ore per evitare troppe chiamate API a Gemini
+  if (cachedMomentumAssets && (now - cachedMomentumTime < 12 * 60 * 60 * 1000)) {
+    const enriched = cachedMomentumAssets.map((asset: any) => ({
+      ...asset,
+      isAlreadyMonitored: (botStatus.monitoredSymbols || []).includes(asset.symbol) || 
+                          ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ', 'GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'].includes(asset.symbol)
+    }));
+    return res.json({ success: true, assets: enriched, cached: true });
+  }
+
+  try {
+    const prompt = `Identifica da 5 a 8 azioni statunitensi (reali e scambiate pubblicamente, ad es. NVDA, PLTR, TSLA, AAPL, AMZN, MSFT, AMD, META, ecc.) che presentano attualmente un momentum di mercato estremamente elevato, trend rialzista robusto o notizie catalizzatrici significative.
+Per ciascuna di esse, fornisci:
+1. symbol: Il ticker in maiuscolo (es. "PLTR").
+2. name: Il nome completo della società (es. "Palantir Technologies").
+3. momentumScore: Un punteggio indicativo del momentum recente da 1 a 100 (es. 92).
+4. recentPerformance: Una descrizione sintetica del rendimento o del trend recente (es. "+15% nell'ultima settimana, massimo a 52 settimane").
+5. reasoning: La spiegazione della forza del trend basata su recenti notizie di mercato o metriche tecniche.
+6. catalyst: Un fattore catalizzatore chiave recente o imminente (utili, lanci di prodotti, partnership).
+
+Rispondi RIGIDAMENTE in formato JSON con la seguente struttura:
+[
+  {
+    "symbol": "TICKER",
+    "name": "Nome Società",
+    "momentumScore": 90,
+    "recentPerformance": "+X% negli ultimi giorni",
+    "reasoning": "Spiegazione dettagliata...",
+    "catalyst": "Catalizzatore chiave..."
+  }
+]`;
+
+    const ai = getAi();
+    let response = null;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                symbol: { type: Type.STRING },
+                name: { type: Type.STRING },
+                momentumScore: { type: Type.INTEGER },
+                recentPerformance: { type: Type.STRING },
+                reasoning: { type: Type.STRING },
+                catalyst: { type: Type.STRING }
+              },
+              required: ["symbol", "name", "momentumScore", "recentPerformance", "reasoning", "catalyst"]
+            }
+          }
+        }
+      });
+    } catch (searchError: any) {
+      const errorStr = JSON.stringify(searchError || {});
+      const isQuotaError = errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || (searchError?.message && (searchError.message.includes('quota') || searchError.message.includes('429')));
+      
+      if (isQuotaError) {
+        console.log('[Momentum Discovery] Limite di quota superato (429) durante la ricerca. Salto direttamente al fallback locale.');
+      } else {
+        console.warn('[Momentum Discovery] Chiamata con Google Search fallita. Tento senza Search...');
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt + "\nNota: Non usare strumenti di ricerca esterni, basati sulle tue conoscenze recenti di mercato.",
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    symbol: { type: Type.STRING },
+                    name: { type: Type.STRING },
+                    momentumScore: { type: Type.INTEGER },
+                    recentPerformance: { type: Type.STRING },
+                    reasoning: { type: Type.STRING },
+                    catalyst: { type: Type.STRING }
+                  },
+                  required: ["symbol", "name", "momentumScore", "recentPerformance", "reasoning", "catalyst"]
+                }
+              }
+            }
+          });
+        } catch (innerError: any) {
+          console.log('[Momentum Discovery] Entrambe le chiamate Gemini hanno fallito (quota superata o errore di rete). Uso fallback locale.');
+        }
+      }
+    }
+
+    if (response) {
+      const text = response.text || "[]";
+      const parsed = JSON.parse(text.trim());
+      
+      if (Array.isArray(parsed)) {
+        cachedMomentumAssets = parsed.map(item => ({
+          symbol: String(item.symbol).trim().toUpperCase(),
+          name: String(item.name).trim(),
+          momentumScore: Number(item.momentumScore) || 50,
+          recentPerformance: String(item.recentPerformance).trim(),
+          reasoning: String(item.reasoning).trim(),
+          catalyst: String(item.catalyst).trim()
+        }));
+        cachedMomentumTime = now;
+
+        const enriched = cachedMomentumAssets.map((asset: any) => ({
+          ...asset,
+          isAlreadyMonitored: (botStatus.monitoredSymbols || []).includes(asset.symbol) || 
+                              ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ', 'GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'].includes(asset.symbol)
+        }));
+
+        return res.json({ success: true, assets: enriched, cached: false });
+      }
+    }
+  } catch (error: any) {
+    console.log('[Momentum Discovery Exception Handled]:', error.message || error);
+  }
+
+  // Fallback se fallisce o non restituisce dati validi
+  const fallbackAssets = [
+    { symbol: 'NVDA', name: 'NVIDIA Corporation', momentumScore: 95, recentPerformance: '+8.5% negli ultimi 5 giorni', reasoning: 'Forte domanda continuativa di chip AI Blackwell e sentiment positivo degli analisti.', catalyst: 'Prossima trimestrale di riferimento' },
+    { symbol: 'TSLA', name: 'Tesla Inc.', momentumScore: 88, recentPerformance: '+12.1% nell\'ultima settimana', reasoning: 'Miglioramento dei volumi di consegna stimati in Cina ed espansione di FSD.', catalyst: 'Approvazione regolatoria FSD in Europa' },
+    { symbol: 'PLTR', name: 'Palantir Technologies', momentumScore: 91, recentPerformance: '+14.6% nelle ultime due settimane', reasoning: 'Inclusione negli indici principali e forte crescita dei ricavi commerciali negli USA grazie alla piattaforma AIP.', catalyst: 'Nuove commesse governative' },
+    { symbol: 'AAPL', name: 'Apple Inc.', momentumScore: 82, recentPerformance: '+4.2% in 3 giorni', reasoning: 'Sentiment rialzista guidato dalle vendite stabili e dall\'adozione di Apple Intelligence.', catalyst: 'Aggiornamento funzionalità iOS AI' },
+    { symbol: 'MSFT', name: 'Microsoft Corporation', momentumScore: 85, recentPerformance: '+5.3% nell\'ultima settimana', reasoning: 'Crescita costante dei ricavi Azure Cloud e integrazione di Copilot a livello enterprise.', catalyst: 'Espansione dei data center AI in Europa' }
+  ];
+  
+  const enrichedFallback = fallbackAssets.map((asset: any) => ({
+    ...asset,
+    isAlreadyMonitored: (botStatus.monitoredSymbols || []).includes(asset.symbol) || 
+                        ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ', 'GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'].includes(asset.symbol)
+  }));
+  
+  res.json({ success: true, assets: enrichedFallback, cached: false, error: 'Invocazione IA fallita, usato fallback locale.' });
+});
+
+app.post('/api/watchlist/add', async (req, res) => {
+  const { symbol } = req.body || {};
+  if (!symbol) {
+    return res.status(400).json({ success: false, message: 'Simbolo non fornito.' });
+  }
+  
+  const formattedSymbol = symbol.trim().toUpperCase();
+  if (!botStatus.monitoredSymbols) {
+    botStatus.monitoredSymbols = [];
+  }
+  
+  if (botStatus.monitoredSymbols.includes(formattedSymbol)) {
+    return res.json({ success: true, message: 'L\'asset è già monitorato.', monitoredSymbols: botStatus.monitoredSymbols });
+  }
+  
+  botStatus.monitoredSymbols.push(formattedSymbol);
+  await saveBotStatus();
+  
+  res.json({ 
+    success: true, 
+    message: `Asset ${formattedSymbol} aggiunto con successo alla lista di monitoraggio del Bot.`, 
+    monitoredSymbols: botStatus.monitoredSymbols 
+  });
+});
+
+app.post('/api/watchlist/remove', async (req, res) => {
+  const { symbol } = req.body || {};
+  if (!symbol) {
+    return res.status(400).json({ success: false, message: 'Simbolo non fornito.' });
+  }
+  
+  const formattedSymbol = symbol.trim().toUpperCase();
+  if (!botStatus.monitoredSymbols) {
+    botStatus.monitoredSymbols = [];
+  }
+  
+  botStatus.monitoredSymbols = botStatus.monitoredSymbols.filter(s => s !== formattedSymbol);
+  await saveBotStatus();
+  
+  res.json({ 
+    success: true, 
+    message: `Asset ${formattedSymbol} rimosso dalla lista di monitoraggio del Bot.`, 
+    monitoredSymbols: botStatus.monitoredSymbols 
   });
 });
 

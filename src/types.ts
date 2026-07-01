@@ -43,6 +43,7 @@ export interface BotStatus {
   liveActive: boolean;
   lastCheck: string | null;
   userFeedbackRules?: string[];
+  monitoredSymbols?: string[];
   latestDailyReport?: string;
   latestDailyDebrief?: {
     analysis: string;

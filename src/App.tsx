@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
+import { motion, AnimatePresence } from 'motion/react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 
 const formatDate = (dateStr: string) => {
@@ -1082,6 +1083,28 @@ function AccountPanel({
 }
 
 export default function App() {
+  interface Toast {
+    id: string;
+    message: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+    title?: string;
+    duration?: number;
+  }
+
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info', title?: string, duration = 5000) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type, title, duration }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, duration);
+  };
+
+  const dismissToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'paper' | 'live'>('paper');
@@ -1108,6 +1131,70 @@ export default function App() {
   const [rangeLoading, setRangeLoading] = useState(false);
   const [copiedRangeRule, setCopiedRangeRule] = useState(false);
 
+  // Momentum discovery states and handlers
+  interface MomentumAsset {
+    symbol: string;
+    name: string;
+    momentumScore: number;
+    recentPerformance: string;
+    reasoning: string;
+    catalyst: string;
+    isAlreadyMonitored: boolean;
+  }
+  const [momentumAssets, setMomentumAssets] = useState<MomentumAsset[]>([]);
+  const [momentumLoading, setMomentumLoading] = useState(false);
+
+  const fetchMomentumAssets = async () => {
+    setMomentumLoading(true);
+    try {
+      const res = await fetch('/api/momentum-assets');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setMomentumAssets(data.assets || []);
+        }
+      }
+    } catch (err: any) {
+      console.error("Errore nel caricamento degli asset con momentum:", err);
+    } finally {
+      setMomentumLoading(false);
+    }
+  };
+
+  const handleToggleWatchlist = async (symbol: string, isAlreadyMonitored: boolean) => {
+    try {
+      const endpoint = isAlreadyMonitored ? '/api/watchlist/remove' : '/api/watchlist/add';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showToast(
+            isAlreadyMonitored 
+              ? `Asset ${symbol} rimosso con successo dal monitoraggio del Bot.`
+              : `Asset ${symbol} aggiunto al monitoraggio del Bot! Verrà analizzato e scambiato automaticamente.`,
+            'success',
+            'Watchlist Bot'
+          );
+          fetchStatus();
+          setMomentumAssets(prev => prev.map(asset => {
+            if (asset.symbol === symbol) {
+              return { ...asset, isAlreadyMonitored: !isAlreadyMonitored };
+            }
+            return asset;
+          }));
+        } else {
+          showToast(`Errore: ${data.message || 'Operazione fallita'}`, 'error', 'Watchlist Bot');
+        }
+      }
+    } catch (err: any) {
+      showToast(`Errore di rete: ${err.message}`, 'error', 'Watchlist Bot');
+    }
+  };
+
   // Operations and performance states
   const [operationsData, setOperationsData] = useState<{
     activities: any[];
@@ -1116,6 +1203,151 @@ export default function App() {
     isAlpacaConfigured: boolean;
   } | null>(null);
   const [operationsLoading, setOperationsLoading] = useState(false);
+
+  // Funzione per impostare rapidamente l'intervallo temporale selezionato
+  const setQuickRange = (days: number) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - days);
+    setRangeStartDate(start.toISOString().split('T')[0]);
+    setRangeEndDate(end.toISOString().split('T')[0]);
+  };
+
+  // Calcolo dinamico delle metriche di performance aggregate (Win Rate, Profit Factor, Max Drawdown)
+  const performanceMetrics = useMemo(() => {
+    const activities = operationsData?.activities || [];
+    const dailyPnL = status?.[selectedTab]?.dailyPnL || [];
+
+    // 1. Trova tutti i closed trades tramite abbinamento FIFO (First-In, First-Out) dei fill Alpaca
+    const symbols = Array.from(new Set(activities.map((a: any) => a.symbol).filter(Boolean)));
+    let closedTrades: { symbol: string; pnl: number; cost: number; return: number; date: string; side: string }[] = [];
+
+    symbols.forEach((sym: any) => {
+      const symbolFills = activities
+        .filter((act: any) => (act.activity_type === 'FILL' || act.type === 'fill') && act.symbol === sym)
+        .sort((a: any, b: any) => new Date(a.transaction_time || a.timestamp).getTime() - new Date(b.transaction_time || b.timestamp).getTime());
+
+      let buyQueue: { qty: number; price: number; date: string }[] = [];
+      let sellQueue: { qty: number; price: number; date: string }[] = [];
+
+      symbolFills.forEach((fill: any) => {
+        const qty = parseFloat(fill.qty || '0');
+        const price = parseFloat(fill.price || '0');
+        const isBuy = (fill.side || '').toUpperCase() === 'BUY';
+        const date = fill.transaction_time || fill.timestamp;
+
+        if (qty <= 0 || price <= 0) return;
+
+        if (isBuy) {
+          if (sellQueue.length > 0) {
+            let remainingQty = qty;
+            while (remainingQty > 0 && sellQueue.length > 0) {
+              const firstSell = sellQueue[0];
+              const matchedQty = Math.min(remainingQty, firstSell.qty);
+              const pnl = matchedQty * (firstSell.price - price);
+              closedTrades.push({
+                symbol: sym,
+                pnl,
+                cost: matchedQty * price,
+                return: matchedQty * firstSell.price,
+                date,
+                side: 'SHORT_CLOSE'
+              });
+              remainingQty -= matchedQty;
+              firstSell.qty -= matchedQty;
+              if (firstSell.qty <= 0) sellQueue.shift();
+            }
+            if (remainingQty > 0) buyQueue.push({ qty: remainingQty, price, date });
+          } else {
+            buyQueue.push({ qty, price, date });
+          }
+        } else {
+          if (buyQueue.length > 0) {
+            let remainingQty = qty;
+            while (remainingQty > 0 && buyQueue.length > 0) {
+              const firstBuy = buyQueue[0];
+              const matchedQty = Math.min(remainingQty, firstBuy.qty);
+              const pnl = matchedQty * (price - firstBuy.price);
+              closedTrades.push({
+                symbol: sym,
+                pnl,
+                cost: matchedQty * firstBuy.price,
+                return: matchedQty * price,
+                date,
+                side: 'LONG_CLOSE'
+              });
+              remainingQty -= matchedQty;
+              firstBuy.qty -= matchedQty;
+              if (firstBuy.qty <= 0) buyQueue.shift();
+            }
+            if (remainingQty > 0) sellQueue.push({ qty: remainingQty, price, date });
+          } else {
+            sellQueue.push({ qty, price, date });
+          }
+        }
+      });
+    });
+
+    // Filtriamo i trade chiusi per l'intervallo temporale selezionato
+    const filteredTrades = closedTrades.filter(t => {
+      const d = (t.date || '').substring(0, 10);
+      return d >= rangeStartDate && d <= rangeEndDate;
+    });
+
+    // Calcolo del Win Rate
+    const totalTrades = filteredTrades.length;
+    const winningTrades = filteredTrades.filter(t => t.pnl > 0).length;
+    const losingTrades = filteredTrades.filter(t => t.pnl < 0).length;
+    const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+
+    // Calcolo del Profit Factor
+    const grossProfit = filteredTrades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
+    const grossLoss = Math.abs(filteredTrades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0));
+    const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : (grossProfit > 0 ? 99.9 : 1.0);
+    const netPnL = grossProfit - grossLoss;
+
+    // Calcolo del Drawdown Massimo basato sulla cronologia dei saldi del periodo selezionato
+    const pnlHistory = dailyPnL
+      .filter((d: any) => {
+        const cleanDate = (d.date || '').substring(0, 10);
+        return cleanDate >= rangeStartDate && cleanDate <= rangeEndDate;
+      })
+      .sort((a: any, b: any) => a.date.localeCompare(b.date));
+
+    let maxBalance = 0;
+    let maxDrawdownPercent = 0;
+    let maxDrawdownAmount = 0;
+
+    pnlHistory.forEach((day: any) => {
+      const bal = day.balance;
+      if (bal > maxBalance) {
+        maxBalance = bal;
+      }
+      if (maxBalance > 0) {
+        const ddAmount = maxBalance - bal;
+        const ddPercent = (ddAmount / maxBalance) * 100;
+        if (ddPercent > maxDrawdownPercent) {
+          maxDrawdownPercent = ddPercent;
+          maxDrawdownAmount = ddAmount;
+        }
+      }
+    });
+
+    return {
+      totalTrades,
+      winningTrades,
+      losingTrades,
+      winRate,
+      grossProfit,
+      grossLoss,
+      profitFactor,
+      netPnL,
+      maxDrawdownPercent,
+      maxDrawdownAmount,
+      pnlHistory,
+      filteredTrades
+    };
+  }, [operationsData, status, selectedTab, rangeStartDate, rangeEndDate]);
 
   const fetchOperations = async (silent = false) => {
     try {
@@ -1169,18 +1401,26 @@ export default function App() {
             analysis: data.analysis,
             suggestedRule: data.suggestedRule
           });
-          setSuccessMessage('Valutazione di periodo generata con successo!');
+          const successMsg = 'Valutazione di periodo generata con successo!';
+          setSuccessMessage(successMsg);
+          showToast(successMsg, 'success', 'Analisi Periodo');
           setTimeout(() => setSuccessMessage(null), 5000);
         } else {
-          setErrorMessage(`Impossibile generare la valutazione di periodo: ${data.error || 'Errore sconosciuto'}`);
+          const errMsg = `Impossibile generare la valutazione di periodo: ${data.error || 'Errore sconosciuto'}`;
+          setErrorMessage(errMsg);
+          showToast(errMsg, 'error', 'Analisi Periodo');
         }
       } else {
         const errData = await res.json().catch(() => ({ error: 'Errore generico del server' }));
-        setErrorMessage(`Errore del server: ${errData.error || 'Generazione fallita'}`);
+        const errMsg = `Errore del server: ${errData.error || 'Generazione fallita'}`;
+        setErrorMessage(errMsg);
+        showToast(errMsg, 'error', 'Analisi Periodo');
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(`Errore di rete: ${err.message}`);
+      const errMsg = `Errore di rete: ${err.message}`;
+      setErrorMessage(errMsg);
+      showToast(errMsg, 'error', 'Analisi Periodo');
     } finally {
       setRangeLoading(false);
     }
@@ -1197,16 +1437,22 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({ success: false, message: 'Errore di risposta del server.' }));
       if (res.ok && data.success) {
-        setSuccessMessage('💥 LIQUIDAZIONE DI EMERGENZA COMPLETATA! Tutti i conti sono stati azzerati ed il bot è stato arrestato.');
+        const msg = '💥 LIQUIDAZIONE DI EMERGENZA COMPLETATA! Tutti i conti sono stati azzerati ed il bot è stato arrestato.';
+        setSuccessMessage(msg);
+        showToast(msg, 'success', 'Liquidazione d\'Emergenza', 8000);
         setTimeout(() => setSuccessMessage(null), 10000);
         setShowPanicConfirm(false);
         fetchStatus();
       } else {
-        setErrorMessage(`Errore durante la liquidazione di emergenza: ${data.message || 'Errore sconosciuto'}`);
+        const errMsg = `Errore durante la liquidazione di emergenza: ${data.message || 'Errore sconosciuto'}`;
+        setErrorMessage(errMsg);
+        showToast(errMsg, 'error', 'Liquidazione d\'Emergenza', 8000);
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(`Errore di rete durante la liquidazione di emergenza: ${err.message}`);
+      const errMsg = `Errore di rete durante la liquidazione di emergenza: ${err.message}`;
+      setErrorMessage(errMsg);
+      showToast(errMsg, 'error', 'Liquidazione d\'Emergenza', 8000);
     } finally {
       setPanicLoading(false);
     }
@@ -1225,18 +1471,26 @@ export default function App() {
         const data = await res.json();
         if (data.success && data.debrief) {
           setStatus(prev => prev ? { ...prev, latestDailyDebrief: data.debrief } : null);
-          setSuccessMessage('Debriefing Giornaliero AI generato con successo!');
+          const msg = 'Debriefing Giornaliero AI generato con successo!';
+          setSuccessMessage(msg);
+          showToast(msg, 'success', 'AI Debriefing');
           setTimeout(() => setSuccessMessage(null), 5000);
         } else {
-          setErrorMessage(`Impossibile generare il debriefing: ${data.error || 'Errore sconosciuto'}`);
+          const errMsg = `Impossibile generare il debriefing: ${data.error || 'Errore sconosciuto'}`;
+          setErrorMessage(errMsg);
+          showToast(errMsg, 'error', 'AI Debriefing');
         }
       } else {
         const errData = await res.json().catch(() => ({ error: 'Errore generico del server' }));
-        setErrorMessage(`Errore del server: ${errData.error || 'Generazione fallita'}`);
+        const errMsg = `Errore del server: ${errData.error || 'Generazione fallita'}`;
+        setErrorMessage(errMsg);
+        showToast(errMsg, 'error', 'AI Debriefing');
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(`Errore di rete: ${err.message}`);
+      const errMsg = `Errore di rete: ${err.message}`;
+      setErrorMessage(errMsg);
+      showToast(errMsg, 'error', 'AI Debriefing');
     } finally {
       setDebriefLoading(false);
     }
@@ -1254,17 +1508,23 @@ export default function App() {
         body: JSON.stringify({ mode: type, symbol })
       });
       if (res.ok) {
-        setSuccessMessage(`Chiusura della posizione di ${symbol} avviata con successo su Alpaca.`);
+        const msg = `Chiusura della posizione di ${symbol} avviata con successo su Alpaca.`;
+        setSuccessMessage(msg);
+        showToast(msg, 'success', 'Posizione Chiusa');
         setTimeout(() => setSuccessMessage(null), 5000);
         fetchStatus();
       } else {
         const data = await res.json().catch(() => ({ message: 'Errore durante la chiusura.' }));
-        setErrorMessage(`Impossibile chiudere la posizione di ${symbol}: ${data.message}`);
+        const errMsg = `Impossibile chiudere la posizione di ${symbol}: ${data.message}`;
+        setErrorMessage(errMsg);
+        showToast(errMsg, 'error', 'Chiusura Posizione');
         setTimeout(() => setErrorMessage(null), 6000);
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(`Errore di rete: ${err.message}`);
+      const errMsg = `Errore di rete: ${err.message}`;
+      setErrorMessage(errMsg);
+      showToast(errMsg, 'error', 'Chiusura Posizione');
       setTimeout(() => setErrorMessage(null), 6000);
     } finally {
       setClosingSymbols(prev => prev.filter(s => s !== symbol));
@@ -1294,6 +1554,7 @@ export default function App() {
 
   useEffect(() => {
     fetchStatus();
+    fetchMomentumAssets();
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -1308,9 +1569,29 @@ export default function App() {
       if (res.ok) {
         const data: BotStateResponse = await res.json();
         setStatus(data.status);
+        
+        const label = target === 'live' ? 'Reale' : (target === 'paper' ? 'Simulazione' : 'Bot');
+        const isActiveNow = target === 'live' ? data.status.liveActive : (target === 'paper' ? data.status.paperActive : (data.status.paperActive || data.status.liveActive));
+        showToast(
+          `Stato del Bot (${label}) aggiornato con successo: ora è ${isActiveNow ? 'ATTIVO' : 'FERMO'}.`,
+          isActiveNow ? 'success' : 'warning',
+          'Stato Bot'
+        );
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(
+          `Impossibile cambiare lo stato del Bot: ${errData.message || 'Errore del server.'}`,
+          'error',
+          'Stato Bot'
+        );
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error toggling bot:', error);
+      showToast(
+        `Errore di rete durante la modifica dello stato del Bot: ${error.message}`,
+        'error',
+        'Stato Bot'
+      );
     }
   };
 
@@ -1768,7 +2049,36 @@ export default function App() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-4">
+          {/* Selezione Rapida Periodo */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <span className="text-xs font-semibold text-slate-500 self-center mr-2 uppercase tracking-wider font-mono">Periodo Rapido:</span>
+            {[
+              { label: 'Ultimi 7 Giorni', days: 7 },
+              { label: 'Ultimi 15 Giorni', days: 15 },
+              { label: 'Ultimo Mese', days: 30 },
+              { label: 'Ultimi 3 Mesi', days: 90 },
+            ].map((btn, idx) => {
+              const startTest = new Date();
+              startTest.setDate(startTest.getDate() - btn.days);
+              const startStr = startTest.toISOString().split('T')[0];
+              const isSelected = rangeStartDate === startStr;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => setQuickRange(btn.days)}
+                  className={`px-3 py-1 text-xs font-medium rounded-lg transition border cursor-pointer ${
+                    isSelected
+                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {btn.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
             <div>
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
                 Data Inizio
@@ -1804,6 +2114,217 @@ export default function App() {
                 <Sparkles className={`w-4 h-4 ${rangeLoading ? 'animate-spin' : ''}`} />
                 {rangeLoading ? 'Generando Analisi...' : 'Analizza Periodo'}
               </button>
+            </div>
+          </div>
+
+          {/* PANNELLO DI RIEPILOGO METRICHE DI PERFORMANCE AGGREGATE */}
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 font-sans">
+                  <BarChart2 className="w-4 h-4 text-indigo-600" />
+                  Riepilogo Performance Aggregate ({selectedTab === 'live' ? 'Reale' : 'Simulazione'})
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Statistiche calcolate in tempo reale per l'intervallo dal <strong className="text-slate-700">{rangeStartDate}</strong> al <strong className="text-slate-700">{rangeEndDate}</strong>.
+                </p>
+              </div>
+              <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                {performanceMetrics.totalTrades} Trade Chiusi
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* CARD 1: WIN RATE */}
+              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Win Rate</span>
+                    <span className="p-1 bg-green-50 text-green-700 rounded-lg">
+                      <TrendingUp className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5 mt-1">
+                    <span className="text-2xl font-bold text-slate-900 font-mono">
+                      {performanceMetrics.winRate.toFixed(1)}%
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium">successo</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {/* Piccolo Grafico a barre per Win Rate */}
+                  <div className="w-full bg-slate-200/70 h-2.5 rounded-full overflow-hidden flex">
+                    {performanceMetrics.totalTrades > 0 ? (
+                      <>
+                        <div 
+                          style={{ width: `${performanceMetrics.winRate}%` }} 
+                          className="bg-emerald-500 h-full transition-all duration-500" 
+                          title={`Vincenti: ${performanceMetrics.winRate.toFixed(1)}%`}
+                        />
+                        <div 
+                          style={{ width: `${100 - performanceMetrics.winRate}%` }} 
+                          className="bg-rose-400 h-full transition-all duration-500" 
+                          title={`Perdenti: ${(100 - performanceMetrics.winRate).toFixed(1)}%`}
+                        />
+                      </>
+                    ) : (
+                      <div className="w-full bg-slate-200 h-full" title="Nessun trade" />
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-500 font-medium font-mono">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                      {performanceMetrics.winningTrades} Vincenti
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-400 inline-block"></span>
+                      {performanceMetrics.losingTrades} Perdenti
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 2: PROFIT FACTOR */}
+              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Profit Factor</span>
+                    <span className={`p-1 rounded-lg text-xs font-bold font-mono ${
+                      performanceMetrics.profitFactor >= 2.0 ? 'bg-emerald-50 text-emerald-700' :
+                      performanceMetrics.profitFactor >= 1.5 ? 'bg-blue-50 text-blue-700' :
+                      performanceMetrics.profitFactor >= 1.0 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
+                    }`}>
+                      {performanceMetrics.profitFactor >= 2.0 ? 'Ottimo' :
+                       performanceMetrics.profitFactor >= 1.5 ? 'Buono' :
+                       performanceMetrics.profitFactor >= 1.0 ? 'Moderato' : 'Perdente'}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1 mt-1">
+                    <span className="text-2xl font-bold text-slate-900 font-mono">
+                      {performanceMetrics.profitFactor === 99.9 ? '∞' : performanceMetrics.profitFactor.toFixed(2)}
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium">rapporto G/P</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {/* Grafico di confronto a barre per Profitto Lordo vs Perdita Lorda */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-semibold text-slate-400 font-mono">
+                      <span>PROFITTO LORDO</span>
+                      <span className="text-emerald-600">+${performanceMetrics.grossProfit.toFixed(2)}</span>
+                    </div>
+                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        style={{ 
+                          width: `${
+                            performanceMetrics.grossProfit === 0 && performanceMetrics.grossLoss === 0 ? 0 :
+                            (performanceMetrics.grossProfit / (Math.max(performanceMetrics.grossProfit, performanceMetrics.grossLoss) || 1)) * 100
+                          }%` 
+                        }} 
+                        className="bg-emerald-500 h-full transition-all duration-500" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px] font-semibold text-slate-400 font-mono">
+                      <span>PERDITA LORDA</span>
+                      <span className="text-rose-600">-${performanceMetrics.grossLoss.toFixed(2)}</span>
+                    </div>
+                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        style={{ 
+                          width: `${
+                            performanceMetrics.grossProfit === 0 && performanceMetrics.grossLoss === 0 ? 0 :
+                            (performanceMetrics.grossLoss / (Math.max(performanceMetrics.grossProfit, performanceMetrics.grossLoss) || 1)) * 100
+                          }%` 
+                        }} 
+                        className="bg-rose-500 h-full transition-all duration-500" 
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 3: MASSIMO DRAWDOWN */}
+              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Max Drawdown</span>
+                    <span className="p-1 bg-rose-50 text-rose-700 rounded-lg">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1 mt-1">
+                    <span className="text-2xl font-bold text-rose-600 font-mono">
+                      -{performanceMetrics.maxDrawdownPercent.toFixed(2)}%
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      (-${performanceMetrics.maxDrawdownAmount.toFixed(2)})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  {/* Istogramma a barre per il PnL dei singoli giorni dell'intervallo (se disponibile) o barra di esposizione */}
+                  {performanceMetrics.pnlHistory.length > 1 ? (
+                    <div className="space-y-1.5">
+                      <div className="text-[9px] font-semibold text-slate-400 font-mono uppercase tracking-wider">
+                        Trend PnL Giornaliero ({performanceMetrics.pnlHistory.length}gg)
+                      </div>
+                      <div className="flex items-end justify-between h-9 gap-1 bg-slate-100/50 p-1 rounded-lg">
+                        {performanceMetrics.pnlHistory.map((day: any, dIdx: number) => {
+                          const maxAbsPnL = Math.max(...performanceMetrics.pnlHistory.map((x: any) => Math.abs(x.pnl))) || 1;
+                          const heightPercent = Math.max(15, Math.min(100, (Math.abs(day.pnl) / maxAbsPnL) * 100));
+                          const isPositive = day.pnl >= 0;
+                          return (
+                            <div 
+                              key={dIdx}
+                              style={{ height: `${heightPercent}%` }}
+                              className={`flex-1 rounded-sm transition-all duration-300 ${
+                                isPositive ? 'bg-emerald-400 hover:bg-emerald-500' : 'bg-rose-400 hover:bg-rose-500'
+                              }`}
+                              title={`${day.date}: ${isPositive ? '+' : ''}$${day.pnl.toFixed(2)}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-[9px] font-semibold text-slate-400 font-mono">
+                        <span>LIVELLO RISCHIO DRAWDOWN</span>
+                        <span>{performanceMetrics.maxDrawdownPercent > 5 ? 'ELEVATO' : 'CONTENUTO'}</span>
+                      </div>
+                      <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
+                        <div 
+                          style={{ width: `${Math.min(100, (performanceMetrics.maxDrawdownPercent / 10) * 100)}%` }} 
+                          className={`h-full transition-all duration-500 ${
+                            performanceMetrics.maxDrawdownPercent > 5 ? 'bg-rose-500' :
+                            performanceMetrics.maxDrawdownPercent > 2 ? 'bg-amber-400' : 'bg-emerald-500'
+                          }`}
+                        />
+                      </div>
+                      <div className="text-[9px] text-slate-400 italic text-right">
+                        Soglia allerta: 10%
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Riepilogo Profitto/Perdita Netto */}
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-medium font-sans">
+              <span className="text-slate-500">Risultato Netto Realizzato nel Periodo:</span>
+              <span className={`font-mono font-bold text-sm ${
+                performanceMetrics.netPnL > 0 ? 'text-emerald-600' :
+                performanceMetrics.netPnL < 0 ? 'text-rose-600' : 'text-slate-500'
+              }`}>
+                {performanceMetrics.netPnL > 0 ? '+' : ''}${performanceMetrics.netPnL.toFixed(2)}
+              </span>
             </div>
           </div>
 
@@ -1903,6 +2424,166 @@ export default function App() {
           </div>
         )}
 
+        {/* Modulo di Scoperta Asset con Momentum Elevato */}
+        <div className="bg-slate-900 text-white p-6 rounded-3xl border border-slate-800 shadow-xl mt-6 mb-6 overflow-hidden relative">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 relative z-10">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-400 text-[10px] font-bold uppercase tracking-wider rounded-full border border-emerald-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live AI Discovery
+                </span>
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-400" />
+                Opportunità ad Alto Momentum
+              </h2>
+              <p className="text-xs text-slate-400 max-w-xl mt-1">
+                Analisi giornaliera degli asset USA con forte accelerazione e catalizzatori macro/notizie. Aggiungili alla lista per consentire al bot di includerli nei cicli di scansione e trading.
+              </p>
+            </div>
+            
+            <button
+              onClick={() => fetchMomentumAssets()}
+              disabled={momentumLoading}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition disabled:opacity-50 h-fit cursor-pointer"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${momentumLoading ? 'animate-spin' : ''}`} />
+              Aggiorna Scanner
+            </button>
+          </div>
+
+          {momentumLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="bg-slate-950/50 border border-slate-800/80 rounded-2xl p-4 animate-pulse">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="space-y-2">
+                      <div className="h-5 bg-slate-800 rounded w-16" />
+                      <div className="h-3 bg-slate-800 rounded w-32" />
+                    </div>
+                    <div className="h-6 bg-slate-800 rounded-full w-12" />
+                  </div>
+                  <div className="space-y-2 mb-4">
+                    <div className="h-3 bg-slate-800 rounded w-full" />
+                    <div className="h-3 bg-slate-800 rounded w-5/6" />
+                  </div>
+                  <div className="h-8 bg-slate-800 rounded-xl w-full" />
+                </div>
+              ))}
+            </div>
+          ) : momentumAssets.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 border border-dashed border-slate-800 rounded-2xl bg-slate-950/20">
+              <p className="text-sm">Nessun suggerimento di momentum disponibile al momento.</p>
+              <button 
+                onClick={() => fetchMomentumAssets()} 
+                className="mt-3 text-xs text-indigo-400 hover:text-indigo-300 underline"
+              >
+                Clicca per avviare la scansione
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
+              {momentumAssets.map((asset) => {
+                const scoreColor = asset.momentumScore >= 85 
+                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
+                  : asset.momentumScore >= 70 
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                  : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
+
+                return (
+                  <div 
+                    key={asset.symbol} 
+                    className="bg-slate-950/40 border border-slate-800/80 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 group shadow-md"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-lg tracking-wider text-white">{asset.symbol}</span>
+                            <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${scoreColor}`}>
+                              Score: {asset.momentumScore}
+                            </span>
+                          </div>
+                          <span className="text-xs text-slate-400 font-medium">{asset.name}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
+                            {asset.recentPerformance}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 mb-4">
+                        <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                          {asset.reasoning}
+                        </p>
+                        {asset.catalyst && (
+                          <div className="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800 text-[11px] flex gap-2">
+                            <span className="text-indigo-400 font-bold uppercase tracking-wider flex-shrink-0">Catalyst:</span>
+                            <span className="text-slate-400 leading-relaxed">{asset.catalyst}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleToggleWatchlist(asset.symbol, asset.isAlreadyMonitored)}
+                      className={`w-full py-2 px-4 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        asset.isAlreadyMonitored 
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' 
+                          : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                      }`}
+                    >
+                      {asset.isAlreadyMonitored ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          Monitorato dal Bot
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5" />
+                          Monitora con il Bot
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          
+          {/* Sezione per visualizzare gli asset custom monitorati attivi */}
+          {status?.monitoredSymbols && status.monitoredSymbols.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-slate-800/80 relative z-10">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                <Brain className="w-3.5 h-3.5 text-emerald-400" />
+                Asset Personalizzati Monitorati Attivamente ({status.monitoredSymbols.length})
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {status.monitoredSymbols.map((sym) => (
+                  <span 
+                    key={sym} 
+                    className="inline-flex items-center gap-1.5 bg-slate-900 border border-slate-800 pl-3 pr-1.5 py-1 rounded-full text-xs font-bold font-mono text-indigo-300"
+                  >
+                    {sym}
+                    <button 
+                      onClick={() => handleToggleWatchlist(sym, true)}
+                      className="p-1 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-full transition cursor-pointer"
+                      title="Rimuovi dal monitoraggio"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Feedback Form */}
         <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6">
            <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
@@ -1913,14 +2594,27 @@ export default function App() {
              e.preventDefault();
              const formData = new FormData(e.currentTarget);
              const rule = formData.get('rule') as string;
-             if (!rule) return;
-             await fetch('/api/feedback', {
+             if (!rule) {
+                showToast('Inserisci prima una regola correttiva valida!', 'warning', 'Invio Regola');
+                return;
+              }
+              try {
+                const res = await fetch('/api/feedback', {
                method: 'POST',
                headers: { 'Content-Type': 'application/json' },
                body: JSON.stringify({ rule })
              });
-             e.currentTarget.reset();
-             fetchStatus();
+             if (res.ok) {
+                  showToast('Nuova regola correttiva salvata ed attiva con successo!', 'success', 'Regole AI');
+                  e.currentTarget.reset();
+                  fetchStatus();
+                } else {
+                  const data = await res.json().catch(() => ({}));
+                  showToast(`Impossibile inviare la regola: ${data.message || 'Errore del server'}`, 'error', 'Regole AI');
+                }
+              } catch (err: any) {
+                showToast(`Errore di rete: ${err.message}`, 'error', 'Regole AI');
+              }
            }} className="flex flex-col gap-3">
              <textarea 
                name="rule" 
@@ -2009,6 +2703,76 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Sistema Notifiche Toast in Tempo Reale */}
+        <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+          <AnimatePresence>
+            {toasts.map((toast) => {
+              const typeStyles = {
+                success: {
+                  bg: 'bg-emerald-50 border-emerald-100 text-emerald-800',
+                  icon: <Check className="w-5 h-5 text-emerald-600" />,
+                  titleColor: 'text-emerald-900',
+                  accent: 'bg-emerald-500'
+                },
+                error: {
+                  bg: 'bg-rose-50 border-rose-100 text-rose-800',
+                  icon: <ShieldAlert className="w-5 h-5 text-rose-600" />,
+                  titleColor: 'text-rose-900',
+                  accent: 'bg-rose-500'
+                },
+                warning: {
+                  bg: 'bg-amber-50 border-amber-100 text-amber-800',
+                  icon: <AlertCircle className="w-5 h-5 text-amber-600" />,
+                  titleColor: 'text-amber-900',
+                  accent: 'bg-amber-500'
+                },
+                info: {
+                  bg: 'bg-blue-50 border-blue-100 text-blue-800',
+                  icon: <Info className="w-5 h-5 text-blue-600" />,
+                  titleColor: 'text-blue-900',
+                  accent: 'bg-blue-500'
+                }
+              }[toast.type];
+
+              return (
+                <motion.div
+                  key={toast.id}
+                  layout
+                  initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
+                  className={`pointer-events-auto flex gap-3 p-4 rounded-xl border shadow-lg ${typeStyles.bg} relative overflow-hidden`}
+                >
+                  {/* Barra d'accento visiva a sinistra */}
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${typeStyles.accent}`} />
+                  
+                  <div className="flex-shrink-0 mt-0.5">
+                    {typeStyles.icon}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0 pr-4">
+                    {toast.title && (
+                      <h4 className={`text-xs font-bold uppercase tracking-wider mb-0.5 ${typeStyles.titleColor}`}>
+                        {toast.title}
+                      </h4>
+                    )}
+                    <p className="text-xs font-medium leading-relaxed">
+                      {toast.message}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => dismissToast(toast.id)}
+                    className="flex-shrink-0 absolute top-3 right-3 text-slate-400 hover:text-slate-600 p-0.5 rounded-lg hover:bg-black/5 transition cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
 
       </div>
     </div>
