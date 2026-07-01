@@ -2679,32 +2679,24 @@ async function executeOandaRealtimeCheck() {
       let stopLossHit = false;
       let takeProfitHit = false;
       
-      const trailingDistance = currentPrice * (isRealAccount ? 0.002 : 0.0003); 
       let unrealizedPL = currentPos.unrealizedPL || 0;
       
       if (!isRealAccount) {
         const pos = oandaDemoPositions[inst];
         if(!pos) continue;
         unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-
-        if (pos.side === 'buy') {
-          if (!pos.trailingStopBase || currentPrice > pos.trailingStopBase) pos.trailingStopBase = currentPrice;
-          if (currentPrice <= pos.trailingStopBase - trailingDistance) stopLossHit = true;
-        } else {
-          if (!pos.trailingStopBase || currentPrice < pos.trailingStopBase) pos.trailingStopBase = currentPrice;
-          if (currentPrice >= pos.trailingStopBase + trailingDistance) stopLossHit = true;
-        }
       }
       
       if (unrealizedPL >= 0.10) {
         takeProfitHit = true;
         addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
-      } else if (stopLossHit) {
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto!`);
+      } else if (unrealizedPL <= -1.0) {
+        stopLossHit = true;
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: -1.00 €)`);
       }
 
       if (stopLossHit || takeProfitHit) {
-        const reason = stopLossHit ? "Trailing Stop Loss" : "Take Profit (+0.10€)";
+        const reason = stopLossHit ? "Stop Loss (-1.00€)" : "Take Profit (+0.10€)";
         addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
         
         if (isRealAccount) {
@@ -2809,9 +2801,6 @@ async function executeOandaTradingCycle(force: boolean = false) {
       if (currentPos) {
         let stopLossHit = false;
         let takeProfitHit = false;
-        
-        // 0.2% per conti reali, 0.03% per simulazione per testare l'attivazione
-        const trailingDistance = currentPrice * (isRealAccount ? 0.002 : 0.0003); 
 
         // Calcolo unrealizedPL per OANDA (live o demo)
         let unrealizedPL = currentPos.unrealizedPL || 0;
@@ -2822,29 +2811,14 @@ async function executeOandaTradingCycle(force: boolean = false) {
           const eurUsdCandles = await getOandaCandles('EUR_USD');
           const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
           unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-
-          if (pos.side === 'buy') {
-            if (!pos.trailingStopBase || currentPrice > pos.trailingStopBase) {
-              pos.trailingStopBase = currentPrice;
-            }
-            if (currentPrice <= pos.trailingStopBase - trailingDistance) {
-              stopLossHit = true;
-              addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Trailing Stop Loss raggiunto! Base: ${pos.trailingStopBase.toFixed(5)}, Prezzo: ${currentPrice.toFixed(5)}`);
-            }
-          } else {
-            if (!pos.trailingStopBase || currentPrice < pos.trailingStopBase) {
-              pos.trailingStopBase = currentPrice;
-            }
-            if (currentPrice >= pos.trailingStopBase + trailingDistance) {
-              stopLossHit = true;
-              addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Trailing Stop Loss raggiunto! Base: ${pos.trailingStopBase.toFixed(5)}, Prezzo: ${currentPrice.toFixed(5)}`);
-            }
-          }
         }
         
         if (unrealizedPL >= 0.10) {
           takeProfitHit = true;
           addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
+        } else if (unrealizedPL <= -1.0) {
+          stopLossHit = true;
+          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: -1.00 €)`);
         }
 
         const needsClosure = stopLossHit || takeProfitHit ||
@@ -2852,7 +2826,7 @@ async function executeOandaTradingCycle(force: boolean = false) {
           (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
 
         if (needsClosure) {
-          const reason = stopLossHit ? "Trailing Stop Loss" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment in negativo";
+          const reason = stopLossHit ? "Stop Loss (-1.00€)" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment in negativo";
           addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
