@@ -278,7 +278,7 @@ let oandaBotStatus = {
   balance: 50.00,
   dailyPnL: [] as { date: string; realized: number; unrealized: number }[]
 };
-let oandaDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell' }> = {};
+let oandaDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
 
 function addOandaLog(message: string) {
   const timestamp = new Date().toISOString();
@@ -2299,6 +2299,58 @@ async function getOandaCandles(instrument: string): Promise<any[]> {
     });
   }
 }
+     function calculateLocalTechnicalSentiment(candles: any[]): { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string } {
+  if (!candles || candles.length < 20) {
+    return { sentiment: 'HOLD', reasoning: "Dati storici insufficienti per l'analisi tecnica di fallback." };
+  }
+  
+  const closePrices = candles.map(c => parseFloat(c.mid?.c || c.c || "0"));
+  const lastPrice = closePrices[closePrices.length - 1];
+  
+  // Calcolo SMA 5 e SMA 20
+  const shortPeriod = 5;
+  const longPeriod = 20;
+  
+  const shortSum = closePrices.slice(-shortPeriod).reduce((a, b) => a + b, 0);
+  const smaShort = shortSum / shortPeriod;
+  
+  const longSum = closePrices.slice(-longPeriod).reduce((a, b) => a + b, 0);
+  const smaLong = longSum / longPeriod;
+  
+  // Calcolo RSI a 14 periodi per precisione
+  let rsi = 50;
+  if (closePrices.length >= 15) {
+    let gains = 0;
+    let losses = 0;
+    for (let i = closePrices.length - 14; i < closePrices.length; i++) {
+      const diff = closePrices[i] - closePrices[i - 1];
+      if (diff > 0) gains += diff;
+      else losses -= diff;
+    }
+    const rs = losses === 0 ? 100 : gains / losses;
+    rsi = 100 - (100 / (1 + rs));
+  }
+
+  // Soglia minima di movimento per evitare falsi segnali in mercati piatti
+  const threshold = smaLong * 0.0001; // 0.01%
+  
+  if (smaShort > (smaLong + threshold) && rsi < 75) {
+    return {
+      sentiment: 'BUY',
+      reasoning: `Incrocio rialzista SMA 5 (${smaShort.toFixed(5)}) sopra SMA 20 (${smaLong.toFixed(5)}). L'oscillatore RSI a ${rsi.toFixed(1)} mostra forza rialzista.`
+    };
+  } else if (smaShort < (smaLong - threshold) && rsi > 25) {
+    return {
+      sentiment: 'SELL',
+      reasoning: `Incrocio ribassista SMA 5 (${smaShort.toFixed(5)}) sotto SMA 20 (${smaLong.toFixed(5)}). L'oscillatore RSI a ${rsi.toFixed(1)} conferma il trend ribassista.`
+    };
+  } else {
+    return {
+      sentiment: 'HOLD',
+      reasoning: `Mercato in consolidamento laterale. Prezzo attuale (${lastPrice.toFixed(5)}) allineato alla media SMA 20 (${smaLong.toFixed(5)}). RSI neutrale a ${rsi.toFixed(1)}.`
+    };
+  }
+}
 
 async function getOandaBulkSentiment(instruments: string[]): Promise<Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }>> {
   const result: Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }> = {};
@@ -2310,9 +2362,9 @@ async function getOandaBulkSentiment(instruments: string[]): Promise<Record<stri
   }
 
   if (checkQuotaExceeded()) {
-    addOandaLog(`[AI Cooldown] Gemini in cooldown, uso sentiment neutrale per mitigare il rischio.`);
+    addOandaLog(`[AI Cooldown] Gemini in cooldown temporaneo. Attivazione dell'analisi tecnica quantitativa (SMA/RSI) locale.`);
     for (const inst of instruments) {
-      result[inst] = { sentiment: 'HOLD', reasoning: 'Gemini in cooldown. Mantieni o attendi.' };
+      result[inst] = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
     }
     return result;
   }
@@ -2326,7 +2378,7 @@ async function getOandaBulkSentiment(instruments: string[]): Promise<Record<stri
 
     const prompt = `Sei un esperto trader di Forex. Analizza i trend degli ultimi prezzi di chiusura orari per questi cambi Forex:
 ${JSON.stringify(simplifiedData)}
-
+0
 Determina il sentiment operativo per ciascun cambio. Le opzioni per ciascun cambio sono:
 - 'BUY': Forte tendenza rialzista o pattern di inversione rialzista chiaro.
 - 'SELL': Forte tendenza ribassista o pattern di inversione ribassista chiaro.
@@ -2368,15 +2420,26 @@ Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown
     }
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    const isQuotaError = message.includes('429') || message.includes('RESOURCE_EXHAUSTED');
+    
+    if (isQuotaError) {
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
-      addOandaLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback su HOLD.`);
+      addOandaLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
     } else {
       console.error("[Gemini Error OANDA]", error);
     }
+    
     for (const inst of instruments) {
-      result[inst] = { sentiment: 'HOLD', reasoning: `Errore IA: ${message}. HOLD di sicurezza.` };
+      if (isQuotaError) {
+        const technicalResult = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
+        result[inst] = {
+          sentiment: technicalResult.sentiment,
+          reasoning: `[Quota IA Superata] Fallback Tecnico Quantitativo: ${technicalResult.reasoning}`
+        };
+      } else {
+        result[inst] = { sentiment: 'HOLD', reasoning: `Errore IA: Connessione fallita. HOLD di sicurezza.` };
+      }
     }
   }
 
@@ -2508,13 +2571,39 @@ async function executeOandaTradingCycle(force: boolean = false) {
 
       // Se abbiamo una posizione aperta
       if (currentPos) {
-        const needsClosure = 
+        let stopLossHit = false;
+        // 0.2% per conti reali, 0.03% per simulazione per testare l'attivazione
+        const trailingDistance = currentPrice * (isRealAccount ? 0.002 : 0.0003); 
+
+        if (!isRealAccount && oandaDemoPositions[inst]) {
+          const pos = oandaDemoPositions[inst];
+          if (pos.side === 'buy') {
+            if (!pos.trailingStopBase || currentPrice > pos.trailingStopBase) {
+              pos.trailingStopBase = currentPrice;
+            }
+            if (currentPrice <= pos.trailingStopBase - trailingDistance) {
+              stopLossHit = true;
+              addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Trailing Stop Loss raggiunto! Base: ${pos.trailingStopBase.toFixed(5)}, Prezzo: ${currentPrice.toFixed(5)}`);
+            }
+          } else {
+            if (!pos.trailingStopBase || currentPrice < pos.trailingStopBase) {
+              pos.trailingStopBase = currentPrice;
+            }
+            if (currentPrice >= pos.trailingStopBase + trailingDistance) {
+              stopLossHit = true;
+              addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Trailing Stop Loss raggiunto! Base: ${pos.trailingStopBase.toFixed(5)}, Prezzo: ${currentPrice.toFixed(5)}`);
+            }
+          }
+        }
+
+        const needsClosure = stopLossHit ||
           (currentPos.side === 'buy' && sentimentData.sentiment === 'SELL') ||
           (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY') ||
           (sentimentData.sentiment === 'HOLD');
 
         if (needsClosure) {
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per variazione sentiment o sentiment neutrale.`);
+          const reason = stopLossHit ? "Trailing Stop Loss" : "variazione sentiment o neutrale";
+          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
             try {
