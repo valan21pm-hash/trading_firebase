@@ -525,6 +525,29 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
   return results[symbol] || { score: 0, reasoning: 'Errore recupero sentiment' };
 }
 
+async function getDynamicTrendingStocks(): Promise<string[]> {
+  try {
+    const prompt = `Identifica da 5 a 8 azioni (simboli ticker azionari statunitensi reali, come NVDA, AAPL, MSFT, AMD, TSLA, META, GOOGL, AMZN, NFLX, ecc.) che stanno mostrando forti segnali di rialzo recenti, momentum positivo o catalizzatori favorevoli di mercato.
+Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in maiuscolo. Esempio di output:
+["NVDA", "AAPL", "MSFT", "TSLA", "META"]`;
+
+    const response = await getAi().models.generateContent({
+      model: "gemini-3.1-flash-lite",
+      contents: prompt,
+    });
+
+    const cleanedText = (response.text || '[]').replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleanedText);
+    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+      const symbols = parsed.map(s => s.trim().toUpperCase());
+      return symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
+    }
+  } catch (error) {
+    console.error('[Dynamic Discovery] Errore nel recupero dei ticker dinamici:', error);
+  }
+  return ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'AMD', 'GOOGL', 'AMZN'];
+}
+
 async function getMarketMinutesToClose(baseUrl: string, apiKey: string, secretKey: string): Promise<number | null> {
   try {
     const response = await fetch(`${baseUrl}/clock`, {
@@ -716,7 +739,18 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
     const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
     const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
-    const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES];
+    
+    // Scansione dinamica giornaliera di asset esterni ad alto potenziale di rialzo
+    let trendingSymbols: string[] = [];
+    try {
+      addLog(mode, `[Scansione Azioni] Scansione in corso tramite IA per identificare azioni con forti trend rialzisti...`);
+      trendingSymbols = await getDynamicTrendingStocks();
+      addLog(mode, `[Scansione Azioni] Trovate le seguenti opportunità ad alto potenziale: ${trendingSymbols.join(', ')}`);
+    } catch (err: any) {
+      addLog(mode, `[Scansione Azioni Errore] Errore nella scansione dinamica: ${err.message}`);
+    }
+
+    const ALL_TRADED_SYMBOLS = [...INDICES, ...COMMODITIES, ...trendingSymbols];
 
     // Ottieni i simboli di tutte le posizioni aperte (es. AAPL) che non sono nell'elenco predefinito
     const openSymbols = openPositions.map((p: any) => p.symbol);
