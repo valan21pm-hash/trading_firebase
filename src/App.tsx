@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -1231,6 +1231,10 @@ export default function App() {
   const [momentumAssets, setMomentumAssets] = useState<MomentumAsset[]>([]);
   const [momentumLoading, setMomentumLoading] = useState(false);
 
+  const [isOperationsCollapsed, setIsOperationsCollapsed] = useState(true);
+  const [isAlpacaFillsCollapsed, setIsAlpacaFillsCollapsed] = useState(true);
+  const [isMomentumCollapsed, setIsMomentumCollapsed] = useState(true);
+
   const fetchMomentumAssets = async () => {
     setMomentumLoading(true);
     try {
@@ -1820,13 +1824,17 @@ export default function App() {
         {/* Operazioni, Performance & Fills */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
-            <div>
+            <div 
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1" 
+              onClick={() => setIsOperationsCollapsed(!isOperationsCollapsed)}
+            >
               <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <BarChart2 className="w-5 h-5 text-indigo-600" />
-                Operazioni, Performance & Fills
+                <span>Operazioni, Performance & Fills</span>
+                {isOperationsCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Monitora in tempo reale le posizioni attive (profitti e perdite latenti), gli ordini eseguiti sul mercato e i log decisionali del bot.
+                Monitora in tempo reale le posizioni attive (profitti e perdite latenti), gli ordini eseguiti sul mercato e i log decisionali del bot. Clicca per espandere/comprimere.
               </p>
             </div>
             <div className="flex gap-2">
@@ -1858,7 +1866,9 @@ export default function App() {
             </div>
           </div>
 
-          {operationsLoading && !operationsData ? (
+          {!isOperationsCollapsed && (
+            <>
+              {operationsLoading && !operationsData ? (
             <div className="text-center py-12 text-slate-400 text-sm animate-pulse flex flex-col items-center gap-2">
               <RotateCcw className="w-6 h-6 animate-spin text-indigo-500" />
               Caricamento operazioni in corso...
@@ -1914,13 +1924,19 @@ export default function App() {
               </div>
 
               {/* 2. REGISTRO ESECUZIONI DI MERCATO (ALPACA FILLS) */}
-              <div>
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+              <div className="border-t border-slate-100 pt-4 mt-4">
+                <h3 
+                  className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono cursor-pointer select-none hover:text-slate-700 transition-colors"
+                  onClick={() => setIsAlpacaFillsCollapsed(!isAlpacaFillsCollapsed)}
+                >
                   <TrendingUp className="w-4 h-4 text-green-600" />
-                  Registro Esecuzioni di Mercato (Alpaca Fills)
+                  <span>Registro Esecuzioni di Mercato (Alpaca Fills)</span>
+                  {isAlpacaFillsCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronUp className="w-3.5 h-3.5 text-green-600" />}
                 </h3>
-                {operationsData.activities && operationsData.activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill').length > 0 ? (
-                  <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+                {!isAlpacaFillsCollapsed && (
+                  <>
+                    {operationsData.activities && operationsData.activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill').length > 0 ? (
+                      <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
@@ -1965,6 +1981,8 @@ export default function App() {
                   <div className="text-center py-4 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
                     Nessun ordine eseguito recentemente registrato su Alpaca.
                   </div>
+                )}
+                  </>
                 )}
               </div>
 
@@ -2034,6 +2052,8 @@ export default function App() {
             <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
               In attesa di dati sulle operazioni. Verifica che il bot o l'interfaccia sia correttamente inizializzata.
             </div>
+          )}
+            </>
           )}
         </div>
 
@@ -2547,7 +2567,10 @@ export default function App() {
           <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 relative z-10">
-            <div>
+            <div 
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1"
+              onClick={() => setIsMomentumCollapsed(!isMomentumCollapsed)}
+            >
               <div className="flex items-center gap-2 mb-1">
                 <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-400 text-[10px] font-bold uppercase tracking-wider rounded-full border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -2556,24 +2579,27 @@ export default function App() {
               </div>
               <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-indigo-400" />
-                Opportunità ad Alto Momentum
+                <span>Opportunità ad Alto Momentum</span>
+                {isMomentumCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-400" />}
               </h2>
               <p className="text-xs text-slate-400 max-w-xl mt-1">
-                Analisi giornaliera degli asset USA con forte accelerazione e catalizzatori macro/notizie. Aggiungili alla lista per consentire al bot di includerli nei cicli di scansione e trading.
+                Analisi giornaliera degli asset USA con forte accelerazione e catalizzatori macro/notizie. Clicca per espandere/comprimere.
               </p>
             </div>
             
             <button
               onClick={() => fetchMomentumAssets()}
               disabled={momentumLoading}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition disabled:opacity-50 h-fit cursor-pointer"
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition disabled:opacity-50 h-fit cursor-pointer animate-pulse-glow"
             >
               <RotateCcw className={`w-3.5 h-3.5 ${momentumLoading ? 'animate-spin' : ''}`} />
               Aggiorna Scanner
             </button>
           </div>
 
-          {momentumLoading ? (
+          {!isMomentumCollapsed && (
+            <>
+              {momentumLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2, 3, 4].map((i) => (
                 <div key={i} className="bg-slate-950/50 border border-slate-800/80 rounded-2xl p-4 animate-pulse">
@@ -2698,6 +2724,8 @@ export default function App() {
                 ))}
               </div>
             </div>
+          )}
+            </>
           )}
         </div>
 

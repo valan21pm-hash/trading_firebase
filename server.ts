@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -16,8 +17,25 @@ try {
     initFirebaseApp({
       credential: cert(serviceAccount)
     });
-    db = getFirestore();
-    console.log('[Firebase] Successfully initialized Firebase Admin and Firestore connection.');
+    
+    let dbId: string | undefined = undefined;
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        dbId = config.firestoreDatabaseId;
+      }
+    } catch (e) {
+      console.error('[Firebase] Error reading firebase-applet-config.json:', e);
+    }
+
+    if (dbId) {
+      db = getFirestore(dbId);
+      console.log(`[Firebase] Successfully initialized connection to named Firestore database: ${dbId}`);
+    } else {
+      db = getFirestore();
+      console.log('[Firebase] Successfully initialized connection to default Firestore database.');
+    }
   } else {
     console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT_KEY not found in environment.');
   }
@@ -284,9 +302,17 @@ function addOandaLog(message: string) {
   const timestamp = new Date().toISOString();
   const logMsg = `[${timestamp}] ${message}`;
   oandaBotStatus.logs.unshift(logMsg);
-  if (oandaBotStatus.logs.length > 100) {
-    oandaBotStatus.logs = oandaBotStatus.logs.slice(0, 100);
+  if (oandaBotStatus.logs.length > 1000) {
+    oandaBotStatus.logs = oandaBotStatus.logs.slice(0, 1000);
   }
+  
+  if (db) {
+    db.collection('oanda_operational_logs').add({
+      message: message,
+      timestamp: timestamp
+    }).catch((err: any) => console.error('[Firebase] Error saving OANDA operational log:', err));
+  }
+
   console.log(logMsg);
   saveOandaBotStatus().catch(err => console.error('[Firebase Error] Error saving OANDA logs:', err));
 }
@@ -435,10 +461,37 @@ async function loadStateFromFirestore() {
         oandaBotStatus.active = oandaData.active ?? oandaBotStatus.active;
         oandaBotStatus.lastCheck = oandaData.lastCheck ?? oandaBotStatus.lastCheck;
         oandaBotStatus.monitoredInstruments = oandaData.monitoredInstruments ?? oandaBotStatus.monitoredInstruments;
-        oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
         oandaDemoPositions = oandaData.demoPositions ?? oandaDemoPositions;
         oandaBotStatus.balance = oandaData.balance ?? oandaBotStatus.balance;
         oandaBotStatus.dailyPnL = oandaData.dailyPnL ?? oandaBotStatus.dailyPnL;
+
+        // Load OANDA logs of last 7 days from Firestore if exists
+        try {
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const sevenDaysAgoStr = sevenDaysAgo.toISOString();
+          
+          const logsSnap = await db.collection('oanda_operational_logs')
+            .where('timestamp', '>=', sevenDaysAgoStr)
+            .orderBy('timestamp', 'desc')
+            .limit(1000)
+            .get();
+            
+          if (!logsSnap.empty) {
+            const fetchedLogs: string[] = [];
+            logsSnap.forEach((doc: any) => {
+              const data = doc.data();
+              fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+            });
+            oandaBotStatus.logs = fetchedLogs;
+          } else {
+            oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
+          }
+        } catch (err) {
+          console.error('[Firebase] Error loading OANDA operational logs of last 7 days:', err);
+          oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
+        }
+
         console.log('[Firebase] Loaded OANDA bot status, balance, dailyPnL and demo positions successfully.');
       }
 
@@ -459,8 +512,36 @@ async function loadStateFromFirestore() {
         botData[mode].balance = d.balance ?? botData[mode].balance;
         botData[mode].cash = d.cash ?? botData[mode].cash;
         botData[mode].accountNumber = d.accountNumber ?? botData[mode].accountNumber;
-        botData[mode].dailyPnL = d.dailyPnL ?? botData[mode].dailyPnL;
-        botData[mode].logs = d.logs ?? botData[mode].logs;
+        botData[mode].dailyPnL = d.dailyPnL ?? d.dailyPnL;
+
+        // Load Alpaca logs of last 7 days from Firestore if exists
+        try {
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const sevenDaysAgoStr = sevenDaysAgo.toISOString();
+          
+          const logsSnap = await db.collection('operational_logs')
+            .where('mode', '==', mode)
+            .where('timestamp', '>=', sevenDaysAgoStr)
+            .orderBy('timestamp', 'desc')
+            .limit(1000)
+            .get();
+            
+          if (!logsSnap.empty) {
+            const fetchedLogs: string[] = [];
+            logsSnap.forEach((doc: any) => {
+              const data = doc.data();
+              fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+            });
+            botData[mode].logs = fetchedLogs;
+          } else {
+            botData[mode].logs = d.logs ?? botData[mode].logs;
+          }
+        } catch (err) {
+          console.error(`[Firebase] Error loading operational logs of last 7 days for ${mode}:`, err);
+          botData[mode].logs = d.logs ?? botData[mode].logs;
+        }
+
         console.log(`[Firebase] Loaded account data for ${mode} successfully.`);
       }
 
@@ -496,13 +577,30 @@ function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   
   if (mode === 'paper' || mode === 'system') {
     botData.paper.logs.unshift(logMsg);
-    if (botData.paper.logs.length > 100) botData.paper.logs = botData.paper.logs.slice(0, 100);
+    if (botData.paper.logs.length > 1000) botData.paper.logs = botData.paper.logs.slice(0, 1000);
     saveBotData('paper').catch(err => console.error('[Firebase Error] Error saving paper logs:', err));
   }
   if (mode === 'live' || mode === 'system') {
     botData.live.logs.unshift(logMsg);
-    if (botData.live.logs.length > 100) botData.live.logs = botData.live.logs.slice(0, 100);
+    if (botData.live.logs.length > 1000) botData.live.logs = botData.live.logs.slice(0, 1000);
     saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live logs:', err));
+  }
+
+  if (db) {
+    const targetMode = mode === 'system' ? 'paper' : mode;
+    db.collection('operational_logs').add({
+      mode: targetMode,
+      message: message,
+      timestamp: timestamp
+    }).catch((err: any) => console.error('[Firebase] Error saving operational log:', err));
+
+    if (mode === 'system') {
+      db.collection('operational_logs').add({
+        mode: 'live',
+        message: message,
+        timestamp: timestamp
+      }).catch((err: any) => console.error('[Firebase] Error saving operational log for system/live:', err));
+    }
   }
   
   console.log(logMsg);
@@ -1445,6 +1543,21 @@ app.post('/api/feedback', (req, res) => {
   }
 });
 
+app.post('/api/feedback/delete', (req, res) => {
+  const { index } = req.body;
+  if (!botStatus.userFeedbackRules) {
+    botStatus.userFeedbackRules = [];
+  }
+  if (typeof index === 'number' && index >= 0 && index < botStatus.userFeedbackRules.length) {
+    const deletedRule = botStatus.userFeedbackRules.splice(index, 1)[0];
+    addLog('system', `[Feedback Utente] Rimossa regola: ${deletedRule}`);
+    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule deletion:', err));
+    res.json({ success: true, message: 'Regola rimossa con successo.', userFeedbackRules: botStatus.userFeedbackRules });
+  } else {
+    res.status(400).json({ success: false, message: 'Indice non valido.' });
+  }
+});
+
 app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
   addLog('system', '[Trigger Strategy] Ricevuta richiesta di attivazione strategia da Cloud Scheduler o manuale...');
   try {
@@ -2376,9 +2489,15 @@ async function getOandaBulkSentiment(instruments: string[]): Promise<Record<stri
       simplifiedData[inst] = instrumentsCandles[inst].slice(-10).map((c: any) => parseFloat(c.mid.c));
     }
 
+    const feedbackRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
+      ? `\n\nREGOLE E CORREZIONI IMPERATIVE DA SEGUIRE FORNITE DALL'UTNETE (DEVI RISPETTARLE ASSOLUTAMENTE NELLA TUA DECISIONE):\n- ${botStatus.userFeedbackRules.join('\n- ')}`
+      : '';
+
     const prompt = `Sei un esperto trader di Forex. Analizza i trend degli ultimi prezzi di chiusura orari per questi cambi Forex:
 ${JSON.stringify(simplifiedData)}
-0
+
+${feedbackRules}
+
 Determina il sentiment operativo per ciascun cambio. Le opzioni per ciascun cambio sono:
 - 'BUY': Forte tendenza rialzista o pattern di inversione rialzista chiaro.
 - 'SELL': Forte tendenza ribassista o pattern di inversione ribassista chiaro.
