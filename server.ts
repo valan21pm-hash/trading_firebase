@@ -2643,7 +2643,7 @@ async function executeOandaTradingCycle(force: boolean = false) {
 
   try {
     // 1. Recupero delle posizioni aperte correnti
-    const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell' }> = {};
+    const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number }> = {};
 
     if (isRealAccount) {
       try {
@@ -2658,9 +2658,17 @@ async function executeOandaTradingCycle(force: boolean = false) {
             const longUnits = parseFloat(pos.long?.units || '0');
             const shortUnits = parseFloat(pos.short?.units || '0');
             if (longUnits > 0) {
-              openPositionsMap[inst] = { units: longUnits, side: 'buy' };
+              openPositionsMap[inst] = { 
+                units: longUnits, 
+                side: 'buy', 
+                unrealizedPL: parseFloat(pos.long?.unrealizedPL || pos.unrealizedPL || '0') 
+              };
             } else if (shortUnits > 0) {
-              openPositionsMap[inst] = { units: shortUnits, side: 'sell' };
+              openPositionsMap[inst] = { 
+                units: shortUnits, 
+                side: 'sell', 
+                unrealizedPL: parseFloat(pos.short?.unrealizedPL || pos.unrealizedPL || '0') 
+              };
             }
           }
         } else {
@@ -2691,11 +2699,21 @@ async function executeOandaTradingCycle(force: boolean = false) {
       // Se abbiamo una posizione aperta
       if (currentPos) {
         let stopLossHit = false;
+        let takeProfitHit = false;
+        
         // 0.2% per conti reali, 0.03% per simulazione per testare l'attivazione
         const trailingDistance = currentPrice * (isRealAccount ? 0.002 : 0.0003); 
 
+        // Calcolo unrealizedPL per OANDA (live o demo)
+        let unrealizedPL = currentPos.unrealizedPL || 0;
+        
         if (!isRealAccount && oandaDemoPositions[inst]) {
           const pos = oandaDemoPositions[inst];
+          // Recuperiamo EUR_USD per convertire il PnL demo in EUR
+          const eurUsdCandles = await getOandaCandles('EUR_USD');
+          const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+          unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+
           if (pos.side === 'buy') {
             if (!pos.trailingStopBase || currentPrice > pos.trailingStopBase) {
               pos.trailingStopBase = currentPrice;
@@ -2714,14 +2732,19 @@ async function executeOandaTradingCycle(force: boolean = false) {
             }
           }
         }
+        
+        if (unrealizedPL >= 0.10) {
+          takeProfitHit = true;
+          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
+        }
 
-        const needsClosure = stopLossHit ||
+        const needsClosure = stopLossHit || takeProfitHit ||
           (currentPos.side === 'buy' && sentimentData.sentiment === 'SELL') ||
           (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY') ||
           (sentimentData.sentiment === 'HOLD');
 
         if (needsClosure) {
-          const reason = stopLossHit ? "Trailing Stop Loss" : "variazione sentiment o neutrale";
+          const reason = stopLossHit ? "Trailing Stop Loss" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment o neutrale";
           addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
