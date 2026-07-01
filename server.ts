@@ -2628,6 +2628,115 @@ function updateOandaPnLHistory(pnlChange: number) {
   }
 }
 
+async function executeOandaRealtimeCheck() {
+  if (!oandaBotStatus.active) return;
+  
+  const OANDA_API_KEY = process.env.OANDA_API_KEY;
+  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
+  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
+  const isRealAccount = !!(OANDA_API_KEY && OANDA_ACCOUNT_ID);
+  
+  const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number; avgPrice?: number }> = {};
+  
+  try {
+    if (isRealAccount) {
+      const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/openPositions`, {
+        headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        for (const pos of (data.positions || [])) {
+          const inst = pos.instrument;
+          if (parseFloat(pos.long?.units || '0') > 0) {
+            openPositionsMap[inst] = { units: parseFloat(pos.long.units), side: 'buy', unrealizedPL: parseFloat(pos.long?.unrealizedPL || pos.unrealizedPL || '0') };
+          } else if (parseFloat(pos.short?.units || '0') > 0) {
+            openPositionsMap[inst] = { units: parseFloat(pos.short.units), side: 'sell', unrealizedPL: parseFloat(pos.short?.unrealizedPL || pos.unrealizedPL || '0') };
+          }
+        }
+      }
+    } else {
+      for (const inst in oandaDemoPositions) {
+        openPositionsMap[inst] = { ...oandaDemoPositions[inst] };
+      }
+    }
+
+    const openInstruments = Object.keys(openPositionsMap);
+    if (openInstruments.length === 0) return;
+
+    // Fetch EUR_USD price for demo conversion if needed
+    let eurUsdPrice = 1.0800;
+    if (!isRealAccount) {
+      const eurUsdCandles = await getOandaCandles('EUR_USD');
+      eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+    }
+
+    for (const inst of openInstruments) {
+      const currentPos = openPositionsMap[inst];
+      const candles = await getOandaCandles(inst);
+      if (candles.length === 0) continue;
+      const currentPrice = parseFloat(candles[candles.length - 1].mid.c);
+      
+      let stopLossHit = false;
+      let takeProfitHit = false;
+      
+      const trailingDistance = currentPrice * (isRealAccount ? 0.002 : 0.0003); 
+      let unrealizedPL = currentPos.unrealizedPL || 0;
+      
+      if (!isRealAccount) {
+        const pos = oandaDemoPositions[inst];
+        if(!pos) continue;
+        unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+
+        if (pos.side === 'buy') {
+          if (!pos.trailingStopBase || currentPrice > pos.trailingStopBase) pos.trailingStopBase = currentPrice;
+          if (currentPrice <= pos.trailingStopBase - trailingDistance) stopLossHit = true;
+        } else {
+          if (!pos.trailingStopBase || currentPrice < pos.trailingStopBase) pos.trailingStopBase = currentPrice;
+          if (currentPrice >= pos.trailingStopBase + trailingDistance) stopLossHit = true;
+        }
+      }
+      
+      if (unrealizedPL >= 0.10) {
+        takeProfitHit = true;
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
+      } else if (stopLossHit) {
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto!`);
+      }
+
+      if (stopLossHit || takeProfitHit) {
+        const reason = stopLossHit ? "Trailing Stop Loss" : "Take Profit (+0.10€)";
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
+        
+        if (isRealAccount) {
+          try {
+            const closeBody: any = {};
+            if (currentPos.side === 'buy') closeBody.longUnits = "ALL";
+            else closeBody.shortUnits = "ALL";
+
+            await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/positions/${inst}/close`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OANDA_API_KEY}` },
+              body: JSON.stringify(closeBody)
+            });
+            addOandaLog(`[OANDA LIVE] Posizione reale su ${inst} chiusa con successo per ${reason}.`);
+          } catch (err: any) {
+            console.error(`Errore chiusura realtime ${inst}: ${err.message}`);
+          }
+        } else {
+          const pnlInEur = calculateDemoPnLInEur(inst, currentPos.side, currentPos.avgPrice!, currentPrice, currentPos.units, eurUsdPrice);
+          oandaBotStatus.balance += pnlInEur;
+          updateOandaPnLHistory(pnlInEur);
+          delete oandaDemoPositions[inst];
+          addOandaLog(`[DEMO OANDA] Posizione simulata su ${inst} chiusa con successo per ${reason}! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+          await saveOandaBotStatus();
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Errore nel realtime check OANDA:", err);
+  }
+}
+
 async function executeOandaTradingCycle(force: boolean = false) {
   if (!oandaBotStatus.active && !force) {
     return;
@@ -2740,11 +2849,10 @@ async function executeOandaTradingCycle(force: boolean = false) {
 
         const needsClosure = stopLossHit || takeProfitHit ||
           (currentPos.side === 'buy' && sentimentData.sentiment === 'SELL') ||
-          (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY') ||
-          (sentimentData.sentiment === 'HOLD');
+          (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
 
         if (needsClosure) {
-          const reason = stopLossHit ? "Trailing Stop Loss" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment o neutrale";
+          const reason = stopLossHit ? "Trailing Stop Loss" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment in negativo";
           addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
@@ -3307,6 +3415,20 @@ async function startServer() {
   autoDetectCredentials().catch(err => {
     console.error('[Auto-Detect Error] Errore durante l\'auto-rilevamento:', err);
   });
+
+  // Loop automatico di background per eseguire il trading senza dover cliccare il tasto
+  setInterval(() => {
+    executeTradingCycle(false).catch(err => {
+      console.error('[Background Cycle Error] Errore nel ciclo di trading in background:', err);
+    });
+  }, 60000); // Ogni 60 secondi
+
+  // Loop molto veloce (5 secondi) per chiudere in tempo reale le posizioni in profitto
+  setInterval(() => {
+    executeOandaRealtimeCheck().catch(err => {
+      console.error('[Background Fast Check Error]', err);
+    });
+  }, 5000); // Ogni 5 secondi
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
