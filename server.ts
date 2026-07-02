@@ -2108,6 +2108,73 @@ app.get('/api/operations', async (req, res) => {
   });
 });
 
+app.get('/api/report/download', async (req, res) => {
+  const startDateStr = req.query.startDate as string;
+  const endDateStr = req.query.endDate as string;
+  
+  if (!db) {
+    return res.status(500).json({ success: false, error: 'Database non disponibile' });
+  }
+
+  if (!startDateStr || !endDateStr) {
+    return res.status(400).json({ success: false, error: 'startDate e endDate sono obbligatori' });
+  }
+
+  try {
+    let startTimestamp = new Date(startDateStr).toISOString();
+    let endTimestamp = new Date(endDateStr);
+    endTimestamp.setHours(23, 59, 59, 999);
+    let endTimestampStr = endTimestamp.toISOString();
+
+    const fetchLogs = async (collection: string, timeField: string = 'timestamp') => {
+      const snap = await db!.collection(collection)
+        .where(timeField, '>=', startTimestamp)
+        .where(timeField, '<=', endTimestampStr)
+        .orderBy(timeField, 'asc')
+        .get();
+      const logs: any[] = [];
+      snap.forEach(doc => logs.push(doc.data()));
+      return logs;
+    };
+
+    const opLogs = await fetchLogs('operational_logs');
+    const logicLogs = await fetchLogs('logic_logs');
+    const oandaOpLogs = await fetchLogs('oanda_operational_logs');
+    const oandaLogicLogs = await fetchLogs('oanda_logic_logs');
+
+    let reportText = `Report Trading dal ${startDateStr} al ${endDateStr}\n`;
+    reportText += `Generato il: ${new Date().toISOString()}\n\n`;
+    
+    reportText += `--- LOG OPERATIVI ALPACA ---\n`;
+    opLogs.forEach(log => {
+      reportText += `[${log.timestamp}] [${log.mode}] ${log.message}\n`;
+    });
+
+    reportText += `\n--- LOG LOGICA ALPACA ---\n`;
+    logicLogs.forEach(log => {
+      reportText += `[${log.timestamp}] [${log.mode}] ${log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
+    });
+
+    reportText += `\n--- LOG OPERATIVI OANDA ---\n`;
+    oandaOpLogs.forEach(log => {
+      reportText += `[${log.timestamp}] ${log.message}\n`;
+    });
+
+    reportText += `\n--- LOG LOGICA OANDA ---\n`;
+    oandaLogicLogs.forEach(log => {
+      reportText += `[${log.timestamp}] ${log.instrument || log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="report_${startDateStr}_${endDateStr}.txt"`);
+    res.send(reportText);
+
+  } catch (err: any) {
+    console.error('[Report Download] Error:', err);
+    res.status(500).json({ success: false, error: 'Errore durante la generazione del report.' });
+  }
+});
+
 app.post('/api/close-position', async (req, res) => {
   const { mode, symbol } = req.body;
   if (!symbol || (mode !== 'paper' && mode !== 'live')) {

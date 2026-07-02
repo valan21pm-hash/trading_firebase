@@ -1235,6 +1235,15 @@ export default function App() {
   const [isAlpacaFillsCollapsed, setIsAlpacaFillsCollapsed] = useState(true);
   const [isMomentumCollapsed, setIsMomentumCollapsed] = useState(true);
 
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportStartDate, setReportStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const handleDownloadCustomReport = () => {
+    window.location.href = `/api/report/download?startDate=${reportStartDate}&endDate=${reportEndDate}`;
+    setShowReportModal(false);
+  };
+
   const fetchMomentumAssets = async () => {
     setMomentumLoading(true);
     try {
@@ -1646,7 +1655,7 @@ export default function App() {
   useEffect(() => {
     fetchStatus();
     fetchMomentumAssets();
-    const interval = setInterval(fetchStatus, 5000);
+    const interval = setInterval(fetchStatus, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1739,6 +1748,13 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="flex items-center gap-2 px-4.5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 active:scale-95 transition-all cursor-pointer"
+            >
+              <FileDown className="w-4 h-4" />
+              Scarica Report Logs
+            </button>
             {/* Bottone di Panico / Panic Button */}
             <button
               onClick={() => setShowPanicConfirm(true)}
@@ -2869,6 +2885,57 @@ export default function App() {
                       CONFERMA E LIQUIDA ORA
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Scarica Report */}
+        {showReportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white rounded-2xl shadow-xl border border-gray-200 max-w-md w-full p-6 relative">
+              <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-indigo-600" />
+                Scarica Report Log per Periodo
+              </h3>
+              
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data Inizio</label>
+                  <input
+                    type="date"
+                    value={reportStartDate}
+                    onChange={(e) => setReportStartDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data Fine</label>
+                  <input
+                    type="date"
+                    value={reportEndDate}
+                    onChange={(e) => setReportEndDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  Il report includerà tutti i log operativi e decisionali (Alpaca e OANDA) nel periodo selezionato.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  onClick={handleDownloadCustomReport}
+                  className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-md transition-all cursor-pointer"
+                >
+                  Scarica (TXT)
                 </button>
               </div>
             </div>
