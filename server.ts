@@ -5,12 +5,25 @@ import fs from 'fs';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
-import { initializeApp as initFirebaseApp, cert } from 'firebase-admin/app';
+import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 let db: any = null;
 
 try {
+  let dbId: string | undefined = undefined;
+  let projectId: string | undefined = undefined;
+  try {
+    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      dbId = config.firestoreDatabaseId;
+      projectId = config.projectId;
+    }
+  } catch (e) {
+    console.error('[Firebase] Error reading firebase-applet-config.json:', e);
+  }
+
   const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (serviceAccountKey) {
     const serviceAccount = JSON.parse(serviceAccountKey);
@@ -18,18 +31,7 @@ try {
       credential: cert(serviceAccount)
     });
     
-    let dbId: string | undefined = undefined;
-    try {
-      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        dbId = config.firestoreDatabaseId;
-      }
-    } catch (e) {
-      console.error('[Firebase] Error reading firebase-applet-config.json:', e);
-    }
-
-    if (dbId) {
+    if (dbId && serviceAccount.project_id === projectId) {
       db = getFirestore(dbId);
       console.log(`[Firebase] Successfully initialized connection to named Firestore database: ${dbId}`);
     } else {
@@ -37,10 +39,12 @@ try {
       console.log('[Firebase] Successfully initialized connection to default Firestore database.');
     }
   } else {
-    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT_KEY not found in environment.');
+    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT_KEY non configurata. Il bot userà la memoria locale per i log e perderà lo storico al riavvio del server.');
+    db = null;
   }
 } catch (error: any) {
   console.error('[Firebase] Error initializing Firebase:', error);
+  db = null;
 }
 
 let aiClient: GoogleGenAI | null = null;
@@ -290,7 +294,7 @@ let tradeLogs: string[] = [];
 let oandaBotStatus = {
   active: false,
   lastCheck: null as string | null,
-  monitoredInstruments: ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'EUR_GBP'],
+  monitoredInstruments: ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'EUR_GBP', 'USD_CHF', 'USD_CAD', 'NZD_USD', 'EUR_JPY', 'GBP_JPY', 'EUR_CHF'],
   logs: [] as string[],
   logicLogs: [] as { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }[],
   balance: 50.00,
@@ -2112,10 +2116,6 @@ app.get('/api/report/download', async (req, res) => {
   const startDateStr = req.query.startDate as string;
   const endDateStr = req.query.endDate as string;
   
-  if (!db) {
-    return res.status(500).json({ success: false, error: 'Database non disponibile' });
-  }
-
   if (!startDateStr || !endDateStr) {
     return res.status(400).json({ success: false, error: 'startDate e endDate sono obbligatori' });
   }
@@ -2126,24 +2126,57 @@ app.get('/api/report/download', async (req, res) => {
     endTimestamp.setHours(23, 59, 59, 999);
     let endTimestampStr = endTimestamp.toISOString();
 
-    const fetchLogs = async (collection: string, timeField: string = 'timestamp') => {
-      const snap = await db!.collection(collection)
-        .where(timeField, '>=', startTimestamp)
-        .where(timeField, '<=', endTimestampStr)
-        .orderBy(timeField, 'asc')
-        .get();
-      const logs: any[] = [];
-      snap.forEach(doc => logs.push(doc.data()));
-      return logs;
-    };
+    let opLogs: any[] = [];
+    let logicLogs: any[] = [];
+    let oandaOpLogs: any[] = [];
+    let oandaLogicLogs: any[] = [];
 
-    const opLogs = await fetchLogs('operational_logs');
-    const logicLogs = await fetchLogs('logic_logs');
-    const oandaOpLogs = await fetchLogs('oanda_operational_logs');
-    const oandaLogicLogs = await fetchLogs('oanda_logic_logs');
+    if (db) {
+      const fetchLogs = async (collection: string, timeField: string = 'timestamp') => {
+        const snap = await db!.collection(collection)
+          .where(timeField, '>=', startTimestamp)
+          .where(timeField, '<=', endTimestampStr)
+          .orderBy(timeField, 'asc')
+          .get();
+        const logs: any[] = [];
+        snap.forEach(doc => logs.push(doc.data()));
+        return logs;
+      };
+
+      opLogs = await fetchLogs('operational_logs');
+      logicLogs = await fetchLogs('logic_logs');
+      oandaOpLogs = await fetchLogs('oanda_operational_logs');
+      oandaLogicLogs = await fetchLogs('oanda_logic_logs');
+    } else {
+      // Fallback a dati in memoria se non c'è DB
+      const filterByDate = (logTimestamp: string) => logTimestamp >= startTimestamp && logTimestamp <= endTimestampStr;
+      
+      const parseLogString = (logString: string, mode: string) => {
+        const match = logString.match(/^\[(.*?)\] (.*)$/);
+        if (match) {
+          return { timestamp: match[1], message: match[2], mode };
+        }
+        return { timestamp: new Date().toISOString(), message: logString, mode };
+      };
+
+      const paperLogs = (botData.paper.logs || []).map(l => parseLogString(l, 'paper'));
+      const liveLogs = (botData.live.logs || []).map(l => parseLogString(l, 'live'));
+      opLogs = [...paperLogs, ...liveLogs].filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+      const paperLogic = (botData.paper.dailyLogicLogs || []).map(l => ({...l, mode: 'paper'}));
+      const liveLogic = (botData.live.dailyLogicLogs || []).map(l => ({...l, mode: 'live'}));
+      logicLogs = [...paperLogic, ...liveLogic].filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+      const parsedOandaOp = (oandaBotStatus.logs || []).map(l => parseLogString(l, 'oanda'));
+      oandaOpLogs = parsedOandaOp.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+      const oandaLogic = (oandaBotStatus.dailyLogicLogs || []).map(l => ({...l, mode: 'oanda'}));
+      oandaLogicLogs = oandaLogic.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    }
 
     let reportText = `Report Trading dal ${startDateStr} al ${endDateStr}\n`;
-    reportText += `Generato il: ${new Date().toISOString()}\n\n`;
+    reportText += `Generato il: ${new Date().toISOString()}\n`;
+    reportText += `Sorgente: ${db ? 'Firebase Database' : 'Memoria Locale (Fallback)'}\n\n`;
     
     reportText += `--- LOG OPERATIVI ALPACA ---\n`;
     opLogs.forEach(log => {
@@ -2627,30 +2660,57 @@ async function getOandaBulkSentiment(instruments: string[]): Promise<Record<stri
   }
 
   try {
-    // Prepariamo i dati ridotti da inviare a Gemini per consumare meno token ed evitare rate limits
-    const simplifiedData: Record<string, number[]> = {};
+    // Calcoliamo indicatori tecnici per ciascun strumento per fornire a Gemini dati più precisi
+    const enrichedData: Record<string, { lastPrices: number[], sma5: number, sma20: number, rsi: number }> = {};
     for (const inst of instruments) {
-      simplifiedData[inst] = instrumentsCandles[inst].slice(-10).map((c: any) => parseFloat(c.mid.c));
+      const candles = instrumentsCandles[inst];
+      const closePrices = candles.map((c: any) => parseFloat(c.mid.c));
+      const last10 = closePrices.slice(-10);
+      
+      const shortPeriod = 5;
+      const longPeriod = 20;
+      let sma5 = 0, sma20 = 0, rsi = 50;
+      
+      if (closePrices.length >= longPeriod) {
+        sma5 = closePrices.slice(-shortPeriod).reduce((a: number, b: number) => a + b, 0) / shortPeriod;
+        sma20 = closePrices.slice(-longPeriod).reduce((a: number, b: number) => a + b, 0) / longPeriod;
+      }
+      
+      if (closePrices.length >= 15) {
+        let gains = 0;
+        let losses = 0;
+        for (let i = closePrices.length - 14; i < closePrices.length; i++) {
+          const diff = closePrices[i] - closePrices[i - 1];
+          if (diff > 0) gains += diff;
+          else losses -= diff;
+        }
+        const rs = losses === 0 ? 100 : gains / losses;
+        rsi = 100 - (100 / (1 + rs));
+      }
+      
+      enrichedData[inst] = { lastPrices: last10, sma5, sma20, rsi };
     }
 
     const feedbackRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
-      ? `\n\nREGOLE E CORREZIONI IMPERATIVE DA SEGUIRE FORNITE DALL'UTNETE (DEVI RISPETTARLE ASSOLUTAMENTE NELLA TUA DECISIONE):\n- ${botStatus.userFeedbackRules.join('\n- ')}`
+      ? `\n\nREGOLE E CORREZIONI IMPERATIVE DA SEGUIRE FORNITE DALL'UTENTE:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
       : '';
 
-    const prompt = `Sei un esperto trader di Forex. Analizza i trend degli ultimi prezzi di chiusura orari per questi cambi Forex:
-${JSON.stringify(simplifiedData)}
+    const prompt = `Sei un esperto trader di Forex quantitativo. Analizza i dati tecnici per questi cambi Forex:
+${JSON.stringify(enrichedData, null, 2)}
+
+SPECIFICHE TECNICHE FORNITE:
+- Analizza l'RSI (sopra 70 ipercomprato -> possibile SELL, sotto 30 ipervenduto -> possibile BUY).
+- Considera l'incrocio delle medie mobili SMA5 e SMA20 per identificare la direzione del trend.
+- Verifica i prezzi storici recenti ("lastPrices").
+- NON lavorare a caso, applica logiche di trading rigorose e attente.
 
 ${feedbackRules}
 
-Determina il sentiment operativo per ciascun cambio. Le opzioni per ciascun cambio sono:
-- 'BUY': Forte tendenza rialzista o pattern di inversione rialzista chiaro.
-- 'SELL': Forte tendenza ribassista o pattern di inversione ribassista chiaro.
-- 'HOLD': Mercato laterale, incerto o senza un chiaro trend direzionale.
+Determina il sentiment operativo (BUY, SELL, HOLD) per ciascun cambio basandoti sui dati sopra elencati e su un'analisi di mercato rigorosa.
 
 Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown o spiegazioni extra prima o dopo il JSON, come nel seguente esempio:
 {
-  "EUR_USD": { "sentiment": "BUY", "reasoning": "Spiegazione del trend rialzista in italiano..." },
-  "GBP_USD": { "sentiment": "HOLD", "reasoning": "Mercato in consolidamento laterale..." }
+  "EUR_USD": { "sentiment": "BUY", "reasoning": "Incrocio SMA rialzista e RSI a 45 in recupero dall'ipervenduto." }
 }`;
 
     const response = await getAi().models.generateContent({
