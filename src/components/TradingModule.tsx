@@ -981,7 +981,7 @@ export default function TradingModule() {
           </div>
 
           {/* Console Logs */}
-          <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex-1 flex flex-col min-h-[280px]">
+          <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex flex-col h-[560px]">
             <div className="flex items-center justify-between px-4 py-2 bg-slate-950 border-b border-slate-800">
               <div className="flex gap-2">
                 <button
@@ -1044,7 +1044,7 @@ export default function TradingModule() {
               </label>
             </div>
 
-            <div className="p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 scrollbar-thin scrollbar-thumb-slate-800 flex-1">
+            <div className="p-4 overflow-y-auto font-mono text-xs text-slate-300 scrollbar-thin scrollbar-thumb-slate-800 flex-1">
               {activeLogTab === 'system' ? (
                 (() => {
                   const rawLogs = oandaAutoStatus?.logs || [];
