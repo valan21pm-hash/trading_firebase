@@ -443,10 +443,10 @@ export default function TradingModule() {
                 <div className="flex gap-1">
                   <button 
                     onClick={handleResetBalance}
-                    className="p-1 hover:bg-rose-50 rounded text-rose-400 hover:text-rose-600 transition"
+                    className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-600 rounded text-xs font-medium hover:bg-rose-100 transition"
                     title="Azzera conto simulazione a 50€ e chiudi posizioni"
                   >
-                    <RefreshCcw className="w-3.5 h-3.5" />
+                    Reset 50€
                   </button>
                   <button 
                     onClick={fetchAccount}
