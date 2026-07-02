@@ -74,6 +74,8 @@ export default function TradingModule() {
     dailyPnL: { date: string; realized: number; unrealized: number }[];
     unrealizedPnL: number;
     equity?: number;
+    defaultTP?: number;
+    defaultSL?: number;
   } | null>(null);
   const [oandaPositions, setOandaPositions] = useState<any[]>([]);
   const [closingInstruments, setClosingInstruments] = useState<string[]>([]);
@@ -82,6 +84,11 @@ export default function TradingModule() {
   const [submittingAutoToggle, setSubmittingAutoToggle] = useState<boolean>(false);
   const [triggeringCycle, setTriggeringCycle] = useState<boolean>(false);
   const [activeLogTab, setActiveLogTab] = useState<'system' | 'logic'>('system');
+  
+  const [editingSettings, setEditingSettings] = useState(false);
+  const [draftTP, setDraftTP] = useState<string>('0.10');
+  const [draftSL, setDraftSL] = useState<string>('-1.00');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem('oanda_wrapLogs');
@@ -234,6 +241,39 @@ export default function TradingModule() {
     { value: 'AUD_USD', label: 'AUD/USD (Dollaro Australiano / Dollaro US)' },
     { value: 'EUR_GBP', label: 'EUR/GBP (Euro / Sterlina)' },
   ];
+
+  useEffect(() => {
+    if (oandaAutoStatus) {
+      setDraftTP(String(oandaAutoStatus.defaultTP ?? 0.10));
+      setDraftSL(String(oandaAutoStatus.defaultSL ?? -1.00));
+    }
+  }, [oandaAutoStatus?.defaultTP, oandaAutoStatus?.defaultSL]);
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      const res = await fetch('/api/trading/oanda-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultTP: parseFloat(draftTP) || 0.10,
+          defaultSL: parseFloat(draftSL) || -1.00
+        })
+      });
+      if (res.ok) {
+        setSuccessMessage('Impostazioni salvate con successo.');
+        setEditingSettings(false);
+        fetchOandaAutoStatus();
+      } else {
+        const errData = await res.json();
+        setErrorMessage(errData.error || 'Errore salvataggio impostazioni.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Errore di connessione.');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const fetchAccount = async () => {
     setLoadingAccount(true);
@@ -854,6 +894,72 @@ export default function TradingModule() {
                   <RefreshCw className={`w-3.5 h-3.5 ${triggeringCycle ? 'animate-spin' : ''}`} />
                   {triggeringCycle ? 'Analisi...' : 'Esegui Ciclo'}
                 </button>
+              </div>
+
+              {/* Impostazioni Globali Trade */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-bold text-slate-700">Impostazioni Trade</span>
+                  {editingSettings ? (
+                     <div className="flex gap-2">
+                       <button 
+                         onClick={() => setEditingSettings(false)}
+                         className="text-[10px] font-semibold text-slate-500 hover:text-slate-700 transition"
+                       >
+                         Annulla
+                       </button>
+                       <button 
+                         onClick={handleSaveSettings}
+                         disabled={savingSettings}
+                         className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition"
+                       >
+                         {savingSettings ? 'Salvataggio...' : 'Salva'}
+                       </button>
+                     </div>
+                  ) : (
+                    <button 
+                      onClick={() => setEditingSettings(true)}
+                      className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition flex items-center gap-1"
+                    >
+                      Modifica
+                    </button>
+                  )}
+                </div>
+                {editingSettings ? (
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Take Profit (€)</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={draftTP}
+                        onChange={e => setDraftTP(e.target.value)}
+                        className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Stop Loss (€)</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={draftSL}
+                        onChange={e => setDraftSL(e.target.value)}
+                        className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <span className="text-[10px] text-slate-500 font-medium block">Take Profit</span>
+                      <span className="text-xs font-bold text-green-600">+{oandaAutoStatus?.defaultTP?.toFixed(2) || '0.10'} €</span>
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-[10px] text-slate-500 font-medium block">Stop Loss</span>
+                      <span className="text-xs font-bold text-rose-600">{oandaAutoStatus?.defaultSL?.toFixed(2) || '-1.00'} €</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="text-[10px] text-slate-500 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/40">

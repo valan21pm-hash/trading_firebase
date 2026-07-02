@@ -298,7 +298,9 @@ let oandaBotStatus = {
   logs: [] as string[],
   logicLogs: [] as { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }[],
   balance: 50.00,
-  dailyPnL: [] as { date: string; realized: number; unrealized: number }[]
+  dailyPnL: [] as { date: string; realized: number; unrealized: number }[],
+  defaultTP: 0.10,
+  defaultSL: -1.00
 };
 let oandaDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
 
@@ -344,7 +346,9 @@ async function saveOandaBotStatus() {
       logs: oandaBotStatus.logs || [],
       demoPositions: oandaDemoPositions,
       balance: oandaBotStatus.balance,
-      dailyPnL: oandaBotStatus.dailyPnL || []
+      dailyPnL: oandaBotStatus.dailyPnL || [],
+      defaultTP: oandaBotStatus.defaultTP,
+      defaultSL: oandaBotStatus.defaultSL
     }, { merge: true });
   } catch (err: any) {
     console.error('[Firebase] Error saving OANDA bot status:', err);
@@ -473,6 +477,8 @@ async function loadStateFromFirestore() {
         oandaDemoPositions = oandaData.demoPositions ?? oandaDemoPositions;
         oandaBotStatus.balance = oandaData.balance ?? oandaBotStatus.balance;
         oandaBotStatus.dailyPnL = oandaData.dailyPnL ?? oandaBotStatus.dailyPnL;
+        oandaBotStatus.defaultTP = oandaData.defaultTP ?? oandaBotStatus.defaultTP;
+        oandaBotStatus.defaultSL = oandaData.defaultSL ?? oandaBotStatus.defaultSL;
 
         // Load OANDA logs from Firestore
         try {
@@ -2918,16 +2924,16 @@ async function executeOandaRealtimeCheck() {
         unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
       }
       
-      if (unrealizedPL >= 0.10) {
+      if (unrealizedPL >= oandaBotStatus.defaultTP) {
         takeProfitHit = true;
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
-      } else if (unrealizedPL <= -1.0) {
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${oandaBotStatus.defaultTP.toFixed(2)} €)`);
+      } else if (unrealizedPL <= oandaBotStatus.defaultSL) {
         stopLossHit = true;
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: -1.00 €)`);
+        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${oandaBotStatus.defaultSL.toFixed(2)} €)`);
       }
 
       if (stopLossHit || takeProfitHit) {
-        const reason = stopLossHit ? "Stop Loss (-1.00€)" : "Take Profit (+0.10€)";
+        const reason = stopLossHit ? `Stop Loss (${oandaBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${oandaBotStatus.defaultTP.toFixed(2)}€)`;
         addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
         
         if (isRealAccount) {
@@ -3044,12 +3050,12 @@ async function executeOandaTradingCycle(force: boolean = false) {
           unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
         }
         
-        if (unrealizedPL >= 0.10) {
+        if (unrealizedPL >= oandaBotStatus.defaultTP) {
           takeProfitHit = true;
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +0.10 €)`);
-        } else if (unrealizedPL <= -1.0) {
+          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${oandaBotStatus.defaultTP.toFixed(2)} €)`);
+        } else if (unrealizedPL <= oandaBotStatus.defaultSL) {
           stopLossHit = true;
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: -1.00 €)`);
+          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${oandaBotStatus.defaultSL.toFixed(2)} €)`);
         }
 
         const needsClosure = stopLossHit || takeProfitHit ||
@@ -3057,7 +3063,7 @@ async function executeOandaTradingCycle(force: boolean = false) {
           (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
 
         if (needsClosure) {
-          const reason = stopLossHit ? "Stop Loss (-1.00€)" : takeProfitHit ? "Take Profit (+0.10€)" : "variazione sentiment in negativo";
+          const reason = stopLossHit ? `Stop Loss (${oandaBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${oandaBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
           addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
@@ -3431,6 +3437,19 @@ app.post("/api/trading/oanda-reset-balance", async (req, res) => {
   addOandaLog(`[Auto-Trading] Saldo simulato riportato a 50.00€ e posizioni azzerate dall'utente.`);
   await saveOandaBotStatus();
   res.json({ success: true });
+});
+
+app.post("/api/trading/oanda-settings", async (req, res) => {
+  const { defaultTP, defaultSL } = req.body;
+  if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
+    oandaBotStatus.defaultTP = defaultTP;
+    oandaBotStatus.defaultSL = defaultSL;
+    addOandaLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€`);
+    await saveOandaBotStatus();
+    res.json({ success: true, defaultTP, defaultSL });
+  } else {
+    res.status(400).json({ success: false, error: 'Parametri non validi.' });
+  }
 });
 
 
