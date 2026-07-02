@@ -2773,21 +2773,48 @@ function calculateDemoPnLInEur(instrument: string, side: 'buy' | 'sell', entryPr
   const diff = side === 'buy' ? (currentPrice - entryPrice) : (entryPrice - currentPrice);
   const pnlInQuote = diff * units;
   
-  if (instrument === 'EUR_USD') {
-    return pnlInQuote / currentPrice;
-  }
-  if (instrument === 'EUR_GBP') {
-    return pnlInQuote / currentPrice;
-  }
-  if (instrument === 'GBP_USD' || instrument === 'AUD_USD') {
-    return pnlInQuote / eurUsdPrice;
-  }
-  if (instrument === 'USD_JPY') {
-    const pnlInUsd = pnlInQuote / currentPrice;
-    return pnlInUsd / eurUsdPrice;
+  const base = instrument.substring(0, 3);
+  const quote = instrument.substring(4, 7);
+
+  if (quote === 'EUR') {
+    return pnlInQuote;
   }
   
-  return pnlInQuote;
+  if (quote === 'USD') {
+    return pnlInQuote / eurUsdPrice;
+  }
+  
+  if (base === 'EUR') {
+    // If quote is something else and base is EUR, currentPrice is Quote/EUR
+    return pnlInQuote / currentPrice;
+  }
+
+  // JPY pairs where base is not EUR (e.g. GBP_JPY, USD_JPY)
+  if (quote === 'JPY') {
+    // We need EUR_JPY rate. We don't have it explicitly, but we have eurUsdPrice.
+    // If it's USD_JPY, currentPrice is JPY/USD.
+    if (base === 'USD') {
+       const pnlInUsd = pnlInQuote / currentPrice;
+       return pnlInUsd / eurUsdPrice;
+    }
+    
+    // For GBP_JPY, we would ideally need EUR_JPY or GBP_USD. 
+    // It's just a rough approximation without the exact cross rate, so we approximate
+    // 1 EUR = ~160 JPY for fallback, or better:
+    // Let's assume standard JPY cross rate ~ 160 to avoid needing another API call.
+    return pnlInQuote / 160.0;
+  }
+
+  if (quote === 'CHF') {
+      return pnlInQuote / 0.95; // approx EUR/CHF
+  }
+
+  if (quote === 'CAD') {
+      return pnlInQuote / 1.45; // approx EUR/CAD
+  }
+
+  // Fallback for others
+  return pnlInQuote / eurUsdPrice; 
 }
 
 function initializeOandaPnLHistory() {
