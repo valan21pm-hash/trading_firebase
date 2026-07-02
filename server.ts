@@ -2170,7 +2170,7 @@ app.get('/api/report/download', async (req, res) => {
       const parsedOandaOp = (oandaBotStatus.logs || []).map(l => parseLogString(l, 'oanda'));
       oandaOpLogs = parsedOandaOp.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-      const oandaLogic = (oandaBotStatus.dailyLogicLogs || []).map(l => ({...l, mode: 'oanda'}));
+      const oandaLogic = (oandaBotStatus.logicLogs || []).map(l => ({...l, mode: 'oanda'}));
       oandaLogicLogs = oandaLogic.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     }
 
@@ -3421,6 +3421,15 @@ app.post("/api/trading/oanda-reset-logs", async (req, res) => {
   addOandaLog(`[Auto-Trading] Log OANDA azzerati dall'utente.`);
   await saveOandaBotStatus();
   await saveOandaLogicLogs();
+  res.json({ success: true });
+});
+
+app.post("/api/trading/oanda-reset-balance", async (req, res) => {
+  oandaBotStatus.balance = 50.00;
+  oandaDemoPositions = {};
+  oandaBotStatus.dailyPnL = [];
+  addOandaLog(`[Auto-Trading] Saldo simulato riportato a 50.00€ e posizioni azzerate dall'utente.`);
+  await saveOandaBotStatus();
   res.json({ success: true });
 });
 

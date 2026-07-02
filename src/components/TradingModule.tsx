@@ -185,6 +185,22 @@ export default function TradingModule() {
     }
   };
 
+  const handleResetBalance = async () => {
+    if (!window.confirm('Sei sicuro di voler azzerare il saldo (50€) e tutte le posizioni?')) return;
+    try {
+      const res = await fetch('/api/trading/oanda-reset-balance', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        setSuccessMessage('Saldo OANDA azzerato con successo.');
+        fetchOandaAutoStatus();
+        fetchAccount();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Errore azzeramento saldo.');
+    }
+  };
+
   const handleCloseOandaPosition = async (symbol: string) => {
     setClosingInstruments(prev => [...prev, symbol]);
     try {
@@ -424,13 +440,22 @@ export default function TradingModule() {
               {loadingAccount ? (
                 <RefreshCcw className="w-3.5 h-3.5 animate-spin text-slate-400" />
               ) : (
-                <button 
-                  onClick={fetchAccount}
-                  className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition"
-                  title="Aggiorna dati account"
-                >
-                  <RefreshCcw className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex gap-1">
+                  <button 
+                    onClick={handleResetBalance}
+                    className="p-1 hover:bg-rose-50 rounded text-rose-400 hover:text-rose-600 transition"
+                    title="Azzera conto simulazione a 50€ e chiudi posizioni"
+                  >
+                    <RefreshCcw className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    onClick={fetchAccount}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition"
+                    title="Aggiorna dati account"
+                  >
+                    <RefreshCcw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               )}
             </div>
             <p className="text-lg font-bold text-slate-800 mt-2 font-mono">
