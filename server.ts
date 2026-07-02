@@ -323,6 +323,11 @@ function addOandaLogicLog(log: { timestamp: string; instrument: string; action: 
     oandaBotStatus.logicLogs = oandaBotStatus.logicLogs.slice(0, 100);
   }
   saveOandaLogicLogs().catch(err => console.error('[Firebase Error] Error saving OANDA logic logs:', err));
+  
+  if (db) {
+    db.collection('oanda_logic_logs').add(log)
+      .catch((err: any) => console.error('[Firebase] Error saving OANDA logic log to collection:', err));
+  }
 }
 
 async function saveOandaBotStatus() {
@@ -465,14 +470,9 @@ async function loadStateFromFirestore() {
         oandaBotStatus.balance = oandaData.balance ?? oandaBotStatus.balance;
         oandaBotStatus.dailyPnL = oandaData.dailyPnL ?? oandaBotStatus.dailyPnL;
 
-        // Load OANDA logs of last 7 days from Firestore if exists
+        // Load OANDA logs from Firestore
         try {
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          const sevenDaysAgoStr = sevenDaysAgo.toISOString();
-          
           const logsSnap = await db.collection('oanda_operational_logs')
-            .where('timestamp', '>=', sevenDaysAgoStr)
             .orderBy('timestamp', 'desc')
             .limit(1000)
             .get();
@@ -488,18 +488,37 @@ async function loadStateFromFirestore() {
             oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
           }
         } catch (err) {
-          console.error('[Firebase] Error loading OANDA operational logs of last 7 days:', err);
+          console.error('[Firebase] Error loading OANDA operational logs:', err);
           oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
         }
 
         console.log('[Firebase] Loaded OANDA bot status, balance, dailyPnL and demo positions successfully.');
       }
 
-      const oandaLogicLogsDoc = await db.collection('settings').doc('oanda_logic_logs').get();
-      if (oandaLogicLogsDoc.exists) {
-        const oandaLogicLogsData = oandaLogicLogsDoc.data();
-        oandaBotStatus.logicLogs = oandaLogicLogsData.logicLogs ?? oandaBotStatus.logicLogs;
-        console.log('[Firebase] Loaded OANDA logic logs successfully.');
+      try {
+        const oandaLogicLogsSnap = await db.collection('oanda_logic_logs')
+          .orderBy('timestamp', 'desc')
+          .limit(100)
+          .get();
+        
+        if (!oandaLogicLogsSnap.empty) {
+          const loadedOandaLogicLogs: any[] = [];
+          oandaLogicLogsSnap.forEach((doc: any) => {
+            loadedOandaLogicLogs.push(doc.data());
+          });
+          oandaBotStatus.logicLogs = loadedOandaLogicLogs;
+          console.log(`[Firebase] Loaded ${loadedOandaLogicLogs.length} OANDA logic logs successfully.`);
+        } else {
+          // Fallback al doc per retrocompatibilità
+          const oandaLogicLogsDoc = await db.collection('settings').doc('oanda_logic_logs').get();
+          if (oandaLogicLogsDoc.exists) {
+            const oandaLogicLogsData = oandaLogicLogsDoc.data();
+            oandaBotStatus.logicLogs = oandaLogicLogsData.logicLogs ?? oandaBotStatus.logicLogs;
+            console.log('[Firebase] Loaded OANDA logic logs from settings successfully.');
+          }
+        }
+      } catch (err: any) {
+        console.error('[Firebase] Error loading OANDA logic logs from Firestore:', err);
       }
     } catch (err: any) {
       console.error('[Firebase] Error loading OANDA state from Firestore:', err);
@@ -514,57 +533,58 @@ async function loadStateFromFirestore() {
         botData[mode].accountNumber = d.accountNumber ?? botData[mode].accountNumber;
         botData[mode].dailyPnL = d.dailyPnL ?? d.dailyPnL;
 
-        // Load Alpaca logs of last 7 days from Firestore if exists
+        // Load Alpaca logs from Firestore
         try {
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          const sevenDaysAgoStr = sevenDaysAgo.toISOString();
-          
           const logsSnap = await db.collection('operational_logs')
-            .where('mode', '==', mode)
-            .where('timestamp', '>=', sevenDaysAgoStr)
             .orderBy('timestamp', 'desc')
-            .limit(1000)
+            .limit(2000)
             .get();
             
           if (!logsSnap.empty) {
             const fetchedLogs: string[] = [];
             logsSnap.forEach((doc: any) => {
               const data = doc.data();
-              fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+              if (data.mode === mode) {
+                fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+              }
             });
-            botData[mode].logs = fetchedLogs;
+            // Limit to 1000 per mode
+            botData[mode].logs = fetchedLogs.slice(0, 1000);
           } else {
             botData[mode].logs = d.logs ?? botData[mode].logs;
           }
         } catch (err) {
-          console.error(`[Firebase] Error loading operational logs of last 7 days for ${mode}:`, err);
+          console.error(`[Firebase] Error loading operational logs for ${mode}:`, err);
           botData[mode].logs = d.logs ?? botData[mode].logs;
         }
 
         console.log(`[Firebase] Loaded account data for ${mode} successfully.`);
       }
 
-      // Load last 500 logic logs for this mode to populate in-memory list
-      const logsSnap = await db.collection('logic_logs')
-        .where('mode', '==', mode)
-        .orderBy('timestamp', 'desc')
-        .limit(500)
-        .get();
-      
-      const loadedLogicLogs: any[] = [];
-      logsSnap.forEach((doc: any) => {
-        const data = doc.data();
-        loadedLogicLogs.push({
-          timestamp: data.timestamp,
-          symbol: data.symbol,
-          action: data.action,
-          reasoning: data.reasoning,
-          price: data.price
+      try {
+        const logsSnap = await db.collection('logic_logs')
+          .orderBy('timestamp', 'desc')
+          .limit(1000)
+          .get();
+        
+        const loadedLogicLogs: any[] = [];
+        logsSnap.forEach((doc: any) => {
+          const data = doc.data();
+          if (data.mode === mode) {
+            loadedLogicLogs.push({
+              timestamp: data.timestamp,
+              symbol: data.symbol,
+              action: data.action,
+              reasoning: data.reasoning,
+              price: data.price
+            });
+          }
         });
-      });
-      botData[mode].dailyLogicLogs = loadedLogicLogs.reverse();
-      console.log(`[Firebase] Loaded ${loadedLogicLogs.length} logic logs for ${mode}.`);
+        botData[mode].dailyLogicLogs = loadedLogicLogs.slice(0, 500).reverse();
+        console.log(`[Firebase] Loaded ${botData[mode].dailyLogicLogs.length} logic logs for ${mode}.`);
+      } catch (err) {
+        console.error(`[Firebase] Error loading logic logs for ${mode}:`, err);
+      }
     }
   } catch (err: any) {
     console.error('[Firebase] Error loading state from Firestore:', err);
@@ -3364,7 +3384,7 @@ app.post("/api/trading/order", async (req, res) => {
           price: "1.0854",
           pl: "0.00",
           commission: "0.00",
-          accountBalance: "50.00"
+          accountBalance: oandaBotStatus.balance.toFixed(2)
         },
         message: "Ordine simulato con successo in modalità Demo."
       });
@@ -3408,10 +3428,10 @@ app.get("/api/trading/account", async (req, res) => {
         isDemo: true,
         account: {
           id: "IT/M189975/EUR",
-          balance: "50.00",
+          balance: oandaBotStatus.balance.toFixed(2),
           currency: "EUR",
-          NAV: "50.00",
-          openPositionCount: 0,
+          NAV: oandaBotStatus.balance.toFixed(2),
+          openPositionCount: Object.keys(oandaDemoPositions).length,
           pendingOrderCount: 0,
           alias: "OANDA-MT5-Demo"
         }
