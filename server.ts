@@ -731,7 +731,7 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
     return results;
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('503') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('503') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Sentiment Analysis] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Disabling further sentiment analysis.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -774,7 +774,7 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
     }
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Dynamic Discovery] API Quota Exceeded (429/RESOURCE_EXHAUSTED).`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -1215,7 +1215,7 @@ ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')
         reportText = response.text || 'Nessun report generato.';
       } catch (error: any) {
         const message = error.message || String(error);
-        if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+        if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
           console.warn(`[Daily Report] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local report.`);
           isQuotaExceeded = true;
           quotaExceededTime = Date.now();
@@ -1453,7 +1453,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     res.json({ success: true, debrief: botStatus.latestDailyDebrief });
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Debriefing AI] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local debrief.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -1597,7 +1597,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     });
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Debriefing Periodico AI] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local range-debrief.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -1923,7 +1923,7 @@ Rispondi RIGIDAMENTE in formato JSON con la seguente struttura:
     }
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Momentum Discovery] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to cached or local assets.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -2444,7 +2444,7 @@ Rispondi esclusivamente nel seguente formato JSON:
     res.json(result);
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Study Markets] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local study results.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -2497,7 +2497,7 @@ Rispondi esclusivamente nel seguente formato JSON:
     res.json(result);
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[Compare Results] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local comparison.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
@@ -2550,14 +2550,24 @@ async function getOandaCandles(instrument: string): Promise<any[]> {
     // Generate realistic historical candle data around the current real-time price
     return Array.from({ length: 50 }, (_, i) => {
       const multiplier = instrument.includes('JPY') ? 0.15 : 0.0005;
-      const base = basePrice + Math.sin(i / 8) * multiplier + (Math.random() - 0.5) * (multiplier * 0.4);
+      
+      // Calculate realistic time-based curve
+      const candleTime = Date.now() - (50 - i) * 60 * 60 * 1000;
+      const t1 = candleTime / (2 * 60 * 60 * 1000); // 2 hour cycle
+      const t2 = candleTime / (15 * 60 * 1000);     // 15 min cycle
+      const t3 = candleTime / (60 * 1000);          // 1 min cycle
+      
+      // Smooth sum of sines to simulate realistic market movements without instant profit spikes
+      const curve = Math.sin(t1) + 0.5 * Math.sin(t2) + 0.25 * Math.sin(t3);
+      const base = basePrice + curve * (multiplier * 4);
+      
       return {
-        time: new Date(Date.now() - (50 - i) * 60 * 60 * 1000).toISOString(),
+        time: new Date(candleTime).toISOString(),
         mid: {
           o: String(base),
           h: String(base + multiplier * 0.5),
           l: String(base - multiplier * 0.5),
-          c: String(base + (Math.random() - 0.5) * multiplier * 0.2)
+          c: String(base + (Math.random() - 0.5) * multiplier * 0.1) // minimal noise on close
         },
         volume: Math.floor(Math.random() * 500 + 50)
       };
@@ -2581,14 +2591,19 @@ async function getOandaCandles(instrument: string): Promise<any[]> {
     const basePrice = getInstrumentBasePrice(instrument, rates);
     const multiplier = instrument.includes('JPY') ? 0.15 : 0.0005;
     return Array.from({ length: 50 }, (_, i) => {
-      const base = basePrice + Math.sin(i / 8) * multiplier + (Math.random() - 0.5) * (multiplier * 0.4);
+      const candleTime = Date.now() - (50 - i) * 60 * 60 * 1000;
+      const t1 = candleTime / (2 * 60 * 60 * 1000);
+      const t2 = candleTime / (15 * 60 * 1000);
+      const t3 = candleTime / (60 * 1000);
+      const curve = Math.sin(t1) + 0.5 * Math.sin(t2) + 0.25 * Math.sin(t3);
+      const base = basePrice + curve * (multiplier * 4);
       return {
-        time: new Date(Date.now() - (50 - i) * 60 * 60 * 1000).toISOString(),
+        time: new Date(candleTime).toISOString(),
         mid: {
           o: String(base),
           h: String(base + multiplier * 0.5),
           l: String(base - multiplier * 0.5),
-          c: String(base + (Math.random() - 0.5) * multiplier * 0.2)
+          c: String(base + (Math.random() - 0.5) * multiplier * 0.1)
         },
         volume: Math.floor(Math.random() * 500 + 50)
       };
@@ -2749,22 +2764,27 @@ Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown
     }
   } catch (error: any) {
     const message = error.message || String(error);
-    const isQuotaError = message.includes('429') || message.includes('RESOURCE_EXHAUSTED');
+    const isQuotaError = message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID');
+    const isApiKeyError = message.includes('API key not valid') || message.includes('API_KEY_INVALID');
     
     if (isQuotaError) {
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
       addOandaLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
+    } else if (isApiKeyError) {
+      isQuotaExceeded = true;
+      quotaExceededTime = Date.now();
+      addOandaLog(`[AI Setup Error] Chiave API Gemini non valida o mancante. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
     } else {
       console.error("[Gemini Error OANDA]", error);
     }
     
     for (const inst of instruments) {
-      if (isQuotaError) {
+      if (isQuotaError || isApiKeyError) {
         const technicalResult = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
         result[inst] = {
           sentiment: technicalResult.sentiment,
-          reasoning: `[Quota IA Superata] Fallback Tecnico Quantitativo: ${technicalResult.reasoning}`
+          reasoning: `[${isApiKeyError ? 'API Key Mancante' : 'Quota IA Superata'}] Fallback Tecnico Quantitativo: ${technicalResult.reasoning}`
         };
       } else {
         result[inst] = { sentiment: 'HOLD', reasoning: `Errore IA: Connessione fallita. HOLD di sicurezza.` };
@@ -3477,7 +3497,7 @@ Il servizio di intelligenza artificiale di Gemini è momentaneamente in cooldown
     return response.text || "Nessun testo generato da Gemini.";
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
       console.warn(`[OANDA AI Analysis] API Quota Exceeded. Falling back to local analysis.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();

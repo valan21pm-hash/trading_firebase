@@ -1048,7 +1048,8 @@ export default function TradingModule() {
               {activeLogTab === 'system' ? (
                 (() => {
                   const rawLogs = oandaAutoStatus?.logs || [];
-                  const processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
+                  let processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
+                  processedLogs = processedLogs.slice(0, 30);
 
                   if (processedLogs.length === 0) {
                     return <div className="text-slate-500 text-center py-16">In attesa di log... Attiva il bot o esegui un ciclo manuale.</div>;
@@ -1099,7 +1100,8 @@ export default function TradingModule() {
               ) : (
                 (() => {
                   const rawLogicLogs = oandaAutoStatus?.logicLogs || [];
-                  const processedLogicLogs = reverseLogs ? rawLogicLogs : [...rawLogicLogs].reverse();
+                  let processedLogicLogs = reverseLogs ? rawLogicLogs : [...rawLogicLogs].reverse();
+                  processedLogicLogs = processedLogicLogs.slice(0, 30);
 
                   if (processedLogicLogs.length === 0) {
                     return <div className="text-slate-500 text-center py-16">Nessuna decisione IA registrata.</div>;
