@@ -1000,19 +1000,36 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     addLog(mode, `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
 
-    // 1. Fase di Vendita (Sell/Close phase): Chiudiamo se il sentiment è neutro o negativo (<= 0), gestendo in modo automatico sia perdite sia prese di profitto. L'utente conserva la possibilità di chiudere manualmente in qualsiasi momento.
+    // 1. Fase di Vendita (Sell/Close phase): Gestione Sentiment, Take Profit (0.25%) e Chiusura EOD
     const closedSymbolsThisCycle = new Set<string>();
     for (const pos of openPositions) {
       const symbol = pos.symbol;
       const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
       
+      const profitPct = parseFloat(pos.unrealized_intraday_plpc || pos.unrealized_plpc || '0');
+      const profitAmt = parseFloat(pos.unrealized_pl || '0');
+
+      let shouldClose = false;
+      let closeReason = '';
+
       if (sentimentScore <= 0) {
-        addLog(mode, `[Portafoglio] Sentiment per ${symbol} è neutro/negativo (${sentimentScore.toFixed(2)}). Procedo alla CHIUSURA della posizione per gestire il rischio/perdita.`);
+        shouldClose = true;
+        closeReason = `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
+      } else if (profitPct >= 0.0025) {
+        shouldClose = true;
+        closeReason = `Take Profit 0.25% raggiunto (+${(profitPct * 100).toFixed(2)}%).`;
+      } else if (isPreCloseWindow && profitAmt > 0) {
+        shouldClose = true;
+        closeReason = `Chiusura EOD (15 min alla fine): Profitto di $${profitAmt.toFixed(2)} garantito.`;
+      }
+
+      if (shouldClose) {
+        addLog(mode, `[Portafoglio] ${closeReason} Procedo alla CHIUSURA della posizione su ${symbol}.`);
         addLogicLog(mode, {
           timestamp: new Date().toISOString(),
           symbol,
           action: 'SELL',
-          reasoning: `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`
+          reasoning: closeReason
         });
 
         try {
@@ -1038,93 +1055,97 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       }
     }
 
-    // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2) usando quote frazionarie (notional)
-    for (const symbol of ALL_TRADED_SYMBOLS) {
-      // Evitiamo di acquistare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
-      const hasOpenPosition = openSymbols.includes(symbol) && !closedSymbolsThisCycle.has(symbol);
-      if (hasOpenPosition) {
-        continue;
-      }
+    // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2)
+    if (isPreCloseWindow) {
+      addLog(mode, `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
+    } else {
+      for (const symbol of ALL_TRADED_SYMBOLS) {
+        // Evitiamo di acquistare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
+        const hasOpenPosition = openSymbols.includes(symbol) && !closedSymbolsThisCycle.has(symbol);
+        if (hasOpenPosition) {
+          continue;
+        }
 
-      // Check sentiment before buying from the pre-fetched bulk object
-      const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' }; 
-      if (sentimentScore > 0.2) {
-          // Calcolo dinamico dell'importo da investire in base alla forza del sentiment (fino a un massimo di 5$ su conto reale)
-          let amountToBuy = 5;
-          if (mode === 'live') {
-            if (sentimentScore > 0.6) {
-              amountToBuy = 5.0;
-            } else if (sentimentScore > 0.4) {
-              amountToBuy = 3.5;
+        // Check sentiment before buying from the pre-fetched bulk object
+        const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' }; 
+        if (sentimentScore > 0.2) {
+            // Calcolo dinamico dell'importo da investire in base alla forza del sentiment (fino a un massimo di 5$ su conto reale)
+            let amountToBuy = 5;
+            if (mode === 'live') {
+              if (sentimentScore > 0.6) {
+                amountToBuy = 5.0;
+              } else if (sentimentScore > 0.4) {
+                amountToBuy = 3.5;
+              } else {
+                amountToBuy = 2.0;
+              }
             } else {
-              amountToBuy = 2.0;
+              if (sentimentScore > 0.6) {
+                amountToBuy = 1000;
+              } else if (sentimentScore > 0.4) {
+                amountToBuy = 700;
+              } else {
+                amountToBuy = 400;
+              }
             }
-          } else {
-            if (sentimentScore > 0.6) {
-              amountToBuy = 1000;
-            } else if (sentimentScore > 0.4) {
-              amountToBuy = 700;
-            } else {
-              amountToBuy = 400;
+
+            if (currentBuyingPower < amountToBuy) {
+                addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
+                addLogicLog(mode, {
+                    timestamp: new Date().toISOString(),
+                    symbol,
+                    action: 'SKIP',
+                    reasoning: `Potere d'acquisto insufficiente (richiesti $${amountToBuy.toFixed(2)})`
+                });
+                continue;
             }
-          }
 
-          if (currentBuyingPower < amountToBuy) {
-              addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
-              addLogicLog(mode, {
-                  timestamp: new Date().toISOString(),
-                  symbol,
-                  action: 'SKIP',
-                  reasoning: `Potere d'acquisto insufficiente (richiesti $${amountToBuy.toFixed(2)})`
-              });
-              continue;
-          }
-
-          addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
-          addLogicLog(mode, {
-              timestamp: new Date().toISOString(),
-              symbol,
-              action: 'BUY',
-              reasoning: sentimentReasoning
-          });
-          
-          // Esecuzione dell'ordine frazionario (notional) su Alpaca
-          try {
-            const orderResponse = await fetch(`${baseUrl}/orders`, {
-              method: 'POST',
-              headers: {
-                'APCA-API-KEY-ID': apiKey,
-                'APCA-API-SECRET-KEY': secretKey,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
+            addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
+            addLogicLog(mode, {
+                timestamp: new Date().toISOString(),
                 symbol,
-                notional: amountToBuy.toString(),
-                side: 'buy',
-                type: 'market',
-                time_in_force: 'day'
-              })
+                action: 'BUY',
+                reasoning: sentimentReasoning
             });
             
-            if (orderResponse.ok) {
-              const orderData = await orderResponse.json();
-              addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
-              currentBuyingPower -= amountToBuy;
-            } else {
-              const errorData = await orderResponse.json();
-              addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+            // Esecuzione dell'ordine frazionario (notional) su Alpaca
+            try {
+              const orderResponse = await fetch(`${baseUrl}/orders`, {
+                method: 'POST',
+                headers: {
+                  'APCA-API-KEY-ID': apiKey,
+                  'APCA-API-SECRET-KEY': secretKey,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  symbol,
+                  notional: amountToBuy.toString(),
+                  side: 'buy',
+                  type: 'market',
+                  time_in_force: 'day'
+                })
+              });
+              
+              if (orderResponse.ok) {
+                const orderData = await orderResponse.json();
+                addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
+                currentBuyingPower -= amountToBuy;
+              } else {
+                const errorData = await orderResponse.json();
+                addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+              }
+            } catch (err: any) {
+              addLog(mode, `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
             }
-          } catch (err: any) {
-            addLog(mode, `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
-          }
-          
-      } else {
-          addLogicLog(mode, {
-              timestamp: new Date().toISOString(),
-              symbol,
-              action: 'HOLD',
-              reasoning: sentimentReasoning
-          });
+            
+        } else {
+            addLogicLog(mode, {
+                timestamp: new Date().toISOString(),
+                symbol,
+                action: 'HOLD',
+                reasoning: sentimentReasoning
+            });
+        }
       }
     }
   } catch (error: any) {
