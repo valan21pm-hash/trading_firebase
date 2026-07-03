@@ -76,6 +76,7 @@ export default function TradingModule() {
     equity?: number;
     defaultTP?: number;
     defaultSL?: number;
+    riskPercentage?: number;
   } | null>(null);
   const [oandaPositions, setOandaPositions] = useState<any[]>([]);
   const [closingInstruments, setClosingInstruments] = useState<string[]>([]);
@@ -88,7 +89,16 @@ export default function TradingModule() {
   const [editingSettings, setEditingSettings] = useState(false);
   const [draftTP, setDraftTP] = useState<string>('0.10');
   const [draftSL, setDraftSL] = useState<string>('-1.00');
+  const [draftRisk, setDraftRisk] = useState<string>('2');
   const [savingSettings, setSavingSettings] = useState(false);
+
+  useEffect(() => {
+    if (oandaAutoStatus) {
+      setDraftTP(String(oandaAutoStatus.defaultTP ?? 0.10));
+      setDraftSL(String(oandaAutoStatus.defaultSL ?? -1.00));
+      setDraftRisk(String(oandaAutoStatus.riskPercentage ?? 2));
+    }
+  }, [oandaAutoStatus?.defaultTP, oandaAutoStatus?.defaultSL, oandaAutoStatus?.riskPercentage]);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem('oanda_wrapLogs');
@@ -242,13 +252,6 @@ export default function TradingModule() {
     { value: 'EUR_GBP', label: 'EUR/GBP (Euro / Sterlina)' },
   ];
 
-  useEffect(() => {
-    if (oandaAutoStatus) {
-      setDraftTP(String(oandaAutoStatus.defaultTP ?? 0.10));
-      setDraftSL(String(oandaAutoStatus.defaultSL ?? -1.00));
-    }
-  }, [oandaAutoStatus?.defaultTP, oandaAutoStatus?.defaultSL]);
-
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
@@ -257,7 +260,8 @@ export default function TradingModule() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           defaultTP: parseFloat(draftTP) || 0.10,
-          defaultSL: parseFloat(draftSL) || -1.00
+          defaultSL: parseFloat(draftSL) || -1.00,
+          riskPercentage: parseFloat(draftRisk) || 2
         })
       });
       if (res.ok) {
@@ -926,30 +930,45 @@ export default function TradingModule() {
                   )}
                 </div>
                 {editingSettings ? (
-                  <div className="flex gap-4">
-                    <div className="flex-1">
-                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Take Profit (€)</label>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        value={draftTP}
-                        onChange={e => setDraftTP(e.target.value)}
-                        className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
-                      />
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="text-[10px] text-slate-500 font-medium block mb-1">Take Profit (€)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={draftTP}
+                          onChange={e => setDraftTP(e.target.value)}
+                          className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[10px] text-slate-500 font-medium block mb-1">Stop Loss (€)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={draftSL}
+                          onChange={e => setDraftSL(e.target.value)}
+                          className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Stop Loss (€)</label>
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Rischio per Trade (% saldo)</label>
                       <input 
                         type="number"
-                        step="0.01"
-                        value={draftSL}
-                        onChange={e => setDraftSL(e.target.value)}
+                        step="0.5"
+                        min="0.5"
+                        max="10"
+                        value={draftRisk}
+                        onChange={e => setDraftRisk(e.target.value)}
                         className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
                       />
+                      <span className="text-[9px] text-slate-400 mt-1 block">Calcola la dimensione della posizione per rischiare questa % del saldo (Money Management)</span>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex gap-4">
+                  <div className="grid grid-cols-3 gap-2">
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Take Profit</span>
                       <span className="text-xs font-bold text-green-600">+{oandaAutoStatus?.defaultTP?.toFixed(2) || '0.10'} €</span>
@@ -957,6 +976,10 @@ export default function TradingModule() {
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Stop Loss</span>
                       <span className="text-xs font-bold text-rose-600">{oandaAutoStatus?.defaultSL?.toFixed(2) || '-1.00'} €</span>
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-[10px] text-slate-500 font-medium block">Rischio</span>
+                      <span className="text-xs font-bold text-indigo-600">{oandaAutoStatus?.riskPercentage || '2'}%</span>
                     </div>
                   </div>
                 )}

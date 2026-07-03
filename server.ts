@@ -300,7 +300,8 @@ let oandaBotStatus = {
   balance: 50.00,
   dailyPnL: [] as { date: string; realized: number; unrealized: number }[],
   defaultTP: 0.10,
-  defaultSL: -1.00
+  defaultSL: -1.00,
+  riskPercentage: 2
 };
 let oandaDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
 
@@ -348,7 +349,8 @@ async function saveOandaBotStatus() {
       balance: oandaBotStatus.balance,
       dailyPnL: oandaBotStatus.dailyPnL || [],
       defaultTP: oandaBotStatus.defaultTP,
-      defaultSL: oandaBotStatus.defaultSL
+      defaultSL: oandaBotStatus.defaultSL,
+      riskPercentage: oandaBotStatus.riskPercentage
     }, { merge: true });
   } catch (err: any) {
     console.error('[Firebase] Error saving OANDA bot status:', err);
@@ -479,6 +481,7 @@ async function loadStateFromFirestore() {
         oandaBotStatus.dailyPnL = oandaData.dailyPnL ?? oandaBotStatus.dailyPnL;
         oandaBotStatus.defaultTP = oandaData.defaultTP ?? oandaBotStatus.defaultTP;
         oandaBotStatus.defaultSL = oandaData.defaultSL ?? oandaBotStatus.defaultSL;
+        oandaBotStatus.riskPercentage = oandaData.riskPercentage ?? oandaBotStatus.riskPercentage;
 
         // Load OANDA logs from Firestore
         try {
@@ -3150,8 +3153,14 @@ async function executeOandaTradingCycle(force: boolean = false) {
       } 
       // Se non abbiamo posizioni aperte e il sentiment è attivo (BUY o SELL)
       else if (sentimentData.sentiment === 'BUY' || sentimentData.sentiment === 'SELL') {
-        const unitsToTrade = 1000; // micro lotto standard
-        addOandaLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità.`);
+        // Money Management: Calcolo dinamico della dimensione in base al rischio (default 2%)
+        // Assumiamo una distanza di Stop Loss virtuale di circa 20 pips per il dimensionamento
+        const riskAmount = oandaBotStatus.balance * (oandaBotStatus.riskPercentage / 100);
+        // units = risk / (pipValue * pips). Per EURUSD 1000 units = $0.10/pip.
+        // Con 500 units, 20 pips = $1.00 (circa 0.92€).
+        const unitsToTrade = Math.max(10, Math.floor(riskAmount * 500)); 
+
+        addOandaLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità (Rischio: ${oandaBotStatus.riskPercentage}% del saldo).`);
 
         if (isRealAccount) {
           try {
@@ -3460,13 +3469,16 @@ app.post("/api/trading/oanda-reset-balance", async (req, res) => {
 });
 
 app.post("/api/trading/oanda-settings", async (req, res) => {
-  const { defaultTP, defaultSL } = req.body;
+  const { defaultTP, defaultSL, riskPercentage } = req.body;
   if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
     oandaBotStatus.defaultTP = defaultTP;
     oandaBotStatus.defaultSL = defaultSL;
-    addOandaLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€`);
+    if (typeof riskPercentage === 'number') {
+      oandaBotStatus.riskPercentage = riskPercentage;
+    }
+    addOandaLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${oandaBotStatus.riskPercentage}%`);
     await saveOandaBotStatus();
-    res.json({ success: true, defaultTP, defaultSL });
+    res.json({ success: true, defaultTP, defaultSL, riskPercentage: oandaBotStatus.riskPercentage });
   } else {
     res.status(400).json({ success: false, error: 'Parametri non validi.' });
   }
