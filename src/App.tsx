@@ -6,6 +6,8 @@ import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence } from 'motion/react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 import TradingModule from './components/TradingModule';
+import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
+import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -994,6 +996,8 @@ function AccountPanel({
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
+          <GeminiSignalsTicker />
+          <AlpacaMonitorModule />
             <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Posizioni Aperte</h3>
             <div className="space-y-2">
               {account.positions.map((pos, i) => {

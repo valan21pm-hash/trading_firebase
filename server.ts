@@ -1,12 +1,35 @@
 import 'dotenv/config';
+const originalConsoleError = console.error;
+console.error = function(...args: any[]) {
+  const isQuotaError = args.some(arg => {
+    if (typeof arg === 'string' && arg.includes('RESOURCE_EXHAUSTED')) return true;
+    if (arg && typeof arg === 'object' && arg.message && typeof arg.message === 'string' && arg.message.includes('RESOURCE_EXHAUSTED')) return true;
+    return false;
+  });
+  if (isQuotaError) return;
+  originalConsoleError.apply(console, args);
+};
 import express from 'express';
 import path from 'path';
+process.on('unhandledRejection', (reason: any, promise) => {
+  if (reason && reason.message && reason.message.includes('RESOURCE_EXHAUSTED')) {
+    return; // suppress quota errors
+  }
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err: any) => {
+  if (err && err.message && err.message.includes('RESOURCE_EXHAUSTED')) {
+    return; // suppress quota errors
+  }
+  console.error('Uncaught Exception:', err);
+});
 import fs from 'fs';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
 import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 
 let db: any = null;
 
@@ -272,6 +295,8 @@ let botStatus: {
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   userFeedbackRules?: string[];
   monitoredSymbols?: string[];
+  historicalProfits?: number;
+  y?: number;
 } = {
   active: false,
   paperActive: false,
@@ -286,7 +311,9 @@ let botStatus: {
   latestDailyDebrief: undefined,
   dailyLogicLogs: [],
   userFeedbackRules: [],
-  monitoredSymbols: []
+  monitoredSymbols: [],
+  historicalProfits: 2.50,
+  y: 1
 };
 let tradeLogs: string[] = [];
 
@@ -398,6 +425,8 @@ async function saveBotStatus() {
       tradingMode: botStatus.tradingMode,
       userFeedbackRules: botStatus.userFeedbackRules || [],
       monitoredSymbols: botStatus.monitoredSymbols || [],
+      historicalProfits: botStatus.historicalProfits || 0,
+      y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport || null,
       latestDailyDebrief: botStatus.latestDailyDebrief || null,
       lastCheck: botStatus.lastCheck || null
@@ -462,6 +491,8 @@ async function loadStateFromFirestore() {
       botStatus.tradingMode = data.tradingMode ?? botStatus.tradingMode;
       botStatus.userFeedbackRules = data.userFeedbackRules ?? botStatus.userFeedbackRules;
       botStatus.monitoredSymbols = data.monitoredSymbols ?? botStatus.monitoredSymbols;
+      botStatus.historicalProfits = data.historicalProfits ?? botStatus.historicalProfits;
+      botStatus.y = data.y ?? botStatus.y;
       botStatus.latestDailyReport = data.latestDailyReport ?? botStatus.latestDailyReport;
       botStatus.latestDailyDebrief = data.latestDailyDebrief ?? botStatus.latestDailyDebrief;
       botStatus.lastCheck = data.lastCheck ?? botStatus.lastCheck;
@@ -729,6 +760,19 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}`;
       sentimentCache.set(cacheKey, result);
       results[sym] = result;
+      // Sync to Firestore for real-time frontend monitoring
+      if (db) {
+        try {
+          db.collection('gemini_signals').doc(sym).set({
+            asset: sym,
+            score: resultScore,
+            action: resultScore >= 0.5 ? 'BUY' : resultScore <= -0.5 ? 'SELL' : 'HOLD',
+            confidence: Math.abs(resultScore) * 100,
+            reasoning: resultReasoning,
+            timestamp: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+        } catch(e) {}
+      }
     }
 
     return results;
@@ -901,7 +945,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
   
   if (!isConfigured) {
-    if (force) addLog(mode, `[Alpaca ${labelTipoConto}] API Key mancante.`);
+    if (force) addLog(mode as 'paper' | 'live', `[Alpaca ${labelTipoConto}] API Key mancante.`);
     return;
   }
 
@@ -909,7 +953,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   if (!force) {
     const open = await isAlpacaMarketOpen(baseUrl, apiKey, secretKey);
     if (!open) {
-      addLog(mode, `[Borsa] La borsa è chiusa in questo momento. Ciclo automatico ignorato per evitare ordini fuori orario.`);
+      addLog(mode as 'paper' | 'live', `[Borsa] La borsa è chiusa in questo momento. Ciclo automatico ignorato per evitare ordini fuori orario.`);
       return;
     }
   }
@@ -933,16 +977,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     let currentBuyingPower = parseFloat(account.buying_power || '0');
     const amountToBuy = mode === 'paper' ? 1000 : 5;
     
-    addLog(mode, `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
+    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
     // Recupero della distanza dalla chiusura del mercato per valutare il Check-Point pre-chiusura
     const minutesToClose = await getMarketMinutesToClose(baseUrl, apiKey, secretKey);
     const isPreCloseWindow = minutesToClose !== null && minutesToClose > 0 && minutesToClose <= 15;
     
     if (isPreCloseWindow) {
-      addLog(mode, `[Check-Point EOD] Mancano ${minutesToClose.toFixed(1)} minuti alla chiusura della borsa. Attivazione delle regole speciali pre-chiusura.`);
+      addLog(mode as 'paper' | 'live', `[Check-Point EOD] Mancano ${minutesToClose.toFixed(1)} minuti alla chiusura della borsa. Attivazione delle regole speciali pre-chiusura.`);
     } else {
-      addLog(mode, `[Intraday] Mancano ${minutesToClose ? minutesToClose.toFixed(1) + ' minuti' : 'N/A'} alla chiusura. Operatività standard attiva.`);
+      addLog(mode as 'paper' | 'live', `[Intraday] Mancano ${minutesToClose ? minutesToClose.toFixed(1) + ' minuti' : 'N/A'} alla chiusura. Operatività standard attiva.`);
     }
     
     // Recupero delle posizioni aperte correnti per gestire vendite o monitoraggio
@@ -958,7 +1002,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         openPositions = await posResponse.json();
       }
     } catch (e: any) {
-      addLog(mode, `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
+      addLog(mode as 'paper' | 'live', `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
     }
 
     // Recupero degli ordini aperti correnti per verificare la presenza di trailing stop
@@ -974,7 +1018,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         openOrders = await ordersResponse.json();
       }
     } catch (e: any) {
-      addLog(mode, `[Alpaca Ordini Errore] Impossibile recuperare ordini aperti: ${e.message}`);
+      addLog(mode as 'paper' | 'live', `[Alpaca Ordini Errore] Impossibile recuperare ordini aperti: ${e.message}`);
     }
 
     const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
@@ -983,11 +1027,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     // Scansione dinamica giornaliera di asset esterni ad alto potenziale di rialzo
     let trendingSymbols: string[] = [];
     try {
-      addLog(mode, `[Scansione Azioni] Scansione in corso tramite IA per identificare azioni con forti trend rialzisti...`);
+      addLog(mode as 'paper' | 'live', `[Scansione Azioni] Scansione in corso tramite IA per identificare azioni con forti trend rialzisti...`);
       trendingSymbols = await getDynamicTrendingStocks();
-      addLog(mode, `[Scansione Azioni] Trovate le seguenti opportunità ad alto potenziale: ${trendingSymbols.join(', ')}`);
+      addLog(mode as 'paper' | 'live', `[Scansione Azioni] Trovate le seguenti opportunità ad alto potenziale: ${trendingSymbols.join(', ')}`);
     } catch (err: any) {
-      addLog(mode, `[Scansione Azioni Errore] Errore nella scansione dinamica: ${err.message}`);
+      addLog(mode as 'paper' | 'live', `[Scansione Azioni Errore] Errore nella scansione dinamica: ${err.message}`);
     }
 
     const customSymbols = botStatus.monitoredSymbols || [];
@@ -997,7 +1041,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const openSymbols = openPositions.map((p: any) => p.symbol);
     const symbolsToAnalyze = Array.from(new Set([...ALL_TRADED_SYMBOLS, ...openSymbols]));
 
-    addLog(mode, `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
+    addLog(mode as 'paper' | 'live', `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
 
     // 1. Fase di Vendita (Sell/Close phase): Gestione Sentiment, Take Profit (0.25%) e Chiusura EOD
@@ -1024,7 +1068,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       }
 
       if (shouldClose) {
-        addLog(mode, `[Portafoglio] ${closeReason} Procedo alla CHIUSURA della posizione su ${symbol}.`);
+        addLog(mode as 'paper' | 'live', `[Portafoglio] ${closeReason} Procedo alla CHIUSURA della posizione su ${symbol}.`);
         addLogicLog(mode, {
           timestamp: new Date().toISOString(),
           symbol,
@@ -1041,23 +1085,23 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             }
           });
           if (closeResponse.ok) {
-            addLog(mode, `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
+            addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
             closedSymbolsThisCycle.add(symbol);
           } else {
             const errData = await closeResponse.json();
-            addLog(mode, `[Alpaca Errore Chiusura] Impossibile chiudere posizione su ${symbol}: ${errData.message}`);
+            addLog(mode as 'paper' | 'live', `[Alpaca Errore Chiusura] Impossibile chiudere posizione su ${symbol}: ${errData.message}`);
           }
         } catch (err: any) {
-          addLog(mode, `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
+          addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
         }
       } else {
-        addLog(mode, `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche basate sul sentiment.`);
+        addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche basate sul sentiment.`);
       }
     }
 
     // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2)
     if (isPreCloseWindow) {
-      addLog(mode, `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
+      addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
     } else {
       for (const symbol of ALL_TRADED_SYMBOLS) {
         // Evitiamo di acquistare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
@@ -1090,7 +1134,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             }
 
             if (currentBuyingPower < amountToBuy) {
-                addLog(mode, `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
+                addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
                 addLogicLog(mode, {
                     timestamp: new Date().toISOString(),
                     symbol,
@@ -1100,7 +1144,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
             }
 
-            addLog(mode, `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
+            addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
             addLogicLog(mode, {
                 timestamp: new Date().toISOString(),
                 symbol,
@@ -1128,14 +1172,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               
               if (orderResponse.ok) {
                 const orderData = await orderResponse.json();
-                addLog(mode, `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
+                addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
                 currentBuyingPower -= amountToBuy;
               } else {
                 const errorData = await orderResponse.json();
-                addLog(mode, `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
+                addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
               }
             } catch (err: any) {
-              addLog(mode, `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
+              addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
             }
             
         } else {
@@ -1149,7 +1193,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       }
     }
   } catch (error: any) {
-    addLog(mode, `[Alpaca Errore] ${error.message}`);
+    addLog(mode as 'paper' | 'live', `[Alpaca Errore] ${error.message}`);
   }
 }
 
@@ -1699,6 +1743,33 @@ app.post('/api/analyze-market', async (req, res) => {
   res.json({ symbol, sentiment: sentimentScore, reasoning });
 });
 
+app.get("/api/alpaca-positions", async (req, res) => {
+  if (db) {
+    try {
+      const snapshot = await db.collection('alpaca_positions').where('status', '==', 'ACTIVE').get();
+      const positions: any[] = [];
+      snapshot.forEach((doc: any) => positions.push(doc.data()));
+      return res.json(positions);
+    } catch(e) {
+       return res.json([]);
+    }
+  }
+  return res.json([]);
+});
+
+app.get("/api/gemini-signals", async (req, res) => {
+  if (db) {
+    try {
+      const snapshot = await db.collection('gemini_signals').get();
+      const signals: any[] = [];
+      snapshot.forEach((doc: any) => signals.push(doc.data()));
+      return res.json(signals);
+    } catch(e) {
+       return res.json([]);
+    }
+  }
+  return res.json([]);
+});
 app.get('/api/status', async (req, res) => {
   const paperConf = getAlpacaConfig('paper');
   const liveConf = getAlpacaConfig('live');
@@ -1832,6 +1903,8 @@ app.get('/api/status', async (req, res) => {
       lastCheck: botStatus.lastCheck,
       userFeedbackRules: botStatus.userFeedbackRules,
       monitoredSymbols: botStatus.monitoredSymbols || [],
+      historicalProfits: botStatus.historicalProfits || 0,
+      y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport,
       latestDailyDebrief: botStatus.latestDailyDebrief,
       paper: paperData,
@@ -2250,11 +2323,11 @@ app.post('/api/close-position', async (req, res) => {
   }
 
   const labelTipoConto = mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)';
-  addLog(mode, `[Manuale] Richiesta di chiusura posizione per ${symbol} sul conto ${labelTipoConto}...`);
+  addLog(mode as 'paper' | 'live', `[Manuale] Richiesta di chiusura posizione per ${symbol} sul conto ${labelTipoConto}...`);
 
   try {
     // 1. Cancella prima tutti gli ordini aperti per questo simbolo (es. trailing stop attivi)
-    addLog(mode, `[Manuale] Cancellazione di eventuali ordini aperti per ${symbol}...`);
+    addLog(mode as 'paper' | 'live', `[Manuale] Cancellazione di eventuali ordini aperti per ${symbol}...`);
     const cancelOrdersRes = await fetch(`${conf.baseUrl}/orders?symbol=${symbol}`, {
       method: 'DELETE',
       headers: {
@@ -2269,7 +2342,7 @@ app.post('/api/close-position', async (req, res) => {
     }
 
     // 2. Chiudi la posizione su Alpaca
-    addLog(mode, `[Manuale] Chiusura della posizione di ${symbol} su Alpaca...`);
+    addLog(mode as 'paper' | 'live', `[Manuale] Chiusura della posizione di ${symbol} su Alpaca...`);
     const closeRes = await fetch(`${conf.baseUrl}/positions/${symbol}`, {
       method: 'DELETE',
       headers: {
@@ -2280,15 +2353,15 @@ app.post('/api/close-position', async (req, res) => {
 
     if (closeRes.ok) {
       const closeData = await closeRes.json();
-      addLog(mode, `[Manuale] Posizione di ${symbol} chiusa con successo! ID Ordine di liquidazione: ${closeData.id}`);
+      addLog(mode as 'paper' | 'live', `[Manuale] Posizione di ${symbol} chiusa con successo! ID Ordine di liquidazione: ${closeData.id}`);
       return res.json({ success: true, message: `Posizione di ${symbol} chiusa con successo!` });
     } else {
       const errData = await closeRes.json().catch(() => ({ message: 'Errore sconosciuto' }));
-      addLog(mode, `[Manuale Errore] Impossibile chiudere la posizione di ${symbol}: ${errData.message}`);
+      addLog(mode as 'paper' | 'live', `[Manuale Errore] Impossibile chiudere la posizione di ${symbol}: ${errData.message}`);
       return res.status(500).json({ success: false, message: errData.message });
     }
   } catch (error: any) {
-    addLog(mode, `[Manuale Errore] Errore di rete nella chiusura della posizione per ${symbol}: ${error.message}`);
+    addLog(mode as 'paper' | 'live', `[Manuale Errore] Errore di rete nella chiusura della posizione per ${symbol}: ${error.message}`);
     return res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -2315,7 +2388,7 @@ app.post('/api/panic-liquidate', async (req, res) => {
     }
 
     try {
-      addLog(mode, `[💥 PANICO] Richiesta liquidazione globale per il conto ${label}...`);
+      addLog(mode as 'paper' | 'live', `[💥 PANICO] Richiesta liquidazione globale per il conto ${label}...`);
       
       // Chiamata all'endpoint di liquidazione totale di Alpaca
       const closeAllRes = await fetch(`${conf.baseUrl}/positions?cancel_orders=true`, {
@@ -2327,11 +2400,11 @@ app.post('/api/panic-liquidate', async (req, res) => {
       });
 
       if (closeAllRes.ok) {
-        addLog(mode, `[💥 PANICO] Liquidazione globale avviata con successo per il conto ${label}!`);
+        addLog(mode as 'paper' | 'live', `[💥 PANICO] Liquidazione globale avviata con successo per il conto ${label}!`);
         results.push({ mode, success: true, message: `Liquidazione globale avviata con successo per il conto ${label}.` });
       } else {
         const errText = await closeAllRes.text();
-        addLog(mode, `[💥 PANICO Warning] Chiamata bulk fallita per il conto ${label}: ${errText}. Tento liquidazione singola...`);
+        addLog(mode as 'paper' | 'live', `[💥 PANICO Warning] Chiamata bulk fallita per il conto ${label}: ${errText}. Tento liquidazione singola...`);
         
         // Fallback: recuperiamo le posizioni aperte e le chiudiamo una ad una
         const posResponse = await fetch(`${conf.baseUrl}/positions`, {
@@ -2367,9 +2440,9 @@ app.post('/api/panic-liquidate', async (req, res) => {
 
               if (singleClose.ok) {
                 closedCount++;
-                addLog(mode, `[💥 PANICO] Posizione fallback di ${symbol} chiusa.`);
+                addLog(mode as 'paper' | 'live', `[💥 PANICO] Posizione fallback di ${symbol} chiusa.`);
               } else {
-                addLog(mode, `[💥 PANICO Errore] Impossibile chiudere posizione fallback di ${symbol}.`);
+                addLog(mode as 'paper' | 'live', `[💥 PANICO Errore] Impossibile chiudere posizione fallback di ${symbol}.`);
               }
             }
             results.push({ 
@@ -2385,7 +2458,7 @@ app.post('/api/panic-liquidate', async (req, res) => {
         }
       }
     } catch (err: any) {
-      addLog(mode, `[💥 PANICO Errore] Errore di rete durante la liquidazione del conto ${label}: ${err.message}`);
+      addLog(mode as 'paper' | 'live', `[💥 PANICO Errore] Errore di rete durante la liquidazione del conto ${label}: ${err.message}`);
       results.push({ mode, success: false, message: `Errore di rete per ${label}: ${err.message}` });
     }
   }
@@ -2910,6 +2983,97 @@ function updateOandaPnLHistory(pnlChange: number) {
 }
 
 async function executeOandaRealtimeCheck() {
+
+async function executeAlpacaRealtimeCheck() {
+  if (!botStatus.active) return;
+  
+  const { mode } = botStatus;
+  const { apiKey, secretKey, isConfigured } = resolvedCredentials[mode as 'live' | 'paper'];
+  if (!isConfigured) return;
+
+  const baseUrl = mode === 'live' 
+      ? 'https://api.alpaca.markets/v2' 
+      : 'https://paper-api.alpaca.markets/v2';
+
+  try {
+    const posResponse = await fetch(`${baseUrl}/positions`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': secretKey
+      }
+    });
+
+    if (!posResponse.ok) return;
+    const positions = await posResponse.json();
+
+    const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
+    const config = { y: botStatus.y || 1 };
+
+    for (const pos of positions) {
+      const symbol = pos.symbol;
+      const qty = parseFloat(pos.qty || '0');
+      const currentValue = parseFloat(pos.market_value || '0');
+      const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+
+      // Sincronizza lo stato corrente su Firestore
+      if (db) {
+        try {
+          await db.collection('alpaca_positions').doc(symbol).set({
+            symbol,
+            currentValue,
+            unrealizedPL,
+            quantity: qty,
+            updatedAt: new Date().toISOString(),
+            status: 'ACTIVE'
+          }, { merge: true });
+        } catch (e) {
+          
+        }
+      }
+
+      // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio
+      const positionObj = {
+        id: symbol,
+        asset: symbol,
+        currentValue,
+        openPrice: parseFloat(pos.avg_entry_price || '0'),
+        currentPrice: parseFloat(pos.current_price || '0'),
+        unrealizedProfit: unrealizedPL
+      };
+
+      const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, config);
+
+      if (decision && decision.action === 'CLOSE') {
+        addLog(mode as 'paper' | 'live', `[Rischio Alpaca] Chiusura posizione per ${symbol}. Motivo: ${decision.reason}`);
+        
+        try {
+          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}`, {
+            method: 'DELETE',
+            headers: {
+              'APCA-API-KEY-ID': apiKey,
+              'APCA-API-SECRET-KEY': secretKey
+            }
+          });
+
+          if (closeResponse.ok) {
+            addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo (Risk Management)!`);
+            if (db) {
+               await db.collection('alpaca_positions').doc(symbol).update({
+                 status: 'CLOSED',
+                 closedAt: new Date().toISOString(),
+                 closureReason: decision.reason,
+               });
+            }
+          }
+        } catch (err: any) {
+          addLog(mode as 'paper' | 'live', `[Alpaca Errore] Impossibile chiudere posizione per ${symbol}: ${err.message}`);
+        }
+      }
+    }
+  } catch (error) {
+    // Silenzioso per non inquinare i log nel loop veloce
+  }
+}
   if (!oandaBotStatus.active) return;
   
   const OANDA_API_KEY = process.env.OANDA_API_KEY;
