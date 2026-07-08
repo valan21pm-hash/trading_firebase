@@ -86,26 +86,6 @@ export default function TradingModule() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [testingConn, setTestingConn] = useState<boolean>(false);
   const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
-  
-  const [igCreds, setIgCreds] = useState({ username: '', password: '', demoApiKey: '', demoAccountId: '', realApiKey: '', realAccountId: '', mode: 'demo' });
-
-  const handleSaveIgCreds = async () => {
-    try {
-      const response = await fetch('/api/trading/ig-update-credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(igCreds)
-      });
-      const data = await response.json();
-      if (data.success) {
-        setSuccessMessage(data.message);
-      } else {
-        setErrorMessage(data.message);
-      }
-    } catch (err) {
-      setErrorMessage('Errore nel salvataggio delle credenziali.');
-    }
-  };
 
   const currentAutoStatus = activeBroker === 'xtb' ? xtbAutoStatus : igAutoStatus;
   const currentPositions = activeBroker === 'xtb' ? xtbPositions : igPositions;
@@ -584,26 +564,6 @@ export default function TradingModule() {
 
       {/* Grid Superiore: Informazioni Account e Selezione Strumento */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Configurazione Credenziali IG */}
-        {activeBroker === 'ig' && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 col-span-1 md:col-span-3">
-            <h3 className="text-sm font-semibold text-slate-800 mb-4">Configurazione Credenziali IG</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <input type="text" placeholder="Username IG" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, username: e.target.value})} />
-              <input type="password" placeholder="Password IG" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, password: e.target.value})} />
-              <input type="text" placeholder="Demo API Key" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, demoApiKey: e.target.value})} />
-              <input type="text" placeholder="Demo Account ID" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, demoAccountId: e.target.value})} />
-              <input type="text" placeholder="Real API Key" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, realApiKey: e.target.value})} />
-              <input type="text" placeholder="Real Account ID" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, realAccountId: e.target.value})} />
-              <select className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, mode: e.target.value})}>
-                <option value="demo">Demo</option>
-                <option value="real">Real</option>
-              </select>
-              <button className="bg-indigo-600 text-white py-2 rounded text-sm font-semibold" onClick={handleSaveIgCreds}>Salva Credenziali</button>
-            </div>
-          </div>
-        )}
-
         {/* Info Account */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>

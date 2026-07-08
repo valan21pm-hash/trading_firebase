@@ -351,31 +351,14 @@ let igBotStatus = {
 let igDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
 
 let igCredentials = {
-  username: "",
-  password: "",
-  demoApiKey: "",
-  demoAccountId: "",
-  realApiKey: "",
-  realAccountId: "",
-  mode: "demo"
+  username: process.env.IG_USERNAME || "",
+  password: process.env.IG_PASSWORD || "",
+  demoApiKey: process.env.IG_DEMO_API_KEY || "",
+  demoAccountId: process.env.IG_DEMO_ACCOUNT_ID || "",
+  realApiKey: process.env.IG_REAL_API_KEY || "",
+  realAccountId: process.env.IG_REAL_ACCOUNT_ID || "",
+  mode: process.env.IG_MODE || "demo"
 };
-
-async function saveIgCredentials() {
-  if (!db) return;
-  try {
-    await db.collection('settings').doc('ig_credentials').set({
-      username: igCredentials.username,
-      password: igCredentials.password,
-      demoApiKey: igCredentials.demoApiKey,
-      demoAccountId: igCredentials.demoAccountId,
-      realApiKey: igCredentials.realApiKey,
-      realAccountId: igCredentials.realAccountId,
-      mode: igCredentials.mode
-    });
-  } catch (err: any) {
-    console.error('[Firebase] Error saving IG credentials:', err);
-  }
-}
 
 function addIgLog(message: string) {
   const timestamp = new Date().toISOString();
@@ -4777,23 +4760,6 @@ app.post("/api/trading/ig-reset-balance", async (req, res) => {
   addIgLog(`[Auto-Trading] Saldo simulato riportato a 30000.00€ e posizioni azzerate dall'utente.`);
   await saveIgBotStatus();
   res.json({ success: true });
-});
-
-app.post("/api/trading/ig-update-credentials", async (req, res) => {
-  const { username, password, demoApiKey, demoAccountId, realApiKey, realAccountId, mode } = req.body;
-  
-  igCredentials = {
-    username: username || igCredentials.username,
-    password: password || igCredentials.password,
-    demoApiKey: demoApiKey || igCredentials.demoApiKey,
-    demoAccountId: demoAccountId || igCredentials.demoAccountId,
-    realApiKey: realApiKey || igCredentials.realApiKey,
-    realAccountId: realAccountId || igCredentials.realAccountId,
-    mode: mode || igCredentials.mode
-  };
-  
-  await saveIgCredentials();
-  res.json({ success: true, message: "Credenziali IG aggiornate con successo." });
 });
 
 app.post("/api/trading/ig-settings", async (req, res) => {
