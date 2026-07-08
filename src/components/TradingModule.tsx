@@ -14,12 +14,8 @@ import {
   Sparkles,
   ChevronDown,
   Bot,
-  RefreshCw,
-  KeyRound,
-  ShieldCheck,
-  Lock
+  RefreshCw
 } from 'lucide-react';
-import { IgTradingPanel } from './IgTradingPanel';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -90,314 +86,24 @@ export default function TradingModule() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [testingConn, setTestingConn] = useState<boolean>(false);
   const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
+  
+  const [igCreds, setIgCreds] = useState({ username: '', password: '', demoApiKey: '', demoAccountId: '', realApiKey: '', realAccountId: '', mode: 'demo' });
 
-  // IG Credentials configuration states
-  const [igRealUsername, setIgRealUsername] = useState('');
-  const [igRealPassword, setIgRealPassword] = useState('');
-  const [igRealApiKey, setIgRealApiKey] = useState('');
-  const [igRealAccountId, setIgRealAccountId] = useState('PTAH8');
-
-  const [igDemoUsername, setIgDemoUsername] = useState('valan21pm');
-  const [igDemoPassword, setIgDemoPassword] = useState('');
-  const [igDemoApiKey, setIgDemoApiKey] = useState('a9ce4121b0e9ee3153111e44a4152dfb141d1ea8');
-  const [igDemoAccountId, setIgDemoAccountId] = useState('Z6CKEO');
-
-  const [igCurrentMode, setIgCurrentMode] = useState<'demo' | 'real'>('demo');
-  const [loadingIgCreds, setLoadingIgCreds] = useState(false);
-  const [savingIgCreds, setSavingIgCreds] = useState(false);
-  const [igCredsResult, setIgCredsResult] = useState<{ success: boolean; message: string } | null>(null);
-
-  // IG independent settings states
-  const [editingRealSettings, setEditingRealSettings] = useState(false);
-  const [draftRealTP, setDraftRealTP] = useState<string>('20.00');
-  const [draftRealSL, setDraftRealSL] = useState<string>('-50.00');
-  const [draftRealRisk, setDraftRealRisk] = useState<string>('5');
-  const [savingRealSettings, setSavingRealSettings] = useState(false);
-
-  const [editingDemoSettings, setEditingDemoSettings] = useState(false);
-  const [draftDemoTP, setDraftDemoTP] = useState<string>('20.00');
-  const [draftDemoSL, setDraftDemoSL] = useState<string>('-50.00');
-  const [draftDemoRisk, setDraftDemoRisk] = useState<string>('5');
-  const [savingDemoSettings, setSavingDemoSettings] = useState(false);
-
-  useEffect(() => {
-    if (igAutoStatus) {
-      if (igAutoStatus.real?.status) {
-        setDraftRealTP(String(igAutoStatus.real.status.defaultTP ?? 20.00));
-        setDraftRealSL(String(igAutoStatus.real.status.defaultSL ?? -50.00));
-        setDraftRealRisk(String(igAutoStatus.real.status.riskPercentage ?? 5));
-      }
-      if (igAutoStatus.demo?.status) {
-        setDraftDemoTP(String(igAutoStatus.demo.status.defaultTP ?? 20.00));
-        setDraftDemoSL(String(igAutoStatus.demo.status.defaultSL ?? -50.00));
-        setDraftDemoRisk(String(igAutoStatus.demo.status.riskPercentage ?? 5));
-      }
-    }
-  }, [igAutoStatus]);
-
-  const fetchIgCredentials = async () => {
-    setLoadingIgCreds(true);
+  const handleSaveIgCreds = async () => {
     try {
-      const res = await fetch('/api/trading/ig-credentials');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.credentials) {
-          const { real, demo } = data.credentials;
-          if (real.username) setIgRealUsername(real.username);
-          if (real.apiKey) setIgRealApiKey(real.apiKey);
-          if (real.accountId) setIgRealAccountId(real.accountId);
-          
-          if (demo.username) setIgDemoUsername(demo.username);
-          if (demo.apiKey) setIgDemoApiKey(demo.apiKey);
-          if (demo.accountId) setIgDemoAccountId(demo.accountId);
-          
-          setIgCurrentMode(data.currentMode || 'demo');
-        }
+      const response = await fetch('/api/trading/ig-update-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(igCreds)
+      });
+      const data = await response.json();
+      if (data.success) {
+        setSuccessMessage(data.message);
+      } else {
+        setErrorMessage(data.message);
       }
     } catch (err) {
-      console.error('Errore durante il recupero delle credenziali IG:', err);
-    } finally {
-      setLoadingIgCreds(false);
-    }
-  };
-
-  const handleSaveIgCredentials = async () => {
-    setSavingIgCreds(true);
-    setIgCredsResult(null);
-    try {
-      const payload = {
-        real: {
-          username: igRealUsername,
-          apiKey: igRealApiKey,
-          accountId: igRealAccountId,
-          password: igRealPassword || undefined
-        },
-        demo: {
-          username: igDemoUsername,
-          apiKey: igDemoApiKey,
-          accountId: igDemoAccountId,
-          password: igDemoPassword || undefined
-        },
-        currentMode: igCurrentMode
-      };
-      
-      const res = await fetch('/api/trading/ig-credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setIgCredsResult({ success: true, message: data.message });
-        setSuccessMessage('Credenziali IG salvate con successo!');
-        setIgRealPassword('');
-        setIgDemoPassword('');
-        fetchIgCredentials();
-        fetchAccount('ig');
-      } else {
-        setIgCredsResult({ success: false, message: data.error || 'Errore durante il salvataggio.' });
-      }
-    } catch (err: any) {
-      setIgCredsResult({ success: false, message: err.message || 'Errore di rete.' });
-    } finally {
-      setSavingIgCreds(false);
-    }
-  };
-
-  const handleSaveIgCredentialsForMode = async (mode: 'real' | 'demo') => {
-    setSavingIgCreds(true);
-    setIgCredsResult(null);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const payload = {
-        real: {
-          username: igRealUsername,
-          apiKey: igRealApiKey,
-          accountId: igRealAccountId,
-          password: igRealPassword || undefined
-        },
-        demo: {
-          username: igDemoUsername,
-          apiKey: igDemoApiKey,
-          accountId: igDemoAccountId,
-          password: igDemoPassword || undefined
-        },
-        currentMode: igCurrentMode
-      };
-      
-      const res = await fetch('/api/trading/ig-credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setSuccessMessage(`Credenziali per IG [${mode.toUpperCase()}] salvate con successo! Tentativo di connessione in corso...`);
-        if (mode === 'real') setIgRealPassword('');
-        else setIgDemoPassword('');
-        
-        // Esegui subito il test di connessione per recuperare il bilancio in tempo reale!
-        const testRes = await fetch('/api/trading/ig-test-connection', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode })
-        });
-        const testData = await testRes.json();
-        if (testRes.ok && testData.success) {
-          setSuccessMessage(`Credenziali IG [${mode.toUpperCase()}] salvate e collegate con successo! Saldo caricato in tempo reale: ${parseFloat(testData.balance).toFixed(2)} €.`);
-          fetchAutoStatus('ig');
-        } else {
-          setErrorMessage(`Credenziali IG [${mode.toUpperCase()}] salvate, ma il test di connessione è fallito: ${testData.error || 'Controlla i parametri.'}`);
-        }
-        fetchIgCredentials();
-      } else {
-        setErrorMessage(data.error || 'Errore durante il salvataggio delle credenziali.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    } finally {
-      setSavingIgCreds(false);
-    }
-  };
-
-  const handleToggleIgBot = async (mode: 'real' | 'demo') => {
-    const isCurrentlyActive = mode === 'real' 
-      ? igAutoStatus?.real?.status?.active 
-      : igAutoStatus?.demo?.status?.active;
-      
-    setSubmittingAutoToggle(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const res = await fetch('/api/trading/ig-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: !isCurrentlyActive, mode })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSuccessMessage(`Bot IG Markets [${mode.toUpperCase()}] ${!isCurrentlyActive ? 'Avviato' : 'Arrestato'} con successo!`);
-        fetchAutoStatus('ig');
-      } else {
-        const errData = await res.json();
-        setErrorMessage(errData.error || 'Errore durante la modifica dello stato del bot.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    } finally {
-      setSubmittingAutoToggle(false);
-    }
-  };
-
-  const handleTriggerIgBot = async (mode: 'real' | 'demo') => {
-    setTriggeringCycle(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const res = await fetch('/api/trading/ig-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode })
-      });
-      if (res.ok) {
-        setSuccessMessage(`Ciclo di trading automatico IG Markets [${mode.toUpperCase()}] eseguito con successo!`);
-        fetchAutoStatus('ig');
-      } else {
-        const errData = await res.json();
-        setErrorMessage(errData.error || 'Errore esecuzione ciclo automatico.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    } finally {
-      setTriggeringCycle(false);
-    }
-  };
-
-  const handleResetIgLogs = async (mode: 'real' | 'demo') => {
-    if (!window.confirm(`Sei sicuro di voler azzerare tutti i log di IG Markets [${mode.toUpperCase()}]?`)) return;
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const res = await fetch('/api/trading/ig-reset-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode })
-      });
-      if (res.ok) {
-        setSuccessMessage(`Log IG Markets [${mode.toUpperCase()}] azzerati con successo.`);
-        fetchAutoStatus('ig');
-      } else {
-        const errData = await res.json();
-        setErrorMessage(errData.error || 'Errore azzeramento log.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    }
-  };
-
-  const handleCloseIgPosition = async (symbol: string, mode: 'real' | 'demo') => {
-    setClosingInstruments(prev => [...prev, symbol]);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const res = await fetch('/api/trading/ig-close-position', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, mode })
-      });
-      if (res.ok) {
-        setSuccessMessage(`Posizione su ${symbol.replace('_', '/')} [${mode.toUpperCase()}] chiusa manualmente con successo.`);
-        setConfirmCloseInstrument(null);
-        fetchAutoStatus('ig');
-      } else {
-        const errData = await res.json();
-        setErrorMessage(errData.error || 'Errore durante la chiusura della posizione.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    } finally {
-      setClosingInstruments(prev => prev.filter(s => s !== symbol));
-    }
-  };
-
-  const handleSaveIgSettings = async (mode: 'real' | 'demo') => {
-    if (mode === 'real') setSavingRealSettings(true);
-    else setSavingDemoSettings(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    
-    const tpVal = mode === 'real' ? parseFloat(draftRealTP) : parseFloat(draftDemoTP);
-    const slVal = mode === 'real' ? parseFloat(draftRealSL) : parseFloat(draftDemoSL);
-    const riskVal = mode === 'real' ? parseFloat(draftRealRisk) : parseFloat(draftDemoRisk);
-
-    try {
-      const res = await fetch('/api/trading/ig-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode,
-          defaultTP: isNaN(tpVal) ? 20.00 : tpVal,
-          defaultSL: isNaN(slVal) ? -50.00 : slVal,
-          riskPercentage: isNaN(riskVal) ? 5 : riskVal
-        })
-      });
-      if (res.ok) {
-        setSuccessMessage(`Impostazioni IG Markets [${mode.toUpperCase()}] salvate con successo.`);
-        if (mode === 'real') setEditingRealSettings(false);
-        else setEditingDemoSettings(false);
-        fetchAutoStatus('ig');
-      } else {
-        const errData = await res.json();
-        setErrorMessage(errData.error || 'Errore durante il salvataggio delle impostazioni.');
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Errore di connessione.');
-    } finally {
-      if (mode === 'real') setSavingRealSettings(false);
-      else setSavingDemoSettings(false);
+      setErrorMessage('Errore nel salvataggio delle credenziali.');
     }
   };
 
@@ -689,9 +395,6 @@ export default function TradingModule() {
     fetchAccount(activeBroker);
     fetchAnalysisAndCandles(selectedInstrument, activeBroker);
     fetchAutoStatus(activeBroker);
-    if (activeBroker === 'ig') {
-      fetchIgCredentials();
-    }
 
     // Polling periodico per tenere aggiornati i log e lo stato automatico
     const interval = setInterval(() => {
@@ -865,44 +568,13 @@ export default function TradingModule() {
               </h4>
               <p className="text-xs leading-relaxed">{connTestResult.message}</p>
               {!connTestResult.success && (
-                <div className="text-xs text-red-700 bg-red-100/50 p-4 rounded-xl border border-red-200 mt-2 font-medium space-y-3">
-                  <div>
-                    <strong className="text-red-950 text-sm block mb-1">Guida alla Configurazione dei Conti Demo:</strong>
-                    <p className="text-xs text-red-800 leading-relaxed">
-                      Dalle tue immagini, hai due conti demo disponibili. Scegli quale configurare inserendo le seguenti variabili d'ambiente nei <strong>Secrets</strong> (nel menu Settings di AI Studio):
-                    </p>
-                  </div>
-
-                  <div className="space-y-2 border-t border-red-200/50 pt-2">
-                    <div className="p-2 bg-white/60 rounded-lg">
-                      <strong className="text-red-900 text-xs block">Opzione A: Conto Demo Barrier & Options (Consigliato - Chiave Attiva)</strong>
-                      <ul className="list-disc pl-4 mt-1 space-y-1 text-red-800 text-[11px]">
-                        <li><strong>IG_USERNAME</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">valan21pm</code> (lo username alfanumerico esatto del sito di IG, NON l'email!)</li>
-                        <li><strong>IG_PASSWORD</strong>: La tua password del conto <strong>Demo</strong> di IG Markets</li>
-                        <li><strong>IG_DEMO_API_KEY</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">a9ce4121b0e9ee3153111e44a4152dfb141d1ea8</code></li>
-                        <li><strong>IG_DEMO_API_KEY_NAME</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">Z6CKEO</code></li>
-                        <li><strong>IG_MODE</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">demo</code></li>
-                      </ul>
-                    </div>
-
-                    <div className="p-2 bg-white/60 rounded-lg">
-                      <strong className="text-red-900 text-xs block">Opzione B: Conto Demo CFD (Z6CKEN)</strong>
-                      <ul className="list-disc pl-4 mt-1 space-y-1 text-red-800 text-[11px]">
-                        <li><strong>IG_USERNAME</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">valan21pm</code> (lo username alfanumerico)</li>
-                        <li><strong>IG_PASSWORD</strong>: La tua password del conto <strong>Demo</strong> di IG Markets</li>
-                        <li><strong>IG_DEMO_API_KEY</strong>: <em className="text-red-900">Devi prima attivare la chiave API nei conti demo del sito IG (attualmente disabilitata)</em></li>
-                        <li><strong>IG_DEMO_API_KEY_NAME</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">Z6CKEN</code></li>
-                        <li><strong>IG_MODE</strong>: <code className="bg-red-100 px-1 py-0.5 rounded font-mono">demo</code></li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-red-200/50 pt-2 text-[11px] text-red-800">
-                    <p className="font-bold">Nota importante sulla Password:</p>
-                    <p className="leading-relaxed">
-                      Se ricevi l'errore <code className="bg-red-100 px-1 py-0.5 rounded font-mono text-red-900">error.security.invalid-details</code> (401), significa che la password del tuo conto Demo è diversa o non sincronizzata con quella del conto Reale. Accedi al sito di IG, seleziona la piattaforma <strong>Demo</strong> e verifica o reimposta la password specifica per il conto di simulazione, quindi aggiorna il Secret <code className="font-mono font-bold">IG_PASSWORD</code>.
-                    </p>
-                  </div>
+                <div className="text-xs text-red-700 bg-red-100/50 p-3 rounded-lg border border-red-200/50 mt-2 font-medium">
+                  <strong>Istruzioni Utente per IG Markets:</strong>
+                  <ul className="list-disc pl-4 mt-1 space-y-1">
+                    <li>Verifica che <strong>IG_USERNAME</strong> nei Secrets di AI Studio non sia la tua email. Deve essere lo username alfanumerico esatto del sito di IG.</li>
+                    <li>La tua chiave API Demo (a9ce41...) e l'ID Account (Z6CKEO) sono pre-configurati. Assicurati che lo username e la password nei Secrets corrispondano al tuo account demo.</li>
+                    <li>Se vuoi usare l'account Demo virtuale integrato nel bot, puoi usare il saldo di simulazione a 30.000,00 € (il saldo di default di IG).</li>
+                  </ul>
                 </div>
               )}
             </div>
@@ -912,6 +584,26 @@ export default function TradingModule() {
 
       {/* Grid Superiore: Informazioni Account e Selezione Strumento */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Configurazione Credenziali IG */}
+        {activeBroker === 'ig' && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 col-span-1 md:col-span-3">
+            <h3 className="text-sm font-semibold text-slate-800 mb-4">Configurazione Credenziali IG</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <input type="text" placeholder="Username IG" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, username: e.target.value})} />
+              <input type="password" placeholder="Password IG" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, password: e.target.value})} />
+              <input type="text" placeholder="Demo API Key" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, demoApiKey: e.target.value})} />
+              <input type="text" placeholder="Demo Account ID" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, demoAccountId: e.target.value})} />
+              <input type="text" placeholder="Real API Key" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, realApiKey: e.target.value})} />
+              <input type="text" placeholder="Real Account ID" className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, realAccountId: e.target.value})} />
+              <select className="w-full border border-slate-200 p-2 rounded text-sm" onChange={(e) => setIgCreds({...igCreds, mode: e.target.value})}>
+                <option value="demo">Demo</option>
+                <option value="real">Real</option>
+              </select>
+              <button className="bg-indigo-600 text-white py-2 rounded text-sm font-semibold" onClick={handleSaveIgCreds}>Salva Credenziali</button>
+            </div>
+          </div>
+        )}
+
         {/* Info Account */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>
@@ -965,13 +657,13 @@ export default function TradingModule() {
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Bilancio</p>
               <p className="text-xl font-bold text-slate-900 mt-0.5 font-mono">
-                {parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} {account?.currency || 'EUR'}
+                {(parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : '30000.00')) || 0).toFixed(2)} {account?.currency || 'EUR'}
               </p>
             </div>
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Net Asset Value (NAV)</p>
               <p className="text-xl font-bold text-indigo-600 mt-0.5 font-mono">
-                {parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} {account?.currency || 'EUR'}
+                {(parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')) || 0).toFixed(2)} {account?.currency || 'EUR'}
               </p>
             </div>
           </div>
@@ -1024,7 +716,7 @@ export default function TradingModule() {
                 priceChange.isPositive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
               }`}>
                 {priceChange.isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{priceChange.isPositive ? '+' : ''}{priceChange.value.toFixed(5)} ({priceChange.percent.toFixed(2)}%)</span>
+                <span>{priceChange.isPositive ? '+' : ''}{(priceChange.value || 0).toFixed(5)} ({(priceChange.percent || 0).toFixed(2)}%)</span>
               </div>
             )}
           </div>
@@ -1138,59 +830,8 @@ export default function TradingModule() {
         </div>
       </div>
 
-      {activeBroker === 'ig' && (
-        <IgTradingPanel
-          igAutoStatus={igAutoStatus}
-          igRealAccountId={igRealAccountId}
-          setIgRealAccountId={setIgRealAccountId}
-          igRealApiKey={igRealApiKey}
-          setIgRealApiKey={setIgRealApiKey}
-          igRealUsername={igRealUsername}
-          setIgRealUsername={setIgRealUsername}
-          igRealPassword={igRealPassword}
-          setIgRealPassword={setIgRealPassword}
-          igDemoAccountId={igDemoAccountId}
-          setIgDemoAccountId={setIgDemoAccountId}
-          igDemoApiKey={igDemoApiKey}
-          setIgDemoApiKey={setIgDemoApiKey}
-          igDemoUsername={igDemoUsername}
-          setIgDemoUsername={setIgDemoUsername}
-          igDemoPassword={igDemoPassword}
-          setIgDemoPassword={setIgDemoPassword}
-          savingIgCreds={savingIgCreds}
-          triggeringCycle={triggeringCycle}
-          submittingAutoToggle={submittingAutoToggle}
-          confirmCloseInstrument={confirmCloseInstrument}
-          setConfirmCloseInstrument={setConfirmCloseInstrument}
-          handleSaveIgCredentialsForMode={handleSaveIgCredentialsForMode}
-          handleToggleIgBot={handleToggleIgBot}
-          handleTriggerIgBot={handleTriggerIgBot}
-          handleResetIgLogs={handleResetIgLogs}
-          handleCloseIgPosition={handleCloseIgPosition}
-          editingRealSettings={editingRealSettings}
-          setEditingRealSettings={setEditingRealSettings}
-          draftRealTP={draftRealTP}
-          setDraftRealTP={setDraftRealTP}
-          draftRealSL={draftRealSL}
-          setDraftRealSL={setDraftRealSL}
-          draftRealRisk={draftRealRisk}
-          setDraftRealRisk={setDraftRealRisk}
-          savingRealSettings={savingRealSettings}
-          editingDemoSettings={editingDemoSettings}
-          setEditingDemoSettings={setEditingDemoSettings}
-          draftDemoTP={draftDemoTP}
-          setDraftDemoTP={setDraftDemoTP}
-          draftDemoSL={draftDemoSL}
-          setDraftDemoSL={setDraftDemoSL}
-          draftDemoRisk={draftDemoRisk}
-          setDraftDemoRisk={setDraftDemoRisk}
-          savingDemoSettings={savingDemoSettings}
-          handleSaveIgSettings={handleSaveIgSettings}
-        />
-      )}
-
-      {activeBroker === 'xtb' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+      {/* Sezione: Pannello Controllo Auto-Trading AI */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
         {/* Pannello Account & P&L */}
         <div className="lg:col-span-7 bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>
@@ -1209,8 +850,8 @@ export default function TradingModule() {
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Equity</p>
-                <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
-                  {currentAutoStatus?.equity !== undefined ? currentAutoStatus.equity.toFixed(2) : parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} €
+              <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
+                  {(currentAutoStatus?.equity ?? 0).toFixed(2)} €
                 </p>
               </div>
               <div>
@@ -1261,10 +902,10 @@ export default function TradingModule() {
                         </linearGradient>
                       </defs>
                       <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} />
-                      <YAxis stroke="#94a3b8" fontSize={9} tickFormatter={(v) => `${v.toFixed(2)}€`} />
+                      <YAxis stroke="#94a3b8" fontSize={9} tickFormatter={(v) => `${(v ?? 0).toFixed(2)}€`} />
                       <Tooltip 
                         contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '11px' }}
-                        formatter={(value: any) => [`${parseFloat(value).toFixed(2)} €`]}
+                        formatter={(value: any) => [`${(parseFloat(value) || 0).toFixed(2)} €`]}
                       />
                       <Area type="monotone" dataKey="realized" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorRealized)`} />
                       <Area type="monotone" dataKey="unrealized" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorUnrealized)`} />
@@ -1671,9 +1312,8 @@ export default function TradingModule() {
           </div>
         </div>
       </div>
-      )}
 
-      {activeBroker === 'xtb' && (
+      {/* Sezione Inferiore: Desk di Trading */}
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
           <Activity className="w-4 h-4 text-indigo-600" />
@@ -1813,7 +1453,6 @@ export default function TradingModule() {
           </div>
         </div>
       </div>
-      )}
     </div>
   );
 }
