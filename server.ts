@@ -1,13 +1,13 @@
 import 'dotenv/config';
 
 if (!process.env.IG_DEMO_API_KEY) {
-  process.env.IG_DEMO_API_KEY = "105b853f29b3410a78ca67b9f6212e53fa306602";
+  process.env.IG_DEMO_API_KEY = "a9ce4121b0e9ee3153111e44a4152dfb141d1ea8";
 }
 if (!process.env.IG_DEMO_API_KEY_NAME) {
   process.env.IG_DEMO_API_KEY_NAME = "Z6CKEN";
 }
 if (!process.env.IG_MODE) {
-  process.env.IG_MODE = "real";
+  process.env.IG_MODE = "demo";
 }
 const originalConsoleError = console.error;
 console.error = function(...args: any[]) {
