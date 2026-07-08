@@ -1,4 +1,14 @@
 import 'dotenv/config';
+
+if (!process.env.IG_DEMO_API_KEY) {
+  process.env.IG_DEMO_API_KEY = "105b853f29b3410a78ca67b9f6212e53fa306602";
+}
+if (!process.env.IG_DEMO_API_KEY_NAME) {
+  process.env.IG_DEMO_API_KEY_NAME = "Z6CKEN";
+}
+if (!process.env.IG_MODE) {
+  process.env.IG_MODE = "real";
+}
 const originalConsoleError = console.error;
 console.error = function(...args: any[]) {
   const isQuotaError = args.some(arg => {

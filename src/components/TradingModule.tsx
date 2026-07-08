@@ -552,8 +552,8 @@ export default function TradingModule() {
                   <strong>Istruzioni Utente per IG Markets:</strong>
                   <ul className="list-disc pl-4 mt-1 space-y-1">
                     <li>Verifica che <strong>IG_USERNAME</strong> nei Secrets di AI Studio non sia la tua email. Deve essere lo username alfanumerico esatto del sito di IG.</li>
-                    <li>La tua chiave API (105b85...) è di tipo <strong>REAL (LIVE)</strong>. Per connetterti, devi aggiungere la variabile d'ambiente <strong>IG_MODE</strong> impostata su <strong>real</strong> nei Secrets di AI Studio.</li>
-                    <li>Se vuoi usare l'account Demo virtuale integrato nel bot, clicca sul tasto rosso "Azzera Conto" per riportare il saldo di simulazione a 30.000,00 € (il saldo di default di IG).</li>
+                    <li>La tua chiave API Demo (a9ce41...) e l'ID Account (Z6CKEO) sono pre-configurati. Assicurati che lo username e la password nei Secrets corrispondano al tuo account demo.</li>
+                    <li>Se vuoi usare l'account Demo virtuale integrato nel bot, puoi usare il saldo di simulazione a 30.000,00 € (il saldo di default di IG).</li>
                   </ul>
                 </div>
               )}

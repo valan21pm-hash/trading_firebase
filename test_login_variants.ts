@@ -60,25 +60,17 @@ async function testVariant(username: string, mode: 'demo' | 'real', apiKey: stri
 }
 
 async function run() {
-  const apiKey = process.env.IG_DEMO_API_KEY || '';
+  const apiKey = '105b853f29b3410a78ca67b9f6212e53fa306602';
   
-  // Try variant 1: username = valan21pm, mode = demo
+  // Try with valan21pm, valan21pm1, Z6CKEN, Z6CKEO across demo and real
   await testVariant('valan21pm', 'demo', apiKey);
-  
-  // Try variant 2: username = valan21pm, mode = real
   await testVariant('valan21pm', 'real', apiKey);
-
-  // Try variant 3: username = valan21pm@gmail.com, mode = demo
-  await testVariant('valan21pm@gmail.com', 'demo', apiKey);
-
-  // Try variant 4: username = valan21pm@gmail.com, mode = real
-  await testVariant('valan21pm@gmail.com', 'real', apiKey);
-
-  // Try variant 5: username = Z6CKEN, mode = demo
+  await testVariant('valan21pm1', 'demo', apiKey);
+  await testVariant('valan21pm1', 'real', apiKey);
   await testVariant('Z6CKEN', 'demo', apiKey);
-
-  // Try variant 6: username = Z6CKEN, mode = real
   await testVariant('Z6CKEN', 'real', apiKey);
+  await testVariant('Z6CKEO', 'demo', apiKey);
+  await testVariant('Z6CKEO', 'real', apiKey);
 }
 
 run();
