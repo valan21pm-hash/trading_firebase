@@ -17,8 +17,13 @@ export const AlpacaMonitorModule: React.FC = () => {
       try {
         const res = await fetch('/api/alpaca-positions');
         if (res.ok) {
-          const data = await res.json();
-          setPositions(data);
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            setPositions(data);
+          } else {
+            console.warn('Expected JSON response from /api/alpaca-positions, received alternative content type.');
+          }
         }
       } catch (e) {
         console.error("Errore fetch posizioni Alpaca", e);

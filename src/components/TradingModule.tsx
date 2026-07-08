@@ -38,7 +38,7 @@ interface CandleData {
   volume: number;
 }
 
-interface OandaAccount {
+interface XtbAccount {
   id: string;
   balance: string;
   currency: string;
@@ -49,10 +49,11 @@ interface OandaAccount {
 }
 
 export default function TradingModule() {
+  const [activeBroker, setActiveBroker] = useState<'xtb' | 'ig'>('ig');
   const [selectedInstrument, setSelectedInstrument] = useState<string>('EUR_USD');
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [analysis, setAnalysis] = useState<string>('');
-  const [account, setAccount] = useState<OandaAccount | null>(null);
+  const [account, setAccount] = useState<XtbAccount | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState<boolean>(false);
   const [loadingAccount, setLoadingAccount] = useState<boolean>(false);
   const [isDemo, setIsDemo] = useState<boolean>(true);
@@ -63,22 +64,14 @@ export default function TradingModule() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // OANDA Auto-Trading states
-  const [oandaAutoStatus, setOandaAutoStatus] = useState<{
-    active: boolean;
-    lastCheck: string | null;
-    monitoredInstruments: string[];
-    logs: string[];
-    logicLogs: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }[];
-    balance: number;
-    dailyPnL: { date: string; realized: number; unrealized: number }[];
-    unrealizedPnL: number;
-    equity?: number;
-    defaultTP?: number;
-    defaultSL?: number;
-    riskPercentage?: number;
-  } | null>(null);
-  const [oandaPositions, setOandaPositions] = useState<any[]>([]);
+  // Auto-Trading states (XTB)
+  const [xtbAutoStatus, setXtbAutoStatus] = useState<any | null>(null);
+  const [xtbPositions, setXtbPositions] = useState<any[]>([]);
+
+  // Auto-Trading states (IG)
+  const [igAutoStatus, setIgAutoStatus] = useState<any | null>(null);
+  const [igPositions, setIgPositions] = useState<any[]>([]);
+
   const [closingInstruments, setClosingInstruments] = useState<string[]>([]);
   const [confirmCloseInstrument, setConfirmCloseInstrument] = useState<string | null>(null);
   const [loadingAutoStatus, setLoadingAutoStatus] = useState<boolean>(false);
@@ -91,70 +84,91 @@ export default function TradingModule() {
   const [draftSL, setDraftSL] = useState<string>('-1.00');
   const [draftRisk, setDraftRisk] = useState<string>('2');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [testingConn, setTestingConn] = useState<boolean>(false);
+  const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
+
+  const currentAutoStatus = activeBroker === 'xtb' ? xtbAutoStatus : igAutoStatus;
+  const currentPositions = activeBroker === 'xtb' ? xtbPositions : igPositions;
 
   useEffect(() => {
-    if (oandaAutoStatus) {
-      setDraftTP(String(oandaAutoStatus.defaultTP ?? 0.10));
-      setDraftSL(String(oandaAutoStatus.defaultSL ?? -1.00));
-      setDraftRisk(String(oandaAutoStatus.riskPercentage ?? 2));
+    if (currentAutoStatus) {
+      setDraftTP(String(currentAutoStatus.defaultTP ?? (activeBroker === 'xtb' ? 0.10 : 20.00)));
+      setDraftSL(String(currentAutoStatus.defaultSL ?? (activeBroker === 'xtb' ? -1.00 : -50.00)));
+      setDraftRisk(String(currentAutoStatus.riskPercentage ?? (activeBroker === 'xtb' ? 2 : 5)));
     }
-  }, [oandaAutoStatus?.defaultTP, oandaAutoStatus?.defaultSL, oandaAutoStatus?.riskPercentage]);
+  }, [currentAutoStatus?.defaultTP, currentAutoStatus?.defaultSL, currentAutoStatus?.riskPercentage, activeBroker]);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
-    const saved = localStorage.getItem('oanda_wrapLogs');
+    const saved = localStorage.getItem('xtb_wrapLogs');
     return saved !== null ? saved === 'true' : true;
   });
   const [reverseLogs, setReverseLogs] = useState<boolean>(() => {
-    const saved = localStorage.getItem('oanda_reverseLogs');
+    const saved = localStorage.getItem('xtb_reverseLogs');
     return saved !== null ? saved === 'true' : true;
   });
   const [showTimestamps, setShowTimestamps] = useState<boolean>(() => {
-    const saved = localStorage.getItem('oanda_showTimestamps');
+    const saved = localStorage.getItem('xtb_showTimestamps');
     return saved !== null ? saved === 'true' : true;
   });
 
   useEffect(() => {
-    localStorage.setItem('oanda_wrapLogs', String(wrapLogs));
+    localStorage.setItem('xtb_wrapLogs', String(wrapLogs));
   }, [wrapLogs]);
 
   useEffect(() => {
-    localStorage.setItem('oanda_reverseLogs', String(reverseLogs));
+    localStorage.setItem('xtb_reverseLogs', String(reverseLogs));
   }, [reverseLogs]);
 
   useEffect(() => {
-    localStorage.setItem('oanda_showTimestamps', String(showTimestamps));
+    localStorage.setItem('xtb_showTimestamps', String(showTimestamps));
   }, [showTimestamps]);
 
-  const fetchOandaAutoStatus = async () => {
+  const fetchAutoStatus = async (broker = activeBroker) => {
     setLoadingAutoStatus(true);
     try {
-      const res = await fetch('/api/trading/oanda-status');
+      const url = broker === 'xtb' ? '/api/trading/xtb-status' : '/api/trading/ig-status';
+      const res = await fetch(url);
       if (res.ok) {
-        const data = await res.json();
-        setOandaAutoStatus(data.status);
-        setOandaPositions(data.positions || []);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (broker === 'xtb') {
+            setXtbAutoStatus(data.status);
+            setXtbPositions(data.positions || []);
+          } else {
+            setIgAutoStatus(data.status);
+            setIgPositions(data.positions || []);
+          }
+        } else {
+          console.warn(`Expected JSON response from ${url}, received alternative content type.`);
+        }
       }
     } catch (err) {
-      console.error('Errore caricamento stato automatico OANDA:', err);
+      console.error(`Errore caricamento stato automatico ${broker.toUpperCase()}:`, err);
     } finally {
       setLoadingAutoStatus(false);
     }
   };
 
   const handleToggleAutoTrading = async () => {
-    if (!oandaAutoStatus) return;
+    if (!currentAutoStatus) return;
     setSubmittingAutoToggle(true);
     try {
-      const res = await fetch('/api/trading/oanda-status', {
+      const url = activeBroker === 'xtb' ? '/api/trading/xtb-status' : '/api/trading/ig-status';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: !oandaAutoStatus.active })
+        body: JSON.stringify({ active: !currentAutoStatus.active })
       });
       if (res.ok) {
         const data = await res.json();
-        setOandaAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
-        setSuccessMessage(`Trading automatico OANDA ${data.active ? 'attivato' : 'disattivato'} con successo!`);
-        fetchOandaAutoStatus();
+        if (activeBroker === 'xtb') {
+          setXtbAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
+        } else {
+          setIgAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
+        }
+        setSuccessMessage(`Trading automatico ${activeBroker.toUpperCase()} ${data.active ? 'attivato' : 'disattivato'} con successo!`);
+        fetchAutoStatus();
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Errore durante la modifica dello stato dell\'auto-trading.');
@@ -168,12 +182,13 @@ export default function TradingModule() {
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const res = await fetch('/api/trading/oanda-trigger', {
+      const url = activeBroker === 'xtb' ? '/api/trading/xtb-trigger' : '/api/trading/ig-trigger';
+      const res = await fetch(url, {
         method: 'POST'
       });
       if (res.ok) {
-        setSuccessMessage('Ciclo di trading automatico Forex eseguito ed aggiornato!');
-        fetchOandaAutoStatus();
+        setSuccessMessage(`Ciclo di trading automatico Forex ${activeBroker.toUpperCase()} eseguito ed aggiornato!`);
+        fetchAutoStatus();
         fetchAccount();
         fetchAnalysisAndCandles(selectedInstrument);
       } else {
@@ -187,15 +202,16 @@ export default function TradingModule() {
     }
   };
 
-  const handleResetOandaLogs = async () => {
-    if (!window.confirm('Sei sicuro di voler azzerare tutti i log di OANDA?')) return;
+  const handleResetXtbLogs = async () => {
+    if (!window.confirm(`Sei sicuro di voler azzerare tutti i log di ${activeBroker.toUpperCase()}?`)) return;
     try {
-      const res = await fetch('/api/trading/oanda-reset-logs', {
+      const url = activeBroker === 'xtb' ? '/api/trading/xtb-reset-logs' : '/api/trading/ig-reset-logs';
+      const res = await fetch(url, {
         method: 'POST'
       });
       if (res.ok) {
-        setSuccessMessage('Log OANDA azzerati con successo.');
-        fetchOandaAutoStatus();
+        setSuccessMessage(`Log ${activeBroker.toUpperCase()} azzerati con successo.`);
+        fetchAutoStatus();
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Errore azzeramento log.');
@@ -203,14 +219,17 @@ export default function TradingModule() {
   };
 
   const handleResetBalance = async () => {
-    if (!window.confirm('Sei sicuro di voler azzerare il saldo (50€) e tutte le posizioni?')) return;
+    const isXtb = activeBroker === 'xtb';
+    const limitMsg = isXtb ? '50€' : '30000.00€';
+    if (!window.confirm(`Sei sicuro di voler azzerare il saldo (${limitMsg}) e tutte le posizioni di ${activeBroker.toUpperCase()}?`)) return;
     try {
-      const res = await fetch('/api/trading/oanda-reset-balance', {
+      const url = isXtb ? '/api/trading/xtb-reset-balance' : '/api/trading/ig-reset-balance';
+      const res = await fetch(url, {
         method: 'POST'
       });
       if (res.ok) {
-        setSuccessMessage('Saldo OANDA azzerato con successo.');
-        fetchOandaAutoStatus();
+        setSuccessMessage(`Saldo ${activeBroker.toUpperCase()} azzerato con successo.`);
+        fetchAutoStatus();
         fetchAccount();
       }
     } catch (err: any) {
@@ -218,10 +237,11 @@ export default function TradingModule() {
     }
   };
 
-  const handleCloseOandaPosition = async (symbol: string) => {
+  const handleCloseXtbPosition = async (symbol: string) => {
     setClosingInstruments(prev => [...prev, symbol]);
     try {
-      const res = await fetch('/api/trading/oanda-close-position', {
+      const url = activeBroker === 'xtb' ? '/api/trading/xtb-close-position' : '/api/trading/ig-close-position';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol })
@@ -229,7 +249,7 @@ export default function TradingModule() {
       if (res.ok) {
         setSuccessMessage(`Posizione su ${symbol.replace('_', '/')} chiusa manualmente con successo.`);
         setConfirmCloseInstrument(null);
-        fetchOandaAutoStatus();
+        fetchAutoStatus();
         fetchAccount();
       } else {
         const errData = await res.json();
@@ -255,19 +275,20 @@ export default function TradingModule() {
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      const res = await fetch('/api/trading/oanda-settings', {
+      const url = activeBroker === 'xtb' ? '/api/trading/xtb-settings' : '/api/trading/ig-settings';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          defaultTP: parseFloat(draftTP) || 0.10,
-          defaultSL: parseFloat(draftSL) || -1.00,
-          riskPercentage: parseFloat(draftRisk) || 2
+          defaultTP: parseFloat(draftTP) || (activeBroker === 'xtb' ? 0.10 : 20.00),
+          defaultSL: parseFloat(draftSL) || (activeBroker === 'xtb' ? -1.00 : -50.00),
+          riskPercentage: parseFloat(draftRisk) || (activeBroker === 'xtb' ? 2 : 5)
         })
       });
       if (res.ok) {
         setSuccessMessage('Impostazioni salvate con successo.');
         setEditingSettings(false);
-        fetchOandaAutoStatus();
+        fetchAutoStatus();
       } else {
         const errData = await res.json();
         setErrorMessage(errData.error || 'Errore salvataggio impostazioni.');
@@ -279,27 +300,59 @@ export default function TradingModule() {
     }
   };
 
-  const fetchAccount = async () => {
+  const handleTestConnection = async () => {
+    setTestingConn(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setConnTestResult(null);
+    try {
+      const res = await fetch('/api/trading/ig-test-connection', {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const msg = `Test di connessione IG Markets completato con successo! Collegato all'account ${data.accountName || 'IG'} (ID: ${data.accountId}) con un saldo di ${parseFloat(data.balance).toFixed(2)} € (caricato in tempo reale).`;
+        setSuccessMessage(msg);
+        setConnTestResult({ success: true, message: msg });
+        fetchAccount('ig');
+        fetchAutoStatus('ig');
+      } else {
+        const errMsg = data.error || 'Test di connessione fallito. Controlla le credenziali.';
+        setErrorMessage(errMsg);
+        setConnTestResult({ success: false, message: errMsg });
+      }
+    } catch (err: any) {
+      const errMsg = err.message || 'Errore di rete durante il test di connessione.';
+      setErrorMessage(errMsg);
+      setConnTestResult({ success: false, message: errMsg });
+    } finally {
+      setTestingConn(false);
+    }
+  };
+
+  const fetchAccount = async (broker = activeBroker) => {
     setLoadingAccount(true);
     try {
-      const res = await fetch('/api/trading/account');
+      const url = broker === 'xtb' ? '/api/trading/account' : '/api/trading/ig-account';
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account);
         setIsDemo(!!data.isDemo);
       }
     } catch (err: any) {
-      console.error('Errore caricamento account OANDA:', err);
+      console.error(`Errore caricamento account ${broker.toUpperCase()}:`, err);
     } finally {
       setLoadingAccount(false);
     }
   };
 
-  const fetchAnalysisAndCandles = async (instrument: string) => {
+  const fetchAnalysisAndCandles = async (instrument: string, broker = activeBroker) => {
     setLoadingAnalysis(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/trading/analysis/${instrument}`);
+      const url = broker === 'xtb' ? `/api/trading/analysis/${instrument}` : `/api/trading/ig-analysis/${instrument}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setCandles(data.candles || []);
@@ -319,21 +372,21 @@ export default function TradingModule() {
   };
 
   useEffect(() => {
-    fetchAccount();
-    fetchAnalysisAndCandles(selectedInstrument);
-    fetchOandaAutoStatus();
+    fetchAccount(activeBroker);
+    fetchAnalysisAndCandles(selectedInstrument, activeBroker);
+    fetchAutoStatus(activeBroker);
 
-    // Polling periodico per tenere aggiornati i log e lo stato automatico di OANDA
+    // Polling periodico per tenere aggiornati i log e lo stato automatico
     const interval = setInterval(() => {
-      fetchOandaAutoStatus();
+      fetchAutoStatus(activeBroker);
     }, 12000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [activeBroker]);
 
   const handleInstrumentChange = (inst: string) => {
     setSelectedInstrument(inst);
-    fetchAnalysisAndCandles(inst);
+    fetchAnalysisAndCandles(inst, activeBroker);
     setOrderResult(null);
   };
 
@@ -350,7 +403,8 @@ export default function TradingModule() {
     setOrderResult(null);
 
     try {
-      const res = await fetch('/api/trading/order', {
+      const url = activeBroker === 'xtb' ? '/api/trading/order' : '/api/trading/ig-order';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -364,14 +418,14 @@ export default function TradingModule() {
         const data = await res.json();
         setOrderResult(data);
         if (data.isDemo) {
-          setSuccessMessage(`[DEMO] Ordine simulato eseguito correttamente!`);
+          setSuccessMessage(`[DEMO ${activeBroker.toUpperCase()}] Ordine simulato eseguito correttamente!`);
         } else if (data.orderFillTransaction) {
           setSuccessMessage(`Ordine reale compilato con successo! ID: ${data.orderFillTransaction.id}`);
         } else {
           setSuccessMessage('Richiesta d\'ordine inviata con successo.');
         }
-        // Aggiorna l'account per mostrare il saldo aggiornato
-        fetchAccount();
+        fetchAccount(activeBroker);
+        fetchAutoStatus(activeBroker);
       } else {
         const errData = await res.json();
         setErrorMessage(errData.error || 'Errore durante l\'invio dell\'ordine.');
@@ -439,6 +493,7 @@ export default function TradingModule() {
 
   return (
     <div className="space-y-6">
+
       {/* Banner di modalità Demo o Connessione */}
       {isDemo ? (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
@@ -447,9 +502,11 @@ export default function TradingModule() {
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-amber-900 text-sm">Modalità Demo OANDA Attiva</h3>
+              <h3 className="font-semibold text-amber-900 text-sm">
+                Modalità Demo {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} Attiva
+              </h3>
               <p className="text-xs text-amber-700 mt-1">
-                L'applicazione sta funzionando in modalità simulata perché non sono state configurate le variabili d'ambiente <strong>OANDA_API_KEY</strong> e <strong>OANDA_ACCOUNT_ID</strong> nel file <code>.env</code>.
+                L'applicazione sta funzionando in modalità simulata Sandbox per {activeBroker === 'xtb' ? 'XTB' : 'IG Markets (chiave: Z6CKEN)'}.
               </p>
             </div>
           </div>
@@ -464,8 +521,8 @@ export default function TradingModule() {
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-emerald-950 text-sm">Connessione OANDA Attiva</h3>
-              <p className="text-xs text-emerald-700">Il modulo è correttamente collegato al tuo account reale/practice su OANDA.</p>
+              <h3 className="font-semibold text-emerald-950 text-sm">Connessione {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} Attiva</h3>
+              <p className="text-xs text-emerald-700">Il modulo è correttamente collegato al tuo account reale/practice su {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}.</p>
             </div>
           </div>
           <div className="text-xs bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-lg font-medium border border-emerald-200 shrink-0">
@@ -474,27 +531,73 @@ export default function TradingModule() {
         </div>
       )}
 
+      {/* Risultato del Test di Connessione IG */}
+      {connTestResult && (
+        <div className={`rounded-2xl p-5 border shadow-sm ${connTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
+          <div className="flex gap-3">
+            <div className={`p-2 rounded-xl shrink-0 ${connTestResult.success ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+              {connTestResult.success ? (
+                <CheckCircle2 className="w-5 h-5" />
+              ) : (
+                <AlertTriangle className="w-5 h-5" />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <h4 className="font-bold text-sm">
+                {connTestResult.success ? 'Esito Test: Connessione Stabilita!' : 'Esito Test: Errore di Connessione'}
+              </h4>
+              <p className="text-xs leading-relaxed">{connTestResult.message}</p>
+              {!connTestResult.success && (
+                <div className="text-xs text-red-700 bg-red-100/50 p-3 rounded-lg border border-red-200/50 mt-2 font-medium">
+                  <strong>Istruzioni Utente per IG Markets:</strong>
+                  <ul className="list-disc pl-4 mt-1 space-y-1">
+                    <li>Verifica che <strong>IG_USERNAME</strong> nei Secrets di AI Studio non sia la tua email. Deve essere lo username alfanumerico esatto del sito di IG.</li>
+                    <li>La tua chiave API (105b85...) è di tipo <strong>REAL (LIVE)</strong>. Per connetterti, devi aggiungere la variabile d'ambiente <strong>IG_MODE</strong> impostata su <strong>real</strong> nei Secrets di AI Studio.</li>
+                    <li>Se vuoi usare l'account Demo virtuale integrato nel bot, clicca sul tasto rosso "Azzera Conto" per riportare il saldo di simulazione a 30.000,00 € (il saldo di default di IG).</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Grid Superiore: Informazioni Account e Selezione Strumento */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Info Account OANDA */}
+        {/* Info Account */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Account OANDA</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Account {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}</h3>
               {loadingAccount ? (
                 <RefreshCcw className="w-3.5 h-3.5 animate-spin text-slate-400" />
               ) : (
-                <div className="flex gap-1">
+                <div className="flex gap-2 items-center">
+                  {activeBroker === 'ig' && (
+                    <button 
+                      onClick={handleTestConnection}
+                      disabled={testingConn}
+                      className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-semibold hover:bg-indigo-100 transition border-none cursor-pointer disabled:opacity-50"
+                      title="Esegui test di connessione REST API a IG"
+                    >
+                      {testingConn ? (
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Activity className="w-3 h-3" />
+                      )}
+                      Test Connessione
+                    </button>
+                  )}
                   <button 
                     onClick={handleResetBalance}
-                    className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-600 rounded text-xs font-medium hover:bg-rose-100 transition"
-                    title="Azzera conto simulazione a 50€ e chiudi posizioni"
+                    className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-600 rounded text-xs font-medium hover:bg-rose-100 transition border-none cursor-pointer"
+                    title={`Azzera conto simulazione a ${activeBroker === 'xtb' ? '50' : '30000'}€ e chiudi posizioni`}
                   >
-                    Reset 50€
+                    Reset {activeBroker === 'xtb' ? '50€' : '30k€'}
                   </button>
                   <button 
-                    onClick={fetchAccount}
-                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition"
+                    onClick={() => fetchAccount(activeBroker)}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition border-none cursor-pointer bg-transparent"
                     title="Aggiorna dati account"
                   >
                     <RefreshCcw className="w-3.5 h-3.5" />
@@ -503,10 +606,10 @@ export default function TradingModule() {
               )}
             </div>
             <p className="text-lg font-bold text-slate-800 mt-2 font-mono">
-              {account?.id || 'IT/M189975/EUR'}
+              {account?.id || (activeBroker === 'xtb' ? 'IT/M189975/EUR' : 'Z6CKEN')}
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Broker: <span className="font-semibold text-slate-700">OANDA TMS Brokers S.A.</span>
+              Broker: <span className="font-semibold text-slate-700">{activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}</span>
             </p>
           </div>
 
@@ -514,13 +617,13 @@ export default function TradingModule() {
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Bilancio</p>
               <p className="text-xl font-bold text-slate-900 mt-0.5 font-mono">
-                {parseFloat(account?.balance || '50.00').toFixed(2)} {account?.currency || 'EUR'}
+                {parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} {account?.currency || 'EUR'}
               </p>
             </div>
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Net Asset Value (NAV)</p>
               <p className="text-xl font-bold text-indigo-600 mt-0.5 font-mono">
-                {parseFloat(account?.NAV || '50.00').toFixed(2)} {account?.currency || 'EUR'}
+                {parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} {account?.currency || 'EUR'}
               </p>
             </div>
           </div>
@@ -531,7 +634,9 @@ export default function TradingModule() {
           <div>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Strumento di Trading</h3>
-              <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold">OANDA FX</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${activeBroker === 'xtb' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-800'}`}>
+                {activeBroker === 'xtb' ? 'XTB FX' : 'IG Markets FX'}
+              </span>
             </div>
             
             <div className="mt-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center">
@@ -685,45 +790,45 @@ export default function TradingModule() {
         </div>
       </div>
 
-      {/* Sezione: Pannello Controllo Auto-Trading OANDA AI */}
+      {/* Sezione: Pannello Controllo Auto-Trading AI */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        {/* Pannello Account & P&L (Simile ad Alpaca) */}
+        {/* Pannello Account & P&L */}
         <div className="lg:col-span-7 bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between border-b pb-3 mb-4">
               <div className="flex items-center gap-2">
                 <Bot className="w-5 h-5 text-indigo-600 animate-pulse" />
                 <h3 className="text-sm font-bold text-slate-800">
-                  Conto Simulato OANDA AI
+                  Conto Simulato {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} AI
                 </h3>
               </div>
-              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${oandaAutoStatus?.active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                {oandaAutoStatus?.active ? 'AUTO ATTIVO' : 'AUTO FERMO'}
+              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${currentAutoStatus?.active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
+                {currentAutoStatus?.active ? 'AUTO ATTIVO' : 'AUTO FERMO'}
               </span>
             </div>
-
+ 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Equity</p>
                 <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
-                  {oandaAutoStatus?.equity !== undefined ? oandaAutoStatus.equity.toFixed(2) : parseFloat(account?.NAV || '50.00').toFixed(2)} €
+                  {currentAutoStatus?.equity !== undefined ? currentAutoStatus.equity.toFixed(2) : parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')).toFixed(2)} €
                 </p>
               </div>
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-semibold">Broker</p>
-                <p className="text-sm font-semibold text-emerald-600 mt-1">
-                  OANDA Forex Sandbox
+                <p className="text-sm font-semibold text-indigo-600 mt-1">
+                  {activeBroker === 'xtb' ? 'XTB Forex Sandbox' : 'IG Markets CFD Sandbox'}
                 </p>
               </div>
             </div>
-
+ 
             {/* Grafico P&L Storico */}
             <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 mb-6">
               <div className="flex justify-between items-center mb-3">
                 <div>
                   <h4 className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
                     <BarChart2 className="w-3.5 h-3.5 text-slate-500" />
-                    Andamento Storico P&L (Forex)
+                    Andamento Storico P&L ({activeBroker === 'xtb' ? 'Forex' : 'CFD'})
                   </h4>
                   <p className="text-[10px] text-slate-500">Profitti/perdite realizzati cumulativi in EUR</p>
                 </div>
@@ -738,20 +843,20 @@ export default function TradingModule() {
                   </div>
                 </div>
               </div>
-
+ 
               <div className="h-44 w-full">
-                {oandaAutoStatus?.dailyPnL && oandaAutoStatus.dailyPnL.length > 0 ? (
+                {currentAutoStatus?.dailyPnL && currentAutoStatus.dailyPnL.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
-                      data={oandaAutoStatus.dailyPnL}
+                      data={currentAutoStatus.dailyPnL}
                       margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
                     >
                       <defs>
-                        <linearGradient id="oandaColorRealized" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id={`${activeBroker}ColorRealized`} x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
                           <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                         </linearGradient>
-                        <linearGradient id="oandaColorUnrealized" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id={`${activeBroker}ColorUnrealized`} x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.15}/>
                           <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
                         </linearGradient>
@@ -762,8 +867,8 @@ export default function TradingModule() {
                         contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '11px' }}
                         formatter={(value: any) => [`${parseFloat(value).toFixed(2)} €`]}
                       />
-                      <Area type="monotone" dataKey="realized" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill="url(#oandaColorRealized)" />
-                      <Area type="monotone" dataKey="unrealized" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill="url(#oandaColorUnrealized)" />
+                      <Area type="monotone" dataKey="realized" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorRealized)`} />
+                      <Area type="monotone" dataKey="unrealized" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorUnrealized)`} />
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
@@ -773,15 +878,15 @@ export default function TradingModule() {
                 )}
               </div>
             </div>
-
+ 
             {/* Posizioni Aperte */}
             <div>
               <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5 border-b pb-1">
-                Posizioni Forex Aperte
+                Posizioni {activeBroker === 'xtb' ? 'Forex' : 'CFD'} Aperte
               </h4>
               <div className="space-y-2">
-                {oandaPositions && oandaPositions.length > 0 ? (
-                  oandaPositions.map((pos: any, i: number) => {
+                {currentPositions && currentPositions.length > 0 ? (
+                  currentPositions.map((pos: any, i: number) => {
                     const unrealizedPlNum = parseFloat(pos.unrealized_pl || '0');
                     return (
                       <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/60 gap-2">
@@ -809,17 +914,17 @@ export default function TradingModule() {
                             </div>
                           </div>
                         </div>
-
+ 
                         <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0">
                           <span className={`font-mono font-bold text-xs ${unrealizedPlNum >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {unrealizedPlNum >= 0 ? '+' : ''}{unrealizedPlNum.toFixed(2)} €
                           </span>
-
+ 
                           {confirmCloseInstrument === pos.symbol ? (
                             <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-100">
                               <button
                                 type="button"
-                                onClick={() => handleCloseOandaPosition(pos.symbol)}
+                                onClick={() => handleCloseXtbPosition(pos.symbol)}
                                 disabled={closingInstruments.includes(pos.symbol)}
                                 className="bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] px-2.5 py-1 rounded transition border-none cursor-pointer"
                               >
@@ -848,22 +953,21 @@ export default function TradingModule() {
                   })
                 ) : (
                   <div className="text-center py-6 text-slate-400 italic">
-                    Nessuna posizione Forex attualmente aperta.
+                    Nessuna posizione {activeBroker === 'xtb' ? 'Forex' : 'CFD'} attualmente aperta.
                   </div>
                 )}
               </div>
             </div>
           </div>
         </div>
-
-        {/* Pannello Controllo Bot & Logs (Simile ad Alpaca) */}
+                {/* Pannello Controllo Bot & Logs */}
         <div className="lg:col-span-5 flex flex-col gap-6">
           {/* Bot Automation Controller Card */}
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-              Automazione & Controllo IA
+              Automazione & Controllo IA ({activeBroker === 'xtb' ? 'XTB' : 'IG Markets'})
             </h4>
-
+ 
             <div className="space-y-4">
               <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
                 <div>
@@ -873,17 +977,17 @@ export default function TradingModule() {
                 <button
                   type="button"
                   onClick={handleToggleAutoTrading}
-                  disabled={submittingAutoToggle || !oandaAutoStatus}
+                  disabled={submittingAutoToggle || !currentAutoStatus}
                   className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-semibold text-xs transition-all border-none cursor-pointer ${
-                    oandaAutoStatus?.active
+                    currentAutoStatus?.active
                       ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
                       : 'bg-indigo-600 text-white hover:bg-indigo-700'
                   }`}
                 >
-                  {oandaAutoStatus?.active ? 'Fermare Bot' : 'Avviare Bot'}
+                  {currentAutoStatus?.active ? 'Fermare Bot' : 'Avviare Bot'}
                 </button>
               </div>
-
+ 
               <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
                 <div>
                   <span className="text-xs font-bold text-slate-700 block">Esecuzione Forzata</span>
@@ -892,14 +996,14 @@ export default function TradingModule() {
                 <button
                   type="button"
                   onClick={handleTriggerAutoTrading}
-                  disabled={triggeringCycle || !oandaAutoStatus}
+                  disabled={triggeringCycle || !currentAutoStatus}
                   className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl transition disabled:opacity-50 shadow-sm border-none cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${triggeringCycle ? 'animate-spin' : ''}`} />
                   {triggeringCycle ? 'Analisi...' : 'Esegui Ciclo'}
                 </button>
               </div>
-
+ 
               {/* Impostazioni Globali Trade */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                 <div className="flex justify-between items-center mb-2">
@@ -933,7 +1037,9 @@ export default function TradingModule() {
                   <div className="flex flex-col gap-3">
                     <div className="flex gap-3">
                       <div className="flex-1">
-                        <label className="text-[10px] text-slate-500 font-medium block mb-1">Take Profit (€)</label>
+                        <label className="text-[10px] text-slate-500 font-medium block mb-1">
+                          Take Profit ({activeBroker === 'xtb' ? '€' : 'pips'})
+                        </label>
                         <input 
                           type="number"
                           step="0.01"
@@ -943,7 +1049,9 @@ export default function TradingModule() {
                         />
                       </div>
                       <div className="flex-1">
-                        <label className="text-[10px] text-slate-500 font-medium block mb-1">Stop Loss (€)</label>
+                        <label className="text-[10px] text-slate-500 font-medium block mb-1">
+                          Stop Loss ({activeBroker === 'xtb' ? '€' : 'pips'})
+                        </label>
                         <input 
                           type="number"
                           step="0.01"
@@ -971,38 +1079,42 @@ export default function TradingModule() {
                   <div className="grid grid-cols-3 gap-2">
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Take Profit</span>
-                      <span className="text-xs font-bold text-green-600">+{oandaAutoStatus?.defaultTP?.toFixed(2) || '0.10'} €</span>
+                      <span className="text-xs font-bold text-green-600">
+                        {activeBroker === 'xtb' ? '+' : ''}{currentAutoStatus?.defaultTP?.toFixed(2) || (activeBroker === 'xtb' ? '0.10' : '20.00')} {activeBroker === 'xtb' ? '€' : 'pips'}
+                      </span>
                     </div>
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Stop Loss</span>
-                      <span className="text-xs font-bold text-rose-600">{oandaAutoStatus?.defaultSL?.toFixed(2) || '-1.00'} €</span>
+                      <span className="text-xs font-bold text-rose-600">
+                        {currentAutoStatus?.defaultSL?.toFixed(2) || (activeBroker === 'xtb' ? '-1.00' : '-50.00')} {activeBroker === 'xtb' ? '€' : 'pips'}
+                      </span>
                     </div>
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Rischio</span>
-                      <span className="text-xs font-bold text-indigo-600">{oandaAutoStatus?.riskPercentage || '2'}%</span>
+                      <span className="text-xs font-bold text-indigo-600">{currentAutoStatus?.riskPercentage || (activeBroker === 'xtb' ? '2' : '5')}%</span>
                     </div>
                   </div>
                 )}
               </div>
-
+ 
               <div className="text-[10px] text-slate-500 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/40">
-                <span className="font-bold text-indigo-950 block mb-0.5">Asset Monitorati dal Bot ({oandaAutoStatus?.monitoredInstruments?.length || 0})</span>
+                <span className="font-bold text-indigo-950 block mb-0.5">Asset Monitorati dal Bot ({currentAutoStatus?.monitoredInstruments?.length || 0})</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {oandaAutoStatus?.monitoredInstruments?.map((inst: string) => (
+                  {currentAutoStatus?.monitoredInstruments?.map((inst: string) => (
                     <span key={inst} className="text-[9px] font-bold bg-white text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100 uppercase">
                       {inst.replace('_', '/')}
                     </span>
                   ))}
                 </div>
-                {oandaAutoStatus?.lastCheck && (
+                {currentAutoStatus?.lastCheck && (
                   <span className="text-[9px] text-slate-400 block mt-2">
-                    Ultimo ciclo: {new Date(oandaAutoStatus.lastCheck).toLocaleString('it-IT')}
+                    Ultimo ciclo: {new Date(currentAutoStatus.lastCheck).toLocaleString('it-IT')}
                   </span>
                 )}
               </div>
             </div>
           </div>
-
+ 
           {/* Console Logs */}
           <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex flex-col h-[560px]">
             <div className="flex items-center justify-between px-4 py-2 bg-slate-950 border-b border-slate-800">
@@ -1029,13 +1141,13 @@ export default function TradingModule() {
               
               <button
                 type="button"
-                onClick={handleResetOandaLogs}
+                onClick={handleResetXtbLogs}
                 className="text-[10px] font-semibold text-rose-400 hover:text-rose-300 bg-transparent border-none cursor-pointer px-2 py-0.5 rounded transition"
               >
                 Azzera
               </button>
             </div>
-
+ 
             {/* Log Controls */}
             <div className="flex flex-wrap items-center gap-4 px-4 py-1.5 bg-slate-950 border-b border-slate-800/60 text-[10px] text-slate-400 select-none">
               <label className="flex items-center gap-1.5 cursor-pointer">
@@ -1070,14 +1182,14 @@ export default function TradingModule() {
             <div className="p-4 overflow-y-auto font-mono text-xs text-slate-300 scrollbar-thin scrollbar-thumb-slate-800 flex-1">
               {activeLogTab === 'system' ? (
                 (() => {
-                  const rawLogs = oandaAutoStatus?.logs || [];
+                  const rawLogs = currentAutoStatus?.logs || [];
                   let processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
                   processedLogs = processedLogs.slice(0, 30);
-
+ 
                   if (processedLogs.length === 0) {
                     return <div className="text-slate-500 text-center py-16">In attesa di log... Attiva il bot o esegui un ciclo manuale.</div>;
                   }
-
+ 
                   const formatLogMsg = (msg: string) => {
                     const timestampRegex = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]\s*/;
                     const match = msg.match(timestampRegex);
@@ -1093,10 +1205,10 @@ export default function TradingModule() {
                     }
                     return msg;
                   };
-
+ 
                   return processedLogs.map((log: string, idx: number) => {
                     let colorClass = 'text-slate-400';
-                    if (log.includes('[OANDA Errore]') || log.includes('Errore Critico')) {
+                    if (log.includes('[XTB Errore]') || log.includes('[IG Errore]') || log.includes('Errore Critico')) {
                       colorClass = 'text-rose-400';
                     } else if (log.includes('eseguito') || log.includes('chiusa con successo') || log.includes('chiusa manualmente')) {
                       colorClass = 'text-emerald-400';
@@ -1122,10 +1234,10 @@ export default function TradingModule() {
                 })()
               ) : (
                 (() => {
-                  const rawLogicLogs = oandaAutoStatus?.logicLogs || [];
+                  const rawLogicLogs = currentAutoStatus?.logicLogs || [];
                   let processedLogicLogs = reverseLogs ? rawLogicLogs : [...rawLogicLogs].reverse();
                   processedLogicLogs = processedLogicLogs.slice(0, 30);
-
+ 
                   if (processedLogicLogs.length === 0) {
                     return <div className="text-slate-500 text-center py-16">Nessuna decisione IA registrata.</div>;
                   }
@@ -1296,7 +1408,7 @@ export default function TradingModule() {
             </div>
 
             <div className="text-[10px] text-slate-400 mt-4 leading-normal">
-              Gli ordini di mercato OANDA vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
+              Gli ordini di mercato {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
             </div>
           </div>
         </div>

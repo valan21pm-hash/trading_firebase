@@ -16,8 +16,13 @@ export const GeminiSignalsTicker: React.FC = () => {
       try {
         const res = await fetch('/api/gemini-signals');
         if (res.ok) {
-          const data = await res.json();
-          setSignals(data);
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            setSignals(data);
+          } else {
+            console.warn('Expected JSON response from /api/gemini-signals, received alternative content type.');
+          }
         }
       } catch (e) {
         console.error("Errore fetch segnali Gemini", e);

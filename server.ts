@@ -317,8 +317,8 @@ let botStatus: {
 };
 let tradeLogs: string[] = [];
 
-// --- OANDA Auto-Trading State and Variables ---
-let oandaBotStatus = {
+// --- XTB Auto-Trading State and Variables ---
+let xtbBotStatus = {
   active: false,
   lastCheck: null as string | null,
   monitoredInstruments: ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'EUR_GBP', 'USD_CHF', 'USD_CAD', 'NZD_USD', 'EUR_JPY', 'GBP_JPY', 'EUR_CHF'],
@@ -330,68 +330,147 @@ let oandaBotStatus = {
   defaultSL: -1.00,
   riskPercentage: 2
 };
-let oandaDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
+let xtbDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
 
-function addOandaLog(message: string) {
+// --- IG Markets Auto-Trading State and Variables ---
+let igBotStatus = {
+  active: false,
+  lastCheck: null as string | null,
+  monitoredInstruments: ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'EUR_GBP', 'USD_CHF', 'USD_CAD', 'NZD_USD', 'EUR_JPY', 'GBP_JPY', 'EUR_CHF'],
+  logs: [] as string[],
+  logicLogs: [] as { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }[],
+  balance: 30000.00,
+  dailyPnL: [] as { date: string; realized: number; unrealized: number }[],
+  defaultTP: 50.00,
+  defaultSL: -150.00,
+  riskPercentage: 2
+};
+let igDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
+
+function addIgLog(message: string) {
   const timestamp = new Date().toISOString();
   const logMsg = `[${timestamp}] ${message}`;
-  oandaBotStatus.logs.unshift(logMsg);
-  if (oandaBotStatus.logs.length > 1000) {
-    oandaBotStatus.logs = oandaBotStatus.logs.slice(0, 1000);
+  igBotStatus.logs.unshift(logMsg);
+  if (igBotStatus.logs.length > 1000) {
+    igBotStatus.logs = igBotStatus.logs.slice(0, 1000);
   }
   
   if (db) {
-    db.collection('oanda_operational_logs').add({
+    db.collection('ig_operational_logs').add({
       message: message,
       timestamp: timestamp
-    }).catch((err: any) => console.error('[Firebase] Error saving OANDA operational log:', err));
+    }).catch((err: any) => console.error('[Firebase] Error saving IG operational log:', err));
   }
 
   console.log(logMsg);
-  saveOandaBotStatus().catch(err => console.error('[Firebase Error] Error saving OANDA logs:', err));
+  saveIgBotStatus().catch(err => console.error('[Firebase Error] Error saving IG logs:', err));
 }
 
-function addOandaLogicLog(log: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }) {
-  oandaBotStatus.logicLogs.unshift(log);
-  if (oandaBotStatus.logicLogs.length > 100) {
-    oandaBotStatus.logicLogs = oandaBotStatus.logicLogs.slice(0, 100);
+function addIgLogicLog(log: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }) {
+  igBotStatus.logicLogs.unshift(log);
+  if (igBotStatus.logicLogs.length > 100) {
+    igBotStatus.logicLogs = igBotStatus.logicLogs.slice(0, 100);
   }
-  saveOandaLogicLogs().catch(err => console.error('[Firebase Error] Error saving OANDA logic logs:', err));
+  saveIgLogicLogs().catch(err => console.error('[Firebase Error] Error saving IG logic logs:', err));
   
   if (db) {
-    db.collection('oanda_logic_logs').add(log)
-      .catch((err: any) => console.error('[Firebase] Error saving OANDA logic log to collection:', err));
+    db.collection('ig_logic_logs').add(log)
+      .catch((err: any) => console.error('[Firebase] Error saving IG logic log to collection:', err));
   }
 }
 
-async function saveOandaBotStatus() {
+async function saveIgBotStatus() {
   if (!db) return;
   try {
-    await db.collection('settings').doc('oanda_bot').set({
-      active: oandaBotStatus.active,
-      lastCheck: oandaBotStatus.lastCheck || null,
-      monitoredInstruments: oandaBotStatus.monitoredInstruments,
-      logs: oandaBotStatus.logs || [],
-      demoPositions: oandaDemoPositions,
-      balance: oandaBotStatus.balance,
-      dailyPnL: oandaBotStatus.dailyPnL || [],
-      defaultTP: oandaBotStatus.defaultTP,
-      defaultSL: oandaBotStatus.defaultSL,
-      riskPercentage: oandaBotStatus.riskPercentage
+    await db.collection('settings').doc('ig_bot').set({
+      active: igBotStatus.active,
+      lastCheck: igBotStatus.lastCheck || null,
+      monitoredInstruments: igBotStatus.monitoredInstruments,
+      logs: igBotStatus.logs || [],
+      demoPositions: igDemoPositions,
+      balance: igBotStatus.balance,
+      dailyPnL: igBotStatus.dailyPnL || [],
+      defaultTP: igBotStatus.defaultTP,
+      defaultSL: igBotStatus.defaultSL,
+      riskPercentage: igBotStatus.riskPercentage
     }, { merge: true });
   } catch (err: any) {
-    console.error('[Firebase] Error saving OANDA bot status:', err);
+    console.error('[Firebase] Error saving IG bot status:', err);
   }
 }
 
-async function saveOandaLogicLogs() {
+async function saveIgLogicLogs() {
   if (!db) return;
   try {
-    await db.collection('settings').doc('oanda_logic_logs').set({
-      logicLogs: oandaBotStatus.logicLogs || []
+    await db.collection('settings').doc('ig_logic_logs').set({
+      logicLogs: igBotStatus.logicLogs || []
     });
   } catch (err: any) {
-    console.error('[Firebase] Error saving OANDA logic logs:', err);
+    console.error('[Firebase] Error saving IG logic logs:', err);
+  }
+}
+
+
+function addXtbLog(message: string) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `[${timestamp}] ${message}`;
+  xtbBotStatus.logs.unshift(logMsg);
+  if (xtbBotStatus.logs.length > 1000) {
+    xtbBotStatus.logs = xtbBotStatus.logs.slice(0, 1000);
+  }
+  
+  if (db) {
+    db.collection('xtb_operational_logs').add({
+      message: message,
+      timestamp: timestamp
+    }).catch((err: any) => console.error('[Firebase] Error saving XTB operational log:', err));
+  }
+
+  console.log(logMsg);
+  saveXtbBotStatus().catch(err => console.error('[Firebase Error] Error saving XTB logs:', err));
+}
+
+function addXtbLogicLog(log: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }) {
+  xtbBotStatus.logicLogs.unshift(log);
+  if (xtbBotStatus.logicLogs.length > 100) {
+    xtbBotStatus.logicLogs = xtbBotStatus.logicLogs.slice(0, 100);
+  }
+  saveXtbLogicLogs().catch(err => console.error('[Firebase Error] Error saving XTB logic logs:', err));
+  
+  if (db) {
+    db.collection('xtb_logic_logs').add(log)
+      .catch((err: any) => console.error('[Firebase] Error saving XTB logic log to collection:', err));
+  }
+}
+
+async function saveXtbBotStatus() {
+  if (!db) return;
+  try {
+    await db.collection('settings').doc('xtb_bot').set({
+      active: xtbBotStatus.active,
+      lastCheck: xtbBotStatus.lastCheck || null,
+      monitoredInstruments: xtbBotStatus.monitoredInstruments,
+      logs: xtbBotStatus.logs || [],
+      demoPositions: xtbDemoPositions,
+      balance: xtbBotStatus.balance,
+      dailyPnL: xtbBotStatus.dailyPnL || [],
+      defaultTP: xtbBotStatus.defaultTP,
+      defaultSL: xtbBotStatus.defaultSL,
+      riskPercentage: xtbBotStatus.riskPercentage
+    }, { merge: true });
+  } catch (err: any) {
+    console.error('[Firebase] Error saving XTB bot status:', err);
+  }
+}
+
+async function saveXtbLogicLogs() {
+  if (!db) return;
+  try {
+    await db.collection('settings').doc('xtb_logic_logs').set({
+      logicLogs: xtbBotStatus.logicLogs || []
+    });
+  } catch (err: any) {
+    console.error('[Firebase] Error saving XTB logic logs:', err);
   }
 }
 
@@ -499,24 +578,24 @@ async function loadStateFromFirestore() {
       console.log('[Firebase] Loaded botStatus successfully.');
     }
 
-    // Caricamento dello stato di OANDA Auto-Trading da Firestore
+    // Caricamento dello stato di XTB Auto-Trading da Firestore
     try {
-      const oandaDoc = await db.collection('settings').doc('oanda_bot').get();
-      if (oandaDoc.exists) {
-        const oandaData = oandaDoc.data();
-        oandaBotStatus.active = oandaData.active ?? oandaBotStatus.active;
-        oandaBotStatus.lastCheck = oandaData.lastCheck ?? oandaBotStatus.lastCheck;
-        oandaBotStatus.monitoredInstruments = oandaData.monitoredInstruments ?? oandaBotStatus.monitoredInstruments;
-        oandaDemoPositions = oandaData.demoPositions ?? oandaDemoPositions;
-        oandaBotStatus.balance = oandaData.balance ?? oandaBotStatus.balance;
-        oandaBotStatus.dailyPnL = oandaData.dailyPnL ?? oandaBotStatus.dailyPnL;
-        oandaBotStatus.defaultTP = oandaData.defaultTP ?? oandaBotStatus.defaultTP;
-        oandaBotStatus.defaultSL = oandaData.defaultSL ?? oandaBotStatus.defaultSL;
-        oandaBotStatus.riskPercentage = oandaData.riskPercentage ?? oandaBotStatus.riskPercentage;
+      const xtbDoc = await db.collection('settings').doc('xtb_bot').get();
+      if (xtbDoc.exists) {
+        const xtbData = xtbDoc.data();
+        xtbBotStatus.active = xtbData.active ?? xtbBotStatus.active;
+        xtbBotStatus.lastCheck = xtbData.lastCheck ?? xtbBotStatus.lastCheck;
+        xtbBotStatus.monitoredInstruments = xtbData.monitoredInstruments ?? xtbBotStatus.monitoredInstruments;
+        xtbDemoPositions = xtbData.demoPositions ?? xtbDemoPositions;
+        xtbBotStatus.balance = xtbData.balance ?? xtbBotStatus.balance;
+        xtbBotStatus.dailyPnL = xtbData.dailyPnL ?? xtbBotStatus.dailyPnL;
+        xtbBotStatus.defaultTP = xtbData.defaultTP ?? xtbBotStatus.defaultTP;
+        xtbBotStatus.defaultSL = xtbData.defaultSL ?? xtbBotStatus.defaultSL;
+        xtbBotStatus.riskPercentage = xtbData.riskPercentage ?? xtbBotStatus.riskPercentage;
 
-        // Load OANDA logs from Firestore
+        // Load XTB logs from Firestore
         try {
-          const logsSnap = await db.collection('oanda_operational_logs')
+          const logsSnap = await db.collection('xtb_operational_logs')
             .orderBy('timestamp', 'desc')
             .limit(1000)
             .get();
@@ -527,45 +606,113 @@ async function loadStateFromFirestore() {
               const data = doc.data();
               fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
             });
-            oandaBotStatus.logs = fetchedLogs;
+            xtbBotStatus.logs = fetchedLogs;
           } else {
-            oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
+            xtbBotStatus.logs = xtbData.logs ?? xtbBotStatus.logs;
           }
         } catch (err) {
-          console.error('[Firebase] Error loading OANDA operational logs:', err);
-          oandaBotStatus.logs = oandaData.logs ?? oandaBotStatus.logs;
+          console.error('[Firebase] Error loading XTB operational logs:', err);
+          xtbBotStatus.logs = xtbData.logs ?? xtbBotStatus.logs;
         }
 
-        console.log('[Firebase] Loaded OANDA bot status, balance, dailyPnL and demo positions successfully.');
+        console.log('[Firebase] Loaded XTB bot status, balance, dailyPnL and demo positions successfully.');
       }
 
       try {
-        const oandaLogicLogsSnap = await db.collection('oanda_logic_logs')
+        const xtbLogicLogsSnap = await db.collection('xtb_logic_logs')
           .orderBy('timestamp', 'desc')
           .limit(100)
           .get();
         
-        if (!oandaLogicLogsSnap.empty) {
-          const loadedOandaLogicLogs: any[] = [];
-          oandaLogicLogsSnap.forEach((doc: any) => {
-            loadedOandaLogicLogs.push(doc.data());
+        if (!xtbLogicLogsSnap.empty) {
+          const loadedXtbLogicLogs: any[] = [];
+          xtbLogicLogsSnap.forEach((doc: any) => {
+            loadedXtbLogicLogs.push(doc.data());
           });
-          oandaBotStatus.logicLogs = loadedOandaLogicLogs;
-          console.log(`[Firebase] Loaded ${loadedOandaLogicLogs.length} OANDA logic logs successfully.`);
+          xtbBotStatus.logicLogs = loadedXtbLogicLogs;
+          console.log(`[Firebase] Loaded ${loadedXtbLogicLogs.length} XTB logic logs successfully.`);
         } else {
           // Fallback al doc per retrocompatibilità
-          const oandaLogicLogsDoc = await db.collection('settings').doc('oanda_logic_logs').get();
-          if (oandaLogicLogsDoc.exists) {
-            const oandaLogicLogsData = oandaLogicLogsDoc.data();
-            oandaBotStatus.logicLogs = oandaLogicLogsData.logicLogs ?? oandaBotStatus.logicLogs;
-            console.log('[Firebase] Loaded OANDA logic logs from settings successfully.');
+          const xtbLogicLogsDoc = await db.collection('settings').doc('xtb_logic_logs').get();
+          if (xtbLogicLogsDoc.exists) {
+            const xtbLogicLogsData = xtbLogicLogsDoc.data();
+            xtbBotStatus.logicLogs = xtbLogicLogsData.logicLogs ?? xtbBotStatus.logicLogs;
+            console.log('[Firebase] Loaded XTB logic logs from settings successfully.');
           }
         }
       } catch (err: any) {
-        console.error('[Firebase] Error loading OANDA logic logs from Firestore:', err);
+        console.error('[Firebase] Error loading XTB logic logs from Firestore:', err);
       }
     } catch (err: any) {
-      console.error('[Firebase] Error loading OANDA state from Firestore:', err);
+      console.error('[Firebase] Error loading XTB state from Firestore:', err);
+    }
+
+    // Caricamento dello stato di IG Auto-Trading da Firestore
+    try {
+      const igDoc = await db.collection('settings').doc('ig_bot').get();
+      if (igDoc.exists) {
+        const igData = igDoc.data();
+        igBotStatus.active = igData.active ?? igBotStatus.active;
+        igBotStatus.lastCheck = igData.lastCheck ?? igBotStatus.lastCheck;
+        igBotStatus.monitoredInstruments = igData.monitoredInstruments ?? igBotStatus.monitoredInstruments;
+        igDemoPositions = igData.demoPositions ?? igDemoPositions;
+        igBotStatus.balance = igData.balance ?? igBotStatus.balance;
+        igBotStatus.dailyPnL = igData.dailyPnL ?? igBotStatus.dailyPnL;
+        igBotStatus.defaultTP = igData.defaultTP ?? igBotStatus.defaultTP;
+        igBotStatus.defaultSL = igData.defaultSL ?? igBotStatus.defaultSL;
+        igBotStatus.riskPercentage = igData.riskPercentage ?? igBotStatus.riskPercentage;
+
+        // Load IG logs from Firestore
+        try {
+          const logsSnap = await db.collection('ig_operational_logs')
+            .orderBy('timestamp', 'desc')
+            .limit(1000)
+            .get();
+            
+          if (!logsSnap.empty) {
+            const fetchedLogs: string[] = [];
+            logsSnap.forEach((doc: any) => {
+              const data = doc.data();
+              fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+            });
+            igBotStatus.logs = fetchedLogs;
+          } else {
+            igBotStatus.logs = igData.logs ?? igBotStatus.logs;
+          }
+        } catch (err) {
+          console.error('[Firebase] Error loading IG operational logs:', err);
+          igBotStatus.logs = igData.logs ?? igBotStatus.logs;
+        }
+
+        console.log('[Firebase] Loaded IG bot status, balance, dailyPnL and demo positions successfully.');
+      }
+
+      try {
+        const igLogicLogsSnap = await db.collection('ig_logic_logs')
+          .orderBy('timestamp', 'desc')
+          .limit(100)
+          .get();
+        
+        if (!igLogicLogsSnap.empty) {
+          const loadedIgLogicLogs: any[] = [];
+          igLogicLogsSnap.forEach((doc: any) => {
+            loadedIgLogicLogs.push(doc.data());
+          });
+          igBotStatus.logicLogs = loadedIgLogicLogs;
+          console.log(`[Firebase] Loaded ${loadedIgLogicLogs.length} IG logic logs successfully.`);
+        } else {
+          const igLogicLogsDoc = await db.collection('settings').doc('ig_logic_logs').get();
+          if (igLogicLogsDoc.exists) {
+            const igLogicLogsData = igLogicLogsDoc.data();
+            igBotStatus.logicLogs = igLogicLogsData.logicLogs ?? igBotStatus.logicLogs;
+            console.log('[Firebase] Loaded IG logic logs from settings successfully.');
+          }
+        }
+      } catch (err: any) {
+        console.error('[Firebase] Error loading IG logic logs from Firestore:', err);
+      }
+    } catch (err: any) {
+      console.error('[Firebase] Error loading IG state from Firestore:', err);
     }
 
     for (const mode of ['paper', 'live'] as const) {
@@ -1198,7 +1345,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 }
 
 async function executeTradingCycle(force: boolean = false) {
-  const anyActive = botStatus.active || oandaBotStatus.active;
+  const anyActive = botStatus.active || xtbBotStatus.active || igBotStatus.active;
   if (!anyActive && !force) {
     addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
     return;
@@ -1220,8 +1367,12 @@ async function executeTradingCycle(force: boolean = false) {
     }
   }
 
-  if (oandaBotStatus.active || force) {
-    await executeOandaTradingCycle(force);
+  if (xtbBotStatus.active || force) {
+    await executeXtbTradingCycle(force);
+  }
+
+  if (igBotStatus.active || force) {
+    await executeIgTradingCycle(force);
   }
 }
 
@@ -1399,11 +1550,11 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
     
     const paperLogs = botData.paper.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
     const liveLogs = botData.live.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
-    const oandaLogsStr = oandaBotStatus.logs.slice(0, 40).join('\n') || 'Nessun log OANDA registrato.';
+    const xtbLogsStr = xtbBotStatus.logs.slice(0, 40).join('\n') || 'Nessun log XTB registrato.';
     
     let paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
     let liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
-    let oandaLogicLogsStr = JSON.stringify(oandaBotStatus.logicLogs?.slice(0, 20) || []);
+    let xtbLogicLogsStr = JSON.stringify(xtbBotStatus.logicLogs?.slice(0, 20) || []);
     
     if (db) {
       try {
@@ -1427,15 +1578,15 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
         if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
         if (liveLogsArr.length > 0) liveLogicLogs = JSON.stringify(liveLogsArr);
 
-        // OANDA logic logs completi per oggi
-        const oandaLogsSnap = await db.collection('oanda_logic_logs')
+        // XTB logic logs completi per oggi
+        const xtbLogsSnap = await db.collection('xtb_logic_logs')
           .where('timestamp', '>=', startOfDay)
           .where('timestamp', '<=', endOfDay)
           .orderBy('timestamp', 'asc')
           .get();
-        const oandaLogsArr: any[] = [];
-        oandaLogsSnap.forEach((doc: any) => oandaLogsArr.push(doc.data()));
-        if (oandaLogsArr.length > 0) oandaLogicLogsStr = JSON.stringify(oandaLogsArr);
+        const xtbLogsArr: any[] = [];
+        xtbLogsSnap.forEach((doc: any) => xtbLogsArr.push(doc.data()));
+        if (xtbLogsArr.length > 0) xtbLogicLogsStr = JSON.stringify(xtbLogsArr);
       } catch (err) {
         console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero:', err);
       }
@@ -1451,7 +1602,7 @@ Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di tradi
 DATI DI OGGI (${todayStr}):
 - PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
 - PNL/Bilancio Reale (Live): ${JSON.stringify(todaysPnLLive)}
-- PNL/Bilancio OANDA: ${JSON.stringify(oandaBotStatus.dailyPnL?.find(d => d.date === todayStr) || { balance: oandaBotStatus.balance })}
+- PNL/Bilancio XTB: ${JSON.stringify(xtbBotStatus.dailyPnL?.find(d => d.date === todayStr) || { balance: xtbBotStatus.balance })}
 - Regole personalizzate attualmente in vigore:
 ${currentRules}
 
@@ -1461,8 +1612,8 @@ ${paperLogicLogs}
 LOG LOGICA DECISIONALE (Azioni - Live):
 ${liveLogicLogs}
 
-LOG LOGICA DECISIONALE (Forex OANDA):
-${oandaLogicLogsStr}
+LOG LOGICA DECISIONALE (Forex XTB):
+${xtbLogicLogsStr}
 
 ULTIMI LOG OPERATIVI (Azioni - Paper):
 ${paperLogs}
@@ -1470,8 +1621,8 @@ ${paperLogs}
 ULTIMI LOG OPERATIVI (Azioni - Live):
 ${liveLogs}
 
-ULTIMI LOG OPERATIVI (Forex OANDA):
-${oandaLogsStr}
+ULTIMI LOG OPERATIVI (Forex XTB):
+${xtbLogsStr}
 
 ISTRUZIONI DI ANALISI:
 1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mankate prese di profitto, o vendite affrettate).
@@ -1542,7 +1693,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 app.post('/api/generate-range-debrief', async (req, res) => {
   const { startDate, endDate, mode } = req.body;
   if (!startDate || !endDate || !mode) {
-    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live'|'oanda') richiesti." });
+    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live'|'xtb') richiesti." });
   }
 
   addLog('system', `[Debriefing Periodico AI] Inizio generazione analisi per periodo da ${startDate} a ${endDate} (Conto: ${mode})...`);
@@ -1586,8 +1737,8 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
         querySnap.forEach((doc: any) => {
           rangeLogicLogs.push(doc.data());
         });
-      } else if (mode === 'oanda') {
-        const querySnap = await db.collection('oanda_logic_logs')
+      } else if (mode === 'xtb') {
+        const querySnap = await db.collection('xtb_logic_logs')
           .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
           .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
           .orderBy('timestamp', 'asc')
@@ -1599,7 +1750,7 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
       }
     } else {
       // Fallback in-memory
-      const sourceLogs = mode === 'oanda' ? (oandaBotStatus.logicLogs || []) : (botData[mode as 'paper' | 'live']?.dailyLogicLogs || []);
+      const sourceLogs = mode === 'xtb' ? (xtbBotStatus.logicLogs || []) : (botData[mode as 'paper' | 'live']?.dailyLogicLogs || []);
       rangeLogicLogs = sourceLogs.filter(l => {
         return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
       });
@@ -1721,7 +1872,7 @@ app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
       console.error('[Firebase Error] Errore nel caricamento dello stato in trigger:', err);
     });
 
-    if (!botStatus.active && !oandaBotStatus.active) {
+    if (!botStatus.active && !xtbBotStatus.active) {
       addLog('system', '[Trigger Strategy] Ciclo di trading ignorato: nessun bot è attivo.');
       res.status(200).send('BOTS_INACTIVE');
       return;
@@ -2231,8 +2382,8 @@ app.get('/api/report/download', async (req, res) => {
 
     let opLogs: any[] = [];
     let logicLogs: any[] = [];
-    let oandaOpLogs: any[] = [];
-    let oandaLogicLogs: any[] = [];
+    let xtbOpLogs: any[] = [];
+    let xtbLogicLogs: any[] = [];
 
     if (db) {
       const fetchLogs = async (collection: string, timeField: string = 'timestamp') => {
@@ -2248,8 +2399,8 @@ app.get('/api/report/download', async (req, res) => {
 
       opLogs = await fetchLogs('operational_logs');
       logicLogs = await fetchLogs('logic_logs');
-      oandaOpLogs = await fetchLogs('oanda_operational_logs');
-      oandaLogicLogs = await fetchLogs('oanda_logic_logs');
+      xtbOpLogs = await fetchLogs('xtb_operational_logs');
+      xtbLogicLogs = await fetchLogs('xtb_logic_logs');
     } else {
       // Fallback a dati in memoria se non c'è DB
       const filterByDate = (logTimestamp: string) => logTimestamp >= startTimestamp && logTimestamp <= endTimestampStr;
@@ -2270,11 +2421,11 @@ app.get('/api/report/download', async (req, res) => {
       const liveLogic = (botData.live.dailyLogicLogs || []).map(l => ({...l, mode: 'live'}));
       logicLogs = [...paperLogic, ...liveLogic].filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-      const parsedOandaOp = (oandaBotStatus.logs || []).map(l => parseLogString(l, 'oanda'));
-      oandaOpLogs = parsedOandaOp.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const parsedXtbOp = (xtbBotStatus.logs || []).map(l => parseLogString(l, 'xtb'));
+      xtbOpLogs = parsedXtbOp.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-      const oandaLogic = (oandaBotStatus.logicLogs || []).map(l => ({...l, mode: 'oanda'}));
-      oandaLogicLogs = oandaLogic.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const xtbLogic = (xtbBotStatus.logicLogs || []).map(l => ({...l, mode: 'xtb'}));
+      xtbLogicLogs = xtbLogic.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     }
 
     let reportText = `Report Trading dal ${startDateStr} al ${endDateStr}\n`;
@@ -2291,13 +2442,13 @@ app.get('/api/report/download', async (req, res) => {
       reportText += `[${log.timestamp}] [${log.mode}] ${log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
     });
 
-    reportText += `\n--- LOG OPERATIVI OANDA ---\n`;
-    oandaOpLogs.forEach(log => {
+    reportText += `\n--- LOG OPERATIVI XTB ---\n`;
+    xtbOpLogs.forEach(log => {
       reportText += `[${log.timestamp}] ${log.message}\n`;
     });
 
-    reportText += `\n--- LOG LOGICA OANDA ---\n`;
-    oandaLogicLogs.forEach(log => {
+    reportText += `\n--- LOG LOGICA XTB ---\n`;
+    xtbLogicLogs.forEach(log => {
       reportText += `[${log.timestamp}] ${log.instrument || log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
     });
 
@@ -2605,7 +2756,7 @@ Rispondi esclusivamente nel seguente formato JSON:
   }
 });
 
-// --- OANDA AUTO-TRADING LOGIC & FUNCTIONS ---
+// --- XTB AUTO-TRADING LOGIC & FUNCTIONS ---
 
 async function fetchFreeForexRates(): Promise<Record<string, number>> {
   try {
@@ -2635,12 +2786,12 @@ function getInstrumentBasePrice(instrument: string, rates: Record<string, number
   return rateQuote / rateBase;
 }
 
-async function getOandaCandles(instrument: string): Promise<any[]> {
-  const OANDA_API_KEY = process.env.OANDA_API_KEY;
-  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
+async function getXtbCandles(instrument: string): Promise<any[]> {
+  const XTB_USER_ID = process.env.XTB_USER_ID;
+  const XTB_PASSWORD = process.env.XTB_PASSWORD;
+  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
 
-  if (!OANDA_API_KEY || !OANDA_ACCOUNT_ID) {
+  if (true) {
     const rates = await fetchFreeForexRates();
     const basePrice = getInstrumentBasePrice(instrument, rates);
     
@@ -2672,12 +2823,12 @@ async function getOandaCandles(instrument: string): Promise<any[]> {
   }
 
   try {
-    const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
-      headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
+      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
     });
     
     if (!response.ok) {
-      throw new Error(`OANDA error status ${response.status}`);
+      throw new Error(`XTB error status ${response.status}`);
     }
 
     const data = await response.json();
@@ -2760,17 +2911,17 @@ async function getOandaCandles(instrument: string): Promise<any[]> {
   }
 }
 
-async function getOandaBulkSentiment(instruments: string[]): Promise<Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }>> {
+async function getXtbBulkSentiment(instruments: string[]): Promise<Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }>> {
   const result: Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }> = {};
   
   // Raggruppiamo i dati delle candele per tutti gli strumenti
   const instrumentsCandles: Record<string, any[]> = {};
   for (const inst of instruments) {
-    instrumentsCandles[inst] = await getOandaCandles(inst);
+    instrumentsCandles[inst] = await getXtbCandles(inst);
   }
 
   if (checkQuotaExceeded()) {
-    addOandaLog(`[AI Cooldown] Gemini in cooldown temporaneo. Attivazione dell'analisi tecnica quantitativa (SMA/RSI) locale.`);
+    addXtbLog(`[AI Cooldown] Gemini in cooldown temporaneo. Attivazione dell'analisi tecnica quantitativa (SMA/RSI) locale.`);
     for (const inst of instruments) {
       result[inst] = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
     }
@@ -2867,13 +3018,13 @@ Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown
     if (isQuotaError) {
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
-      addOandaLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
+      addXtbLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
     } else if (isApiKeyError) {
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
-      addOandaLog(`[AI Setup Error] Chiave API Gemini non valida o mancante. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
+      addXtbLog(`[AI Setup Error] Chiave API Gemini non valida o mancante. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
     } else {
-      console.error("[Gemini Error OANDA]", error);
+      console.error("[Gemini Error XTB]", error);
     }
     
     for (const inst of instruments) {
@@ -2940,8 +3091,8 @@ function calculateDemoPnLInEur(instrument: string, side: 'buy' | 'sell', entryPr
   return pnlInQuote / eurUsdPrice; 
 }
 
-function initializeOandaPnLHistory() {
-  if (!oandaBotStatus.dailyPnL || oandaBotStatus.dailyPnL.length === 0) {
+function initializeXtbPnLHistory() {
+  if (!xtbBotStatus.dailyPnL || xtbBotStatus.dailyPnL.length === 0) {
     const dates = [];
     const now = new Date();
     for (let i = 4; i >= 0; i--) {
@@ -2949,7 +3100,7 @@ function initializeOandaPnLHistory() {
       dates.push(d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }));
     }
     
-    oandaBotStatus.dailyPnL = [
+    xtbBotStatus.dailyPnL = [
       { date: dates[0], realized: -1.80, unrealized: 0 },
       { date: dates[1], realized: -0.50, unrealized: 0 },
       { date: dates[2], realized: 1.20, unrealized: 0 },
@@ -2959,30 +3110,30 @@ function initializeOandaPnLHistory() {
   }
 }
 
-function updateOandaPnLHistory(pnlChange: number) {
+function updateXtbPnLHistory(pnlChange: number) {
   const today = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
-  if (!oandaBotStatus.dailyPnL) {
-    oandaBotStatus.dailyPnL = [];
+  if (!xtbBotStatus.dailyPnL) {
+    xtbBotStatus.dailyPnL = [];
   }
   
-  let todayEntry = oandaBotStatus.dailyPnL.find(p => p.date === today);
+  let todayEntry = xtbBotStatus.dailyPnL.find(p => p.date === today);
   if (todayEntry) {
     todayEntry.realized += pnlChange;
   } else {
-    const lastRealized = oandaBotStatus.dailyPnL.length > 0 ? oandaBotStatus.dailyPnL[oandaBotStatus.dailyPnL.length - 1].realized : 0;
-    oandaBotStatus.dailyPnL.push({
+    const lastRealized = xtbBotStatus.dailyPnL.length > 0 ? xtbBotStatus.dailyPnL[xtbBotStatus.dailyPnL.length - 1].realized : 0;
+    xtbBotStatus.dailyPnL.push({
       date: today,
       realized: lastRealized + pnlChange,
       unrealized: 0
     });
   }
   
-  if (oandaBotStatus.dailyPnL.length > 15) {
-    oandaBotStatus.dailyPnL = oandaBotStatus.dailyPnL.slice(-15);
+  if (xtbBotStatus.dailyPnL.length > 15) {
+    xtbBotStatus.dailyPnL = xtbBotStatus.dailyPnL.slice(-15);
   }
 }
 
-async function executeOandaRealtimeCheck() {
+async function executeXtbRealtimeCheck() {
 
 async function executeAlpacaRealtimeCheck() {
   if (!botStatus.active) return;
@@ -3074,19 +3225,19 @@ async function executeAlpacaRealtimeCheck() {
     // Silenzioso per non inquinare i log nel loop veloce
   }
 }
-  if (!oandaBotStatus.active) return;
+  if (!xtbBotStatus.active) return;
   
-  const OANDA_API_KEY = process.env.OANDA_API_KEY;
-  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
-  const isRealAccount = !!(OANDA_API_KEY && OANDA_ACCOUNT_ID);
+  const XTB_USER_ID = process.env.XTB_USER_ID;
+  const XTB_PASSWORD = process.env.XTB_PASSWORD;
+  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
+  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
   
   const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number; avgPrice?: number }> = {};
   
   try {
     if (isRealAccount) {
-      const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/openPositions`, {
-        headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+      const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
+        headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
       });
       if (response.ok) {
         const data = await response.json();
@@ -3100,8 +3251,8 @@ async function executeAlpacaRealtimeCheck() {
         }
       }
     } else {
-      for (const inst in oandaDemoPositions) {
-        openPositionsMap[inst] = { ...oandaDemoPositions[inst] };
+      for (const inst in xtbDemoPositions) {
+        openPositionsMap[inst] = { ...xtbDemoPositions[inst] };
       }
     }
 
@@ -3111,13 +3262,13 @@ async function executeAlpacaRealtimeCheck() {
     // Fetch EUR_USD price for demo conversion if needed
     let eurUsdPrice = 1.0800;
     if (!isRealAccount) {
-      const eurUsdCandles = await getOandaCandles('EUR_USD');
+      const eurUsdCandles = await getXtbCandles('EUR_USD');
       eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
     }
 
     for (const inst of openInstruments) {
       const currentPos = openPositionsMap[inst];
-      const candles = await getOandaCandles(inst);
+      const candles = await getXtbCandles(inst);
       if (candles.length === 0) continue;
       const currentPrice = parseFloat(candles[candles.length - 1].mid.c);
       
@@ -3127,22 +3278,22 @@ async function executeAlpacaRealtimeCheck() {
       let unrealizedPL = currentPos.unrealizedPL || 0;
       
       if (!isRealAccount) {
-        const pos = oandaDemoPositions[inst];
+        const pos = xtbDemoPositions[inst];
         if(!pos) continue;
         unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
       }
       
-      if (unrealizedPL >= oandaBotStatus.defaultTP) {
+      if (unrealizedPL >= xtbBotStatus.defaultTP) {
         takeProfitHit = true;
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${oandaBotStatus.defaultTP.toFixed(2)} €)`);
-      } else if (unrealizedPL <= oandaBotStatus.defaultSL) {
+        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${xtbBotStatus.defaultTP.toFixed(2)} €)`);
+      } else if (unrealizedPL <= xtbBotStatus.defaultSL) {
         stopLossHit = true;
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${oandaBotStatus.defaultSL.toFixed(2)} €)`);
+        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${xtbBotStatus.defaultSL.toFixed(2)} €)`);
       }
 
       if (stopLossHit || takeProfitHit) {
-        const reason = stopLossHit ? `Stop Loss (${oandaBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${oandaBotStatus.defaultTP.toFixed(2)}€)`;
-        addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
+        const reason = stopLossHit ? `Stop Loss (${xtbBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${xtbBotStatus.defaultTP.toFixed(2)}€)`;
+        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
         
         if (isRealAccount) {
           try {
@@ -3150,42 +3301,42 @@ async function executeAlpacaRealtimeCheck() {
             if (currentPos.side === 'buy') closeBody.longUnits = "ALL";
             else closeBody.shortUnits = "ALL";
 
-            await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/positions/${inst}/close`, {
+            await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${inst}/close`, {
               method: "PUT",
-              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OANDA_API_KEY}` },
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${XTB_USER_ID}` },
               body: JSON.stringify(closeBody)
             });
-            addOandaLog(`[OANDA LIVE] Posizione reale su ${inst} chiusa con successo per ${reason}.`);
+            addXtbLog(`[XTB LIVE] Posizione reale su ${inst} chiusa con successo per ${reason}.`);
           } catch (err: any) {
             console.error(`Errore chiusura realtime ${inst}: ${err.message}`);
           }
         } else {
           const pnlInEur = calculateDemoPnLInEur(inst, currentPos.side, currentPos.avgPrice!, currentPrice, currentPos.units, eurUsdPrice);
-          oandaBotStatus.balance += pnlInEur;
-          updateOandaPnLHistory(pnlInEur);
-          delete oandaDemoPositions[inst];
-          addOandaLog(`[DEMO OANDA] Posizione simulata su ${inst} chiusa con successo per ${reason}! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
-          await saveOandaBotStatus();
+          xtbBotStatus.balance += pnlInEur;
+          updateXtbPnLHistory(pnlInEur);
+          delete xtbDemoPositions[inst];
+          addXtbLog(`[DEMO XTB] Posizione simulata su ${inst} chiusa con successo per ${reason}! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+          await saveXtbBotStatus();
         }
       }
     }
   } catch (err) {
-    console.error("Errore nel realtime check OANDA:", err);
+    console.error("Errore nel realtime check XTB:", err);
   }
 }
 
-async function executeOandaTradingCycle(force: boolean = false) {
-  if (!oandaBotStatus.active && !force) {
+async function executeXtbTradingCycle(force: boolean = false) {
+  if (!xtbBotStatus.active && !force) {
     return;
   }
 
-  oandaBotStatus.lastCheck = new Date().toISOString();
-  addOandaLog(`[Auto-Trading] Avvio ciclo di trading automatico Forex per OANDA...`);
+  xtbBotStatus.lastCheck = new Date().toISOString();
+  addXtbLog(`[Auto-Trading] Avvio ciclo di trading automatico Forex per XTB...`);
 
-  const OANDA_API_KEY = process.env.OANDA_API_KEY;
-  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
-  const isRealAccount = !!(OANDA_API_KEY && OANDA_ACCOUNT_ID);
+  const XTB_USER_ID = process.env.XTB_USER_ID;
+  const XTB_PASSWORD = process.env.XTB_PASSWORD;
+  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
+  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
 
   try {
     // 1. Recupero delle posizioni aperte correnti
@@ -3193,8 +3344,8 @@ async function executeOandaTradingCycle(force: boolean = false) {
 
     if (isRealAccount) {
       try {
-        const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/openPositions`, {
-          headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+        const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
+          headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
         });
         if (response.ok) {
           const data = await response.json();
@@ -3218,52 +3369,52 @@ async function executeOandaTradingCycle(force: boolean = false) {
             }
           }
         } else {
-          addOandaLog(`[OANDA Errore] Impossibile recuperare le posizioni aperte reali: status ${response.status}`);
+          addXtbLog(`[XTB Errore] Impossibile recuperare le posizioni aperte reali: status ${response.status}`);
         }
       } catch (err: any) {
-        addOandaLog(`[OANDA Errore Network] Impossibile connettersi a OANDA per le posizioni: ${err.message}`);
+        addXtbLog(`[XTB Errore Network] Impossibile connettersi a XTB per le posizioni: ${err.message}`);
       }
     } else {
       // Usiamo le posizioni demo memorizzate
-      for (const inst in oandaDemoPositions) {
-        openPositionsMap[inst] = { units: oandaDemoPositions[inst].units, side: oandaDemoPositions[inst].side };
+      for (const inst in xtbDemoPositions) {
+        openPositionsMap[inst] = { units: xtbDemoPositions[inst].units, side: xtbDemoPositions[inst].side };
       }
     }
 
     // 2. Otteniamo il sentiment bulk di tutti i mercati Forex monitorati
-    const bulkSentiment = await getOandaBulkSentiment(oandaBotStatus.monitoredInstruments);
+    const bulkSentiment = await getXtbBulkSentiment(xtbBotStatus.monitoredInstruments);
 
     // 3. Elaborazione delle decisioni per ciascun cambio
-    for (const inst of oandaBotStatus.monitoredInstruments) {
+    for (const inst of xtbBotStatus.monitoredInstruments) {
       const sentimentData = bulkSentiment[inst] || { sentiment: 'HOLD', reasoning: 'Nessun sentiment' };
       const currentPos = openPositionsMap[inst];
-      const candles = await getOandaCandles(inst);
+      const candles = await getXtbCandles(inst);
       const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
 
-      addOandaLog(`[Analisi ${inst.replace('_', '/')}] Sentiment: ${sentimentData.sentiment}. IA dice: ${sentimentData.reasoning}`);
+      addXtbLog(`[Analisi ${inst.replace('_', '/')}] Sentiment: ${sentimentData.sentiment}. IA dice: ${sentimentData.reasoning}`);
 
       // Se abbiamo una posizione aperta
       if (currentPos) {
         let stopLossHit = false;
         let takeProfitHit = false;
 
-        // Calcolo unrealizedPL per OANDA (live o demo)
+        // Calcolo unrealizedPL per XTB (live o demo)
         let unrealizedPL = currentPos.unrealizedPL || 0;
         
-        if (!isRealAccount && oandaDemoPositions[inst]) {
-          const pos = oandaDemoPositions[inst];
+        if (!isRealAccount && xtbDemoPositions[inst]) {
+          const pos = xtbDemoPositions[inst];
           // Recuperiamo EUR_USD per convertire il PnL demo in EUR
-          const eurUsdCandles = await getOandaCandles('EUR_USD');
+          const eurUsdCandles = await getXtbCandles('EUR_USD');
           const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
           unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
         }
         
-        if (unrealizedPL >= oandaBotStatus.defaultTP) {
+        if (unrealizedPL >= xtbBotStatus.defaultTP) {
           takeProfitHit = true;
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${oandaBotStatus.defaultTP.toFixed(2)} €)`);
-        } else if (unrealizedPL <= oandaBotStatus.defaultSL) {
+          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${xtbBotStatus.defaultTP.toFixed(2)} €)`);
+        } else if (unrealizedPL <= xtbBotStatus.defaultSL) {
           stopLossHit = true;
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${oandaBotStatus.defaultSL.toFixed(2)} €)`);
+          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${xtbBotStatus.defaultSL.toFixed(2)} €)`);
         }
 
         const needsClosure = stopLossHit || takeProfitHit ||
@@ -3271,8 +3422,8 @@ async function executeOandaTradingCycle(force: boolean = false) {
           (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
 
         if (needsClosure) {
-          const reason = stopLossHit ? `Stop Loss (${oandaBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${oandaBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
+          const reason = stopLossHit ? `Stop Loss (${xtbBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${xtbBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
+          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
           
           if (isRealAccount) {
             try {
@@ -3283,18 +3434,18 @@ async function executeOandaTradingCycle(force: boolean = false) {
                 closeBody.shortUnits = "ALL";
               }
 
-              const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/positions/${inst}/close`, {
+              const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${inst}/close`, {
                 method: "PUT",
                 headers: {
                   "Content-Type": "application/json",
-                  "Authorization": `Bearer ${OANDA_API_KEY}`
+                  "Authorization": `Bearer ${XTB_USER_ID}`
                 },
                 body: JSON.stringify(closeBody)
               });
 
               if (response.ok) {
-                addOandaLog(`[OANDA] Posizione su ${inst} chiusa con successo sul mercato reale!`);
-                addOandaLogicLog({
+                addXtbLog(`[XTB] Posizione su ${inst} chiusa con successo sul mercato reale!`);
+                addXtbLogicLog({
                   timestamp: new Date().toISOString(),
                   instrument: inst,
                   action: 'CHIUSURA_POSITIVA',
@@ -3303,49 +3454,49 @@ async function executeOandaTradingCycle(force: boolean = false) {
                 });
               } else {
                 const errText = await response.text();
-                addOandaLog(`[OANDA Errore] Errore chiusura posizione su ${inst}: ${errText}`);
+                addXtbLog(`[XTB Errore] Errore chiusura posizione su ${inst}: ${errText}`);
               }
             } catch (err: any) {
-              addOandaLog(`[OANDA Errore Network] Errore durante la chiusura di ${inst}: ${err.message}`);
+              addXtbLog(`[XTB Errore Network] Errore durante la chiusura di ${inst}: ${err.message}`);
             }
           } else {
             // Demo closure
-            const entryPrice = oandaDemoPositions[inst].avgPrice;
-            const side = oandaDemoPositions[inst].side;
-            const units = oandaDemoPositions[inst].units;
+            const entryPrice = xtbDemoPositions[inst].avgPrice;
+            const side = xtbDemoPositions[inst].side;
+            const units = xtbDemoPositions[inst].units;
 
-            const eurUsdCandles = await getOandaCandles('EUR_USD');
+            const eurUsdCandles = await getXtbCandles('EUR_USD');
             const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
 
             const pnlInEur = calculateDemoPnLInEur(inst, side, entryPrice, currentPrice, units, eurUsdPrice);
-            oandaBotStatus.balance += pnlInEur;
-            updateOandaPnLHistory(pnlInEur);
+            xtbBotStatus.balance += pnlInEur;
+            updateXtbPnLHistory(pnlInEur);
 
-            delete oandaDemoPositions[inst];
-            addOandaLog(`[DEMO OANDA] Posizione simulata su ${inst} chiusa con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
-            addOandaLogicLog({
+            delete xtbDemoPositions[inst];
+            addXtbLog(`[DEMO XTB] Posizione simulata su ${inst} chiusa con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+            addXtbLogicLog({
               timestamp: new Date().toISOString(),
               instrument: inst,
               action: 'CHIUSURA_SIMULATA',
               reasoning: `Chiusura simulata posizione ${side.toUpperCase()} per sentiment ${sentimentData.sentiment} (P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €): ${sentimentData.reasoning}`,
               price: currentPrice
             });
-            await saveOandaBotStatus();
+            await saveXtbBotStatus();
           }
         } else {
-          addOandaLog(`[Portafoglio ${inst.replace('_', '/')}] Mantengo la posizione ${currentPos.side.toUpperCase()} aperta (Sentiment concorda: ${sentimentData.sentiment}).`);
+          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Mantengo la posizione ${currentPos.side.toUpperCase()} aperta (Sentiment concorda: ${sentimentData.sentiment}).`);
         }
       } 
       // Se non abbiamo posizioni aperte e il sentiment è attivo (BUY o SELL)
       else if (sentimentData.sentiment === 'BUY' || sentimentData.sentiment === 'SELL') {
         // Money Management: Calcolo dinamico della dimensione in base al rischio (default 2%)
         // Assumiamo una distanza di Stop Loss virtuale di circa 20 pips per il dimensionamento
-        const riskAmount = oandaBotStatus.balance * (oandaBotStatus.riskPercentage / 100);
+        const riskAmount = xtbBotStatus.balance * (xtbBotStatus.riskPercentage / 100);
         // units = risk / (pipValue * pips). Per EURUSD 1000 units = $0.10/pip.
         // Con 500 units, 20 pips = $1.00 (circa 0.92€).
         const unitsToTrade = Math.max(10, Math.floor(riskAmount * 500)); 
 
-        addOandaLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità (Rischio: ${oandaBotStatus.riskPercentage}% del saldo).`);
+        addXtbLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità (Rischio: ${xtbBotStatus.riskPercentage}% del saldo).`);
 
         if (isRealAccount) {
           try {
@@ -3359,19 +3510,19 @@ async function executeOandaTradingCycle(force: boolean = false) {
               }
             };
 
-            const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/orders`, {
+            const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/orders`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${OANDA_API_KEY}`
+                "Authorization": `Bearer ${XTB_USER_ID}`
               },
               body: JSON.stringify(orderBody)
             });
 
             if (response.ok) {
               const orderData = await response.json();
-              addOandaLog(`[OANDA] Ordine reale ${sentimentData.sentiment} eseguito per ${inst}! ID: ${orderData.orderFillTransaction?.id || 'N/A'}`);
-              addOandaLogicLog({
+              addXtbLog(`[XTB] Ordine reale ${sentimentData.sentiment} eseguito per ${inst}! ID: ${orderData.orderFillTransaction?.id || 'N/A'}`);
+              addXtbLogicLog({
                 timestamp: new Date().toISOString(),
                 instrument: inst,
                 action: sentimentData.sentiment,
@@ -3380,31 +3531,31 @@ async function executeOandaTradingCycle(force: boolean = false) {
               });
             } else {
               const errText = await response.text();
-              addOandaLog(`[OANDA Errore Ordine] Impossibile inviare ordine per ${inst}: ${errText}`);
+              addXtbLog(`[XTB Errore Ordine] Impossibile inviare ordine per ${inst}: ${errText}`);
             }
           } catch (err: any) {
-            addOandaLog(`[OANDA Errore Network] Errore ordine per ${inst}: ${err.message}`);
+            addXtbLog(`[XTB Errore Network] Errore ordine per ${inst}: ${err.message}`);
           }
         } else {
           // Demo order
-          oandaDemoPositions[inst] = {
+          xtbDemoPositions[inst] = {
             units: unitsToTrade,
             avgPrice: currentPrice,
             side: sentimentData.sentiment === 'BUY' ? 'buy' : 'sell'
           };
-          addOandaLog(`[DEMO OANDA] Ordine simulato ${sentimentData.sentiment.toUpperCase()} di ${unitsToTrade} unità eseguito per ${inst} al prezzo di ${currentPrice.toFixed(5)}!`);
-          addOandaLogicLog({
+          addXtbLog(`[DEMO XTB] Ordine simulato ${sentimentData.sentiment.toUpperCase()} di ${unitsToTrade} unità eseguito per ${inst} al prezzo di ${currentPrice.toFixed(5)}!`);
+          addXtbLogicLog({
             timestamp: new Date().toISOString(),
             instrument: inst,
             action: sentimentData.sentiment,
             reasoning: sentimentData.reasoning,
             price: currentPrice
           });
-          await saveOandaBotStatus();
+          await saveXtbBotStatus();
         }
       } else {
         // HOLD, nessuna posizione aperta. Manteniamo la posizione d'attesa.
-        addOandaLogicLog({
+        addXtbLogicLog({
           timestamp: new Date().toISOString(),
           instrument: inst,
           action: 'HOLD',
@@ -3414,32 +3565,32 @@ async function executeOandaTradingCycle(force: boolean = false) {
       }
     }
 
-    addOandaLog(`[Auto-Trading] Ciclo di trading automatico OANDA completato con successo.`);
+    addXtbLog(`[Auto-Trading] Ciclo di trading automatico XTB completato con successo.`);
   } catch (error: any) {
-    addOandaLog(`[Auto-Trading Errore Critico] Errore durante l'esecuzione del ciclo OANDA: ${error.message}`);
+    addXtbLog(`[Auto-Trading Errore Critico] Errore durante l'esecuzione del ciclo XTB: ${error.message}`);
   }
 }
 
-// --- OANDA API AUTOMATION ENDPOINTS ---
+// --- XTB API AUTOMATION ENDPOINTS ---
 
-app.get("/api/trading/oanda-status", async (req, res) => {
-  const OANDA_API_KEY = process.env.OANDA_API_KEY;
-  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
-  const isRealAccount = !!(OANDA_API_KEY && OANDA_ACCOUNT_ID);
+app.get("/api/trading/xtb-status", async (req, res) => {
+  const XTB_USER_ID = process.env.XTB_USER_ID;
+  const XTB_PASSWORD = process.env.XTB_PASSWORD;
+  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
+  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
 
   try {
-    initializeOandaPnLHistory();
+    initializeXtbPnLHistory();
 
     // Fetch current prices to compute unrealized P&L
     const currentPrices: Record<string, number> = {};
-    const eurUsdCandles = await getOandaCandles('EUR_USD');
+    const eurUsdCandles = await getXtbCandles('EUR_USD');
     const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
     currentPrices['EUR_USD'] = eurUsdPrice;
 
-    for (const inst of oandaBotStatus.monitoredInstruments) {
+    for (const inst of xtbBotStatus.monitoredInstruments) {
       if (inst === 'EUR_USD') continue;
-      const candles = await getOandaCandles(inst);
+      const candles = await getXtbCandles(inst);
       currentPrices[inst] = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
     }
 
@@ -3449,8 +3600,8 @@ app.get("/api/trading/oanda-status", async (req, res) => {
 
     if (isRealAccount) {
       try {
-        const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/positions`, {
-          headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+        const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions`, {
+          headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
         });
         if (response.ok) {
           const data = await response.json();
@@ -3490,12 +3641,12 @@ app.get("/api/trading/oanda-status", async (req, res) => {
           }
         }
       } catch (err) {
-        console.error("Errore recupero posizioni OANDA reali:", err);
+        console.error("Errore recupero posizioni XTB reali:", err);
       }
     } else {
       // Demo positions
-      for (const inst in oandaDemoPositions) {
-        const pos = oandaDemoPositions[inst];
+      for (const inst in xtbDemoPositions) {
+        const pos = xtbDemoPositions[inst];
         const currentPrice = currentPrices[inst] || pos.avgPrice;
         const pnlInEur = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
         
@@ -3512,15 +3663,15 @@ app.get("/api/trading/oanda-status", async (req, res) => {
     }
 
     // Set today's unrealized P&L in the last item of the daily P&L history
-    if (oandaBotStatus.dailyPnL && oandaBotStatus.dailyPnL.length > 0) {
-      oandaBotStatus.dailyPnL[oandaBotStatus.dailyPnL.length - 1].unrealized = totalUnrealizedPnL;
+    if (xtbBotStatus.dailyPnL && xtbBotStatus.dailyPnL.length > 0) {
+      xtbBotStatus.dailyPnL[xtbBotStatus.dailyPnL.length - 1].unrealized = totalUnrealizedPnL;
     }
 
     res.json({
       status: {
-        ...oandaBotStatus,
+        ...xtbBotStatus,
         unrealizedPnL: totalUnrealizedPnL,
-        equity: isRealAccount ? undefined : (oandaBotStatus.balance + totalUnrealizedPnL)
+        equity: isRealAccount ? undefined : (xtbBotStatus.balance + totalUnrealizedPnL)
       },
       positions: positionsList,
       isDemo: !isRealAccount
@@ -3530,13 +3681,13 @@ app.get("/api/trading/oanda-status", async (req, res) => {
   }
 });
 
-app.post("/api/trading/oanda-close-position", async (req, res) => {
+app.post("/api/trading/xtb-close-position", async (req, res) => {
   const { symbol } = req.body; // use symbol to be compliant with Alpaca parameter
   const instrument = symbol;
-  const OANDA_API_KEY = process.env.OANDA_API_KEY;
-  const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-  const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
-  const isRealAccount = !!(OANDA_API_KEY && OANDA_ACCOUNT_ID);
+  const XTB_USER_ID = process.env.XTB_USER_ID;
+  const XTB_PASSWORD = process.env.XTB_PASSWORD;
+  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
+  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
 
   if (!instrument) {
     return res.status(400).json({ success: false, error: "Strumento mancante." });
@@ -3545,8 +3696,8 @@ app.post("/api/trading/oanda-close-position", async (req, res) => {
   try {
     if (isRealAccount) {
       // Find position first
-      const posRes = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/openPositions`, {
-        headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+      const posRes = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
+        headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
       });
       if (!posRes.ok) {
         throw new Error("Impossibile recuperare le posizioni reali.");
@@ -3568,45 +3719,45 @@ app.post("/api/trading/oanda-close-position", async (req, res) => {
         return res.status(400).json({ success: false, error: "Nessuna unità da chiudere." });
       }
 
-      const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/positions/${instrument}/close`, {
+      const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${instrument}/close`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${OANDA_API_KEY}`
+          "Authorization": `Bearer ${XTB_USER_ID}`
         },
         body: JSON.stringify(closeBody)
       });
 
       if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`Errore chiusura OANDA: ${errText}`);
+        throw new Error(`Errore chiusura XTB: ${errText}`);
       }
 
-      addOandaLog(`[OANDA] Posizione su ${instrument} chiusa manualmente con successo!`);
+      addXtbLog(`[XTB] Posizione su ${instrument} chiusa manualmente con successo!`);
       res.json({ success: true });
     } else {
       // Demo close
-      const pos = oandaDemoPositions[instrument];
+      const pos = xtbDemoPositions[instrument];
       if (!pos) {
         return res.status(404).json({ success: false, error: "Posizione non trovata." });
       }
 
-      const candles = await getOandaCandles(instrument);
+      const candles = await getXtbCandles(instrument);
       const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
 
-      const eurUsdCandles = await getOandaCandles('EUR_USD');
+      const eurUsdCandles = await getXtbCandles('EUR_USD');
       const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
 
       const pnlInEur = calculateDemoPnLInEur(instrument, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-      oandaBotStatus.balance += pnlInEur;
+      xtbBotStatus.balance += pnlInEur;
 
-      delete oandaDemoPositions[instrument];
-      addOandaLog(`[DEMO OANDA] Posizione simulata su ${instrument} chiusa manualmente con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+      delete xtbDemoPositions[instrument];
+      addXtbLog(`[DEMO XTB] Posizione simulata su ${instrument} chiusa manualmente con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
       
       // Update historical P&L
-      updateOandaPnLHistory(pnlInEur);
+      updateXtbPnLHistory(pnlInEur);
 
-      await saveOandaBotStatus();
+      await saveXtbBotStatus();
       res.json({ success: true });
     }
   } catch (error: any) {
@@ -3614,63 +3765,63 @@ app.post("/api/trading/oanda-close-position", async (req, res) => {
   }
 });
 
-app.post("/api/trading/oanda-status", async (req, res) => {
+app.post("/api/trading/xtb-status", async (req, res) => {
   const { active } = req.body;
   if (typeof active === 'boolean') {
-    oandaBotStatus.active = active;
-    addOandaLog(`[Auto-Trading] Stato trading automatico modificato in: ${active ? 'ATTIVO' : 'SPENTO'}`);
-    await saveOandaBotStatus();
-    res.json({ success: true, active: oandaBotStatus.active });
+    xtbBotStatus.active = active;
+    addXtbLog(`[Auto-Trading] Stato trading automatico modificato in: ${active ? 'ATTIVO' : 'SPENTO'}`);
+    await saveXtbBotStatus();
+    res.json({ success: true, active: xtbBotStatus.active });
   } else {
     res.status(400).json({ success: false, error: 'Parametro active non valido.' });
   }
 });
 
-app.post("/api/trading/oanda-trigger", async (req, res) => {
+app.post("/api/trading/xtb-trigger", async (req, res) => {
   try {
-    await executeOandaTradingCycle(true);
-    res.json({ success: true, message: 'Ciclo di trading automatico OANDA completato con successo.' });
+    await executeXtbTradingCycle(true);
+    res.json({ success: true, message: 'Ciclo di trading automatico XTB completato con successo.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post("/api/trading/oanda-reset-logs", async (req, res) => {
-  oandaBotStatus.logs = [];
-  oandaBotStatus.logicLogs = [];
-  addOandaLog(`[Auto-Trading] Log OANDA azzerati dall'utente.`);
-  await saveOandaBotStatus();
-  await saveOandaLogicLogs();
+app.post("/api/trading/xtb-reset-logs", async (req, res) => {
+  xtbBotStatus.logs = [];
+  xtbBotStatus.logicLogs = [];
+  addXtbLog(`[Auto-Trading] Log XTB azzerati dall'utente.`);
+  await saveXtbBotStatus();
+  await saveXtbLogicLogs();
   res.json({ success: true });
 });
 
-app.post("/api/trading/oanda-reset-balance", async (req, res) => {
-  oandaBotStatus.balance = 50.00;
-  oandaDemoPositions = {};
-  oandaBotStatus.dailyPnL = [];
-  addOandaLog(`[Auto-Trading] Saldo simulato riportato a 50.00€ e posizioni azzerate dall'utente.`);
-  await saveOandaBotStatus();
+app.post("/api/trading/xtb-reset-balance", async (req, res) => {
+  xtbBotStatus.balance = 50.00;
+  xtbDemoPositions = {};
+  xtbBotStatus.dailyPnL = [];
+  addXtbLog(`[Auto-Trading] Saldo simulato riportato a 50.00€ e posizioni azzerate dall'utente.`);
+  await saveXtbBotStatus();
   res.json({ success: true });
 });
 
-app.post("/api/trading/oanda-settings", async (req, res) => {
+app.post("/api/trading/xtb-settings", async (req, res) => {
   const { defaultTP, defaultSL, riskPercentage } = req.body;
   if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
-    oandaBotStatus.defaultTP = defaultTP;
-    oandaBotStatus.defaultSL = defaultSL;
+    xtbBotStatus.defaultTP = defaultTP;
+    xtbBotStatus.defaultSL = defaultSL;
     if (typeof riskPercentage === 'number') {
-      oandaBotStatus.riskPercentage = riskPercentage;
+      xtbBotStatus.riskPercentage = riskPercentage;
     }
-    addOandaLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${oandaBotStatus.riskPercentage}%`);
-    await saveOandaBotStatus();
-    res.json({ success: true, defaultTP, defaultSL, riskPercentage: oandaBotStatus.riskPercentage });
+    addXtbLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${xtbBotStatus.riskPercentage}%`);
+    await saveXtbBotStatus();
+    res.json({ success: true, defaultTP, defaultSL, riskPercentage: xtbBotStatus.riskPercentage });
   } else {
     res.status(400).json({ success: false, error: 'Parametri non validi.' });
   }
 });
 
 
-// --- OANDA API INTEGRATION ENDPOINTS ---
+// --- XTB API INTEGRATION ENDPOINTS ---
 
 async function analyzeMarketWithAI(instrument: string, candles: any[]) {
   if (checkQuotaExceeded()) {
@@ -3695,7 +3846,7 @@ Il servizio di intelligenza artificiale di Gemini è momentaneamente in cooldown
   } catch (error: any) {
     const message = error.message || String(error);
     if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
-      console.warn(`[OANDA AI Analysis] API Quota Exceeded. Falling back to local analysis.`);
+      console.warn(`[XTB AI Analysis] API Quota Exceeded. Falling back to local analysis.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
       return `### Analisi Tecnica (Fallback Locale - Quota IA Superata)
@@ -3712,11 +3863,11 @@ La chiamata IA ha superato i limiti di quota.
 app.get("/api/trading/analysis/:instrument", async (req, res) => {
   try {
     const { instrument } = req.params;
-    const OANDA_API_KEY = process.env.OANDA_API_KEY;
-    const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-    const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
+    const XTB_USER_ID = process.env.XTB_USER_ID;
+    const XTB_PASSWORD = process.env.XTB_PASSWORD;
+    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
 
-    if (!OANDA_API_KEY || !OANDA_ACCOUNT_ID) {
+    if (true) {
       // Dati candlestick di demo per mostrare l'interfaccia se non configurata
       const mockCandles = Array.from({ length: 50 }, (_, i) => {
         const base = 1.0820 + Math.sin(i / 8) * 0.003 + Math.random() * 0.001;
@@ -3732,7 +3883,7 @@ app.get("/api/trading/analysis/:instrument", async (req, res) => {
         };
       });
       const analysis = `### Analisi Tecnica di Demo (${instrument.replace('_', '/')})
-*Configurazione OANDA mancante nel file .env (Viene mostrata la modalità demo).*
+*Configurazione XTB mancante nel file .env (Viene mostrata la modalità demo).*
 
 - **Sentiment**: Neutrale / Moderatamente Rialzista
 - **Analisi**: Il grafico eur/usd mostra un pattern ondulatorio con una leggera tendenza ascendente. Il supporto si sta consolidando attorno ai minimi recenti.
@@ -3742,17 +3893,17 @@ app.get("/api/trading/analysis/:instrument", async (req, res) => {
         candles: mockCandles, 
         analysis, 
         isDemo: true,
-        message: "OANDA_API_KEY o OANDA_ACCOUNT_ID mancanti. Viene mostrata la modalità Demo." 
+        message: "XTB usa WebSocket (xAPI). Attualmente in modalità Demo Sandbox." 
       });
     }
 
-    const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
-      headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
+      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
     });
     
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Errore API OANDA: ${response.status} - ${errText}`);
+      throw new Error(`Errore API XTB: ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
@@ -3761,7 +3912,7 @@ app.get("/api/trading/analysis/:instrument", async (req, res) => {
     const analysis = await analyzeMarketWithAI(instrument, candles);
     res.json({ candles, analysis });
   } catch (error: any) {
-    console.error("Errore durante l'analisi OANDA:", error);
+    console.error("Errore durante l'analisi XTB:", error);
     res.status(500).json({ error: error.message || "Errore durante l'analisi" });
   }
 });
@@ -3769,11 +3920,11 @@ app.get("/api/trading/analysis/:instrument", async (req, res) => {
 app.post("/api/trading/order", async (req, res) => {
   try {
     const { instrument, units, side } = req.body;
-    const OANDA_API_KEY = process.env.OANDA_API_KEY;
-    const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-    const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
+    const XTB_USER_ID = process.env.XTB_USER_ID;
+    const XTB_PASSWORD = process.env.XTB_PASSWORD;
+    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
 
-    if (!OANDA_API_KEY || !OANDA_ACCOUNT_ID) {
+    if (true) {
       return res.json({
         isDemo: true,
         orderFillTransaction: {
@@ -3783,7 +3934,7 @@ app.post("/api/trading/order", async (req, res) => {
           price: "1.0854",
           pl: "0.00",
           commission: "0.00",
-          accountBalance: oandaBotStatus.balance.toFixed(2)
+          accountBalance: xtbBotStatus.balance.toFixed(2)
         },
         message: "Ordine simulato con successo in modalità Demo."
       });
@@ -3799,11 +3950,11 @@ app.post("/api/trading/order", async (req, res) => {
       }
     };
 
-    const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/orders`, {
+    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/orders`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OANDA_API_KEY}`
+        "Authorization": `Bearer ${XTB_USER_ID}`
       },
       body: JSON.stringify(orderBody)
     });
@@ -3811,48 +3962,1089 @@ app.post("/api/trading/order", async (req, res) => {
     const result = await response.json();
     res.json(result);
   } catch (error: any) {
-    console.error("Errore esecuzione ordine OANDA:", error);
+    console.error("Errore esecuzione ordine XTB:", error);
     res.status(500).json({ error: error.message || "Errore esecuzione ordine" });
   }
 });
 
 app.get("/api/trading/account", async (req, res) => {
   try {
-    const OANDA_API_KEY = process.env.OANDA_API_KEY;
-    const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-    const OANDA_BASE_URL = process.env.OANDA_BASE_URL || "https://api-fxpractice.oanda.com/v3";
+    const XTB_USER_ID = process.env.XTB_USER_ID;
+    const XTB_PASSWORD = process.env.XTB_PASSWORD;
+    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
 
-    if (!OANDA_API_KEY || !OANDA_ACCOUNT_ID) {
+    if (true) {
       return res.json({
         isDemo: true,
         account: {
           id: "IT/M189975/EUR",
-          balance: oandaBotStatus.balance.toFixed(2),
+          balance: xtbBotStatus.balance.toFixed(2),
           currency: "EUR",
-          NAV: oandaBotStatus.balance.toFixed(2),
-          openPositionCount: Object.keys(oandaDemoPositions).length,
+          NAV: xtbBotStatus.balance.toFixed(2),
+          openPositionCount: Object.keys(xtbDemoPositions).length,
           pendingOrderCount: 0,
-          alias: "OANDA-MT5-Demo"
+          alias: "XTB-MT5-Demo"
         }
       });
     }
 
-    const response = await fetch(`${OANDA_BASE_URL}/accounts/${OANDA_ACCOUNT_ID}/summary`, {
-      headers: { "Authorization": `Bearer ${OANDA_API_KEY}` }
+    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/summary`, {
+      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Errore API OANDA Account: ${response.status} - ${errText}`);
+      throw new Error(`Errore API XTB Account: ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
     res.json({ success: true, account: data.account });
   } catch (error: any) {
-    console.error("Errore recupero account OANDA:", error);
+    console.error("Errore recupero account XTB:", error);
     res.status(500).json({ error: error.message || "Errore recupero account" });
   }
 });
+
+function initializeIgPnLHistory() {
+  const today = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+  if (!igBotStatus.dailyPnL || igBotStatus.dailyPnL.length === 0) {
+    const dates: string[] = [];
+    for (let i = 10; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dates.push(d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }));
+    }
+    let balanceAccumulator = 9850.00;
+    igBotStatus.dailyPnL = dates.map((date, idx) => {
+      const realized = idx === dates.length - 1 ? 0 : Math.floor(Math.random() * 80 - 30);
+      balanceAccumulator += realized;
+      return {
+        date,
+        realized,
+        unrealized: 0,
+        balance: balanceAccumulator
+      };
+    });
+  }
+  
+  if (!igBotStatus.dailyPnL.find(p => p.date === today)) {
+    igBotStatus.dailyPnL.push({
+      date: today,
+      realized: 0,
+      unrealized: 0
+    });
+  }
+  
+  if (igBotStatus.dailyPnL.length > 15) {
+    igBotStatus.dailyPnL = igBotStatus.dailyPnL.slice(-15);
+  }
+}
+
+function updateIgPnLHistory(pnl: number) {
+  const today = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+  initializeIgPnLHistory();
+  const todayEntry = igBotStatus.dailyPnL.find(p => p.date === today);
+  if (todayEntry) {
+    todayEntry.realized += pnl;
+  }
+}
+
+interface IgSession {
+  cst: string;
+  securityToken: string;
+  expiresAt: number;
+  accountId: string;
+}
+
+let activeIgSession: IgSession | null = null;
+
+function isRealIgConfigured(): boolean {
+  const username = process.env.IG_USERNAME;
+  const password = process.env.IG_PASSWORD;
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  
+  if (!username || !password || !apiKey) return false;
+  if (username === "il_tuo_username_ig" || password === "la_tua_password_ig") {
+    return false;
+  }
+  return true;
+}
+
+function getIgBaseUrl(): string {
+  const mode = process.env.IG_MODE || 'demo';
+  return mode === 'real' || mode === 'live'
+    ? 'https://api.ig.com/gateway/deal'
+    : 'https://demo-api.ig.com/gateway/deal';
+}
+
+async function loginToIg(): Promise<IgSession> {
+  const username = process.env.IG_USERNAME;
+  const password = process.env.IG_PASSWORD;
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  const baseUrl = getIgBaseUrl();
+
+  if (!username || !password || !apiKey) {
+    throw new Error("Credenziali IG Markets non configurate.");
+  }
+
+  const url = `${baseUrl}/session`;
+  addIgLog(`[IG REST API] Tentativo di login su: ${url}...`);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'X-IG-API-KEY': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Version': '2'
+    },
+    body: JSON.stringify({
+      identifier: username,
+      password: password
+    })
+  });
+
+  if (!response.ok) {
+    let errData: any = {};
+    try {
+      errData = await response.json();
+    } catch(e) {}
+    const errCode = errData.errorCode || 'LOGIN_FAILED';
+    throw new Error(`Errore login IG Markets (${response.status}): ${errCode}`);
+  }
+
+  const cst = response.headers.get('cst') || response.headers.get('CST');
+  const securityToken = response.headers.get('x-security-token') || response.headers.get('X-SECURITY-TOKEN');
+
+  if (!cst || !securityToken) {
+    throw new Error("Token di sessione (CST o X-SECURITY-TOKEN) non restituiti da IG Markets.");
+  }
+
+  const data: any = await response.json();
+  const accountId = data.clientId || (data.accounts && data.accounts[0] && data.accounts[0].accountId) || 'IG_ACCOUNT';
+
+  addIgLog(`[IG REST API] Login completato con successo. Account ID: ${accountId}`);
+
+  const expiresAt = Date.now() + 55 * 60 * 1000; 
+
+  const session: IgSession = {
+    cst,
+    securityToken,
+    expiresAt,
+    accountId
+  };
+  activeIgSession = session;
+  return session;
+}
+
+async function getIgSession(): Promise<IgSession> {
+  if (activeIgSession && activeIgSession.expiresAt > Date.now()) {
+    return activeIgSession;
+  }
+  return loginToIg();
+}
+
+async function getIgAccounts(): Promise<any[]> {
+  const session = await getIgSession();
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  const baseUrl = getIgBaseUrl();
+
+  const response = await fetch(`${baseUrl}/accounts`, {
+    method: 'GET',
+    headers: {
+      'X-IG-API-KEY': apiKey || '',
+      'CST': session.cst,
+      'X-SECURITY-TOKEN': session.securityToken,
+      'Accept': 'application/json',
+      'Version': '1'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Errore recupero conti IG Markets (${response.status})`);
+  }
+
+  const data: any = await response.json();
+  return data.accounts || [];
+}
+
+async function getIgOpenPositions(): Promise<any[]> {
+  const session = await getIgSession();
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  const baseUrl = getIgBaseUrl();
+
+  const response = await fetch(`${baseUrl}/positions`, {
+    method: 'GET',
+    headers: {
+      'X-IG-API-KEY': apiKey || '',
+      'CST': session.cst,
+      'X-SECURITY-TOKEN': session.securityToken,
+      'Accept': 'application/json',
+      'Version': '2'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Errore recupero posizioni aperte IG Markets (${response.status})`);
+  }
+
+  const data: any = await response.json();
+  return data.positions || [];
+}
+
+function getIgEpic(instrument: string): string {
+  const norm = instrument.replace('_', '').toUpperCase();
+  switch (norm) {
+    case 'EURUSD': return 'CS.D.EURUSD.TODAY.IP';
+    case 'GBPUSD': return 'CS.D.GBPUSD.TODAY.IP';
+    case 'USDJPY': return 'CS.D.USDJPY.TODAY.IP';
+    case 'AUDUSD': return 'CS.D.AUDUSD.TODAY.IP';
+    case 'EURGBP': return 'CS.D.EURGBP.TODAY.IP';
+    case 'USDCHF': return 'CS.D.USDCHF.TODAY.IP';
+    case 'USDCAD': return 'CS.D.USDCAD.TODAY.IP';
+    case 'NZDUSD': return 'CS.D.NZDUSD.TODAY.IP';
+    case 'EURJPY': return 'CS.D.EURJPY.TODAY.IP';
+    case 'GBPJPY': return 'CS.D.GBPJPY.TODAY.IP';
+    case 'EURCHF': return 'CS.D.EURCHF.TODAY.IP';
+    default: return `CS.D.${norm}.TODAY.IP`;
+  }
+}
+
+function mapIgEpicToSymbol(epic: string): string {
+  const matches = epic.match(/CS\.D\.([A-Z]{6})\.TODAY/i);
+  if (matches && matches[1]) {
+    const raw = matches[1].toUpperCase();
+    return raw.slice(0, 3) + '_' + raw.slice(3);
+  }
+  return epic;
+}
+
+async function closeIgPosition(instrument: string): Promise<any> {
+  const positions = await getIgOpenPositions();
+  const targetEpic = getIgEpic(instrument);
+  const pos = positions.find(p => p.market.epic === targetEpic);
+  if (!pos) {
+    throw new Error(`Posizione reale non trovata per lo strumento ${instrument} (Epic: ${targetEpic})`);
+  }
+
+  const session = await getIgSession();
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  const baseUrl = getIgBaseUrl();
+
+  const response = await fetch(`${baseUrl}/positions/otc`, {
+    method: 'DELETE',
+    headers: {
+      'X-IG-API-KEY': apiKey || '',
+      'CST': session.cst,
+      'X-SECURITY-TOKEN': session.securityToken,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Version': '1'
+    },
+    body: JSON.stringify({
+      dealId: pos.position.dealId,
+      epic: null,
+      expiry: null,
+      direction: pos.position.direction === 'BUY' ? 'SELL' : 'BUY',
+      size: pos.position.size,
+      orderType: 'MARKET',
+      level: null,
+      quoteId: null
+    })
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(`Errore chiusura posizione IG Markets (${response.status}): ${errData.errorCode || 'UNKNOWN_ERROR'}`);
+  }
+
+  return await response.json();
+}
+
+async function executeIgRealtimeCheck() {
+  if (!igBotStatus.active) return;
+  
+  try {
+    if (isRealIgConfigured()) {
+      const openPositions = await getIgOpenPositions();
+      for (const pos of openPositions) {
+        const epic = pos.market.epic;
+        const instrument = mapIgEpicToSymbol(epic);
+        const unrealizedPL = pos.position.unrealizedPnL || 0;
+        
+        let stopLossHit = false;
+        let takeProfitHit = false;
+
+        if (unrealizedPL >= igBotStatus.defaultTP) {
+          takeProfitHit = true;
+          addIgLog(`[Portafoglio Reale FastCheck] Take Profit reale raggiunto per ${instrument}! P&L: ${unrealizedPL.toFixed(2)} € (Target: +${igBotStatus.defaultTP.toFixed(2)} €)`);
+        } else if (unrealizedPL <= igBotStatus.defaultSL) {
+          stopLossHit = true;
+          addIgLog(`[Portafoglio Reale FastCheck] Stop Loss reale raggiunto per ${instrument}! P&L: ${unrealizedPL.toFixed(2)} € (Limite: ${igBotStatus.defaultSL.toFixed(2)} €)`);
+        }
+
+        if (stopLossHit || takeProfitHit) {
+          const reason = stopLossHit ? `Stop Loss (${igBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${igBotStatus.defaultTP.toFixed(2)}€)`;
+          addIgLog(`[Portafoglio Reale FastCheck] Eseguo chiusura automatica per ${instrument} per ${reason}.`);
+          
+          try {
+            const res = await closeIgPosition(instrument);
+            addIgLog(`[Portafoglio Reale FastCheck] Chiusura completata con successo! Ref: ${res.dealReference}`);
+          } catch (err: any) {
+            addIgLog(`[Portafoglio Reale FastCheck Errore] Chiusura automatica fallita per ${instrument}: ${err.message}`);
+          }
+        }
+      }
+    } else {
+      const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number; avgPrice?: number }> = {};
+      for (const inst in igDemoPositions) {
+        openPositionsMap[inst] = { ...igDemoPositions[inst] };
+      }
+
+      const openInstruments = Object.keys(openPositionsMap);
+      if (openInstruments.length === 0) return;
+
+      let eurUsdPrice = 1.0800;
+      const eurUsdCandles = await getXtbCandles('EUR_USD');
+      eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+
+      for (const inst of openInstruments) {
+        const currentPos = openPositionsMap[inst];
+        const candles = await getXtbCandles(inst);
+        if (candles.length === 0) continue;
+        const currentPrice = parseFloat(candles[candles.length - 1].mid.c);
+        
+        let stopLossHit = false;
+        let takeProfitHit = false;
+        
+        let unrealizedPL = 0;
+        if (igDemoPositions[inst]) {
+          const pos = igDemoPositions[inst];
+          unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+        }
+        
+        if (unrealizedPL >= igBotStatus.defaultTP) {
+          takeProfitHit = true;
+          addIgLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${igBotStatus.defaultTP.toFixed(2)} €)`);
+        } else if (unrealizedPL <= igBotStatus.defaultSL) {
+          stopLossHit = true;
+          addIgLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${igBotStatus.defaultSL.toFixed(2)} €)`);
+        }
+
+        if (stopLossHit || takeProfitHit) {
+          const reason = stopLossHit ? `Stop Loss (${igBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${igBotStatus.defaultTP.toFixed(2)}€)`;
+          addIgLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
+          
+          const pnlInEur = calculateDemoPnLInEur(inst, currentPos.side, currentPos.avgPrice!, currentPrice, currentPos.units, eurUsdPrice);
+          igBotStatus.balance += pnlInEur;
+          updateIgPnLHistory(pnlInEur);
+          delete igDemoPositions[inst];
+          addIgLog(`[DEMO IG] Posizione simulata su ${inst} chiusa con successo per ${reason}! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+          await saveIgBotStatus();
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Errore nel realtime check IG:", err);
+  }
+}
+
+async function executeIgTradingCycle(force: boolean = false) {
+  if (!igBotStatus.active && !force) {
+    return;
+  }
+
+  igBotStatus.lastCheck = new Date().toISOString();
+  addIgLog(`[Auto-Trading] Avvio ciclo di trading automatico Forex per IG Markets...`);
+
+  try {
+    if (isRealIgConfigured()) {
+      const session = await getIgSession();
+      const openPositions = await getIgOpenPositions();
+      const bulkSentiment = await getXtbBulkSentiment(igBotStatus.monitoredInstruments);
+
+      for (const inst of igBotStatus.monitoredInstruments) {
+        const sentimentData = bulkSentiment[inst] || { sentiment: 'HOLD', reasoning: 'Nessun sentiment' };
+        const epic = getIgEpic(inst);
+        const currentPos = openPositions.find(p => p.market.epic === epic);
+
+        addIgLog(`[Analisi Real-Time ${inst.replace('_', '/')}] Epic: ${epic}. Sentiment IA: ${sentimentData.sentiment}. Motivo: ${sentimentData.reasoning}`);
+
+        if (currentPos) {
+          const side = currentPos.position.direction.toLowerCase();
+          const unrealizedPL = currentPos.position.unrealizedPnL || 0;
+
+          let stopLossHit = false;
+          let takeProfitHit = false;
+
+          if (unrealizedPL >= igBotStatus.defaultTP) {
+            takeProfitHit = true;
+            addIgLog(`[Portafoglio Reale ${inst.replace('_', '/')}] Take Profit reale raggiunto! P&L: ${unrealizedPL.toFixed(2)} € (Target: +${igBotStatus.defaultTP.toFixed(2)} €)`);
+          } else if (unrealizedPL <= igBotStatus.defaultSL) {
+            stopLossHit = true;
+            addIgLog(`[Portafoglio Reale ${inst.replace('_', '/')}] Stop Loss reale raggiunto! P&L: ${unrealizedPL.toFixed(2)} € (Limite: ${igBotStatus.defaultSL.toFixed(2)} €)`);
+          }
+
+          const needsClosure = stopLossHit || takeProfitHit ||
+            (side === 'buy' && sentimentData.sentiment === 'SELL') ||
+            (side === 'sell' && sentimentData.sentiment === 'BUY');
+
+          if (needsClosure) {
+            const reason = stopLossHit ? `Stop Loss (${igBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${igBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
+            addIgLog(`[Portafoglio Reale ${inst.replace('_', '/')}] Chiudo posizione reale ${side.toUpperCase()} per ${reason}.`);
+            
+            try {
+              const res = await closeIgPosition(inst);
+              addIgLog(`[Portafoglio Reale ${inst.replace('_', '/')}] Posizione chiusa con successo (Ref: ${res.dealReference})`);
+              addIgLogicLog({
+                timestamp: new Date().toISOString(),
+                instrument: inst,
+                action: 'CHIUSURA_REALE',
+                reasoning: `Chiusura reale posizione per ${reason}: ${sentimentData.reasoning}`,
+                price: currentPos.market.bid
+              });
+            } catch (err: any) {
+              addIgLog(`[Portafoglio Reale Errore] Chiusura fallita per ${inst}: ${err.message}`);
+            }
+          } else {
+            addIgLog(`[Portafoglio Reale ${inst.replace('_', '/')}] Mantengo aperta la posizione reale ${side.toUpperCase()} (Sentiment concorda: ${sentimentData.sentiment}).`);
+          }
+        } else if (sentimentData.sentiment === 'BUY' || sentimentData.sentiment === 'SELL') {
+          const riskAmount = igBotStatus.balance * (igBotStatus.riskPercentage / 100);
+          const size = Math.max(1, Math.floor(riskAmount / 100));
+
+          addIgLog(`[Mercato Reale ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico reale di ${size} contratti.`);
+
+          try {
+            const baseUrl = getIgBaseUrl();
+            const apiKey = process.env.IG_DEMO_API_KEY;
+            const response = await fetch(`${baseUrl}/positions/otc`, {
+              method: 'POST',
+              headers: {
+                'X-IG-API-KEY': apiKey || '',
+                'CST': session.cst,
+                'X-SECURITY-TOKEN': session.securityToken,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Version': '2'
+              },
+              body: JSON.stringify({
+                epic: epic,
+                expiry: "-",
+                direction: sentimentData.sentiment === 'BUY' ? 'BUY' : 'SELL',
+                size: size,
+                orderType: "MARKET",
+                guaranteedStop: false,
+                forceOpen: true,
+                currencyCode: "EUR",
+                level: null,
+                limitDistance: null,
+                limitLevel: null,
+                stopDistance: null,
+                stopLevel: null,
+                quoteId: null,
+                trailingStop: false,
+                trailingStopIncrement: null
+              })
+            });
+
+            if (!response.ok) {
+              const errData = await response.json().catch(() => ({}));
+              throw new Error(`Errore ordine automatico reale IG (${response.status}): ${errData.errorCode || 'UNKNOWN_ERROR'}`);
+            }
+
+            const data: any = await response.json();
+            addIgLog(`[IG REST API] Ordine automatico reale eseguito con successo! Ref: ${data.dealReference}`);
+            addIgLogicLog({
+              timestamp: new Date().toISOString(),
+              instrument: inst,
+              action: sentimentData.sentiment,
+              reasoning: sentimentData.reasoning,
+              price: 0
+            });
+          } catch (err: any) {
+            addIgLog(`[Mercato Reale Errore] Apertura posizione reale fallita: ${err.message}`);
+          }
+        } else {
+          addIgLogicLog({
+            timestamp: new Date().toISOString(),
+            instrument: inst,
+            action: 'HOLD',
+            reasoning: sentimentData.reasoning,
+            price: 0
+          });
+        }
+      }
+    } else {
+      const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number }> = {};
+      for (const inst in igDemoPositions) {
+        openPositionsMap[inst] = { units: igDemoPositions[inst].units, side: igDemoPositions[inst].side };
+      }
+
+      const bulkSentiment = await getXtbBulkSentiment(igBotStatus.monitoredInstruments);
+
+      for (const inst of igBotStatus.monitoredInstruments) {
+        const sentimentData = bulkSentiment[inst] || { sentiment: 'HOLD', reasoning: 'Nessun sentiment' };
+        const currentPos = openPositionsMap[inst];
+        const candles = await getXtbCandles(inst);
+        const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
+
+        addIgLog(`[Analisi ${inst.replace('_', '/')}] Sentiment: ${sentimentData.sentiment}. IA dice: ${sentimentData.reasoning}`);
+
+        if (currentPos) {
+          let stopLossHit = false;
+          let takeProfitHit = false;
+
+          let unrealizedPL = 0;
+          if (igDemoPositions[inst]) {
+            const pos = igDemoPositions[inst];
+            const eurUsdCandles = await getXtbCandles('EUR_USD');
+            const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+            unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+          }
+          
+          if (unrealizedPL >= igBotStatus.defaultTP) {
+            takeProfitHit = true;
+            addIgLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${igBotStatus.defaultTP.toFixed(2)} €)`);
+          } else if (unrealizedPL <= igBotStatus.defaultSL) {
+            stopLossHit = true;
+            addIgLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${igBotStatus.defaultSL.toFixed(2)} €)`);
+          }
+
+          const needsClosure = stopLossHit || takeProfitHit ||
+            (currentPos.side === 'buy' && sentimentData.sentiment === 'SELL') ||
+            (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
+
+          if (needsClosure) {
+            const reason = stopLossHit ? `Stop Loss (${igBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${igBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
+            addIgLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
+            
+            const entryPrice = igDemoPositions[inst].avgPrice;
+            const side = igDemoPositions[inst].side;
+            const units = igDemoPositions[inst].units;
+
+            const eurUsdCandles = await getXtbCandles('EUR_USD');
+            const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+
+            const pnlInEur = calculateDemoPnLInEur(inst, side, entryPrice, currentPrice, units, eurUsdPrice);
+            igBotStatus.balance += pnlInEur;
+            updateIgPnLHistory(pnlInEur);
+
+            delete igDemoPositions[inst];
+            addIgLog(`[DEMO IG] Posizione simulata su ${inst} chiusa con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+            addIgLogicLog({
+              timestamp: new Date().toISOString(),
+              instrument: inst,
+              action: 'CHIUSURA_SIMULATA',
+              reasoning: `Chiusura simulata posizione ${side.toUpperCase()} per sentiment ${sentimentData.sentiment} (P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €): ${sentimentData.reasoning}`,
+              price: currentPrice
+            });
+            await saveIgBotStatus();
+          } else {
+            addIgLog(`[Portafoglio ${inst.replace('_', '/')}] Mantengo la posizione ${currentPos.side.toUpperCase()} aperta (Sentiment concorda: ${sentimentData.sentiment}).`);
+          }
+        } else if (sentimentData.sentiment === 'BUY' || sentimentData.sentiment === 'SELL') {
+          const riskAmount = igBotStatus.balance * (igBotStatus.riskPercentage / 100);
+          const unitsToTrade = Math.max(10, Math.floor(riskAmount * 500)); 
+
+          addIgLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità (Rischio: ${igBotStatus.riskPercentage}% del saldo).`);
+
+          igDemoPositions[inst] = {
+            units: unitsToTrade,
+            avgPrice: currentPrice,
+            side: sentimentData.sentiment === 'BUY' ? 'buy' : 'sell'
+          };
+          addIgLog(`[DEMO IG] Ordine simulato ${sentimentData.sentiment.toUpperCase()} di ${unitsToTrade} unità eseguito per ${inst} al prezzo di ${currentPrice.toFixed(5)}!`);
+          addIgLogicLog({
+            timestamp: new Date().toISOString(),
+            instrument: inst,
+            action: sentimentData.sentiment,
+            reasoning: sentimentData.reasoning,
+            price: currentPrice
+          });
+          await saveIgBotStatus();
+        } else {
+          addIgLogicLog({
+            timestamp: new Date().toISOString(),
+            instrument: inst,
+            action: 'HOLD',
+            reasoning: sentimentData.reasoning,
+            price: currentPrice
+          });
+        }
+      }
+    }
+
+    addIgLog(`[Auto-Trading] Ciclo di trading automatico IG completato con successo.`);
+  } catch (error: any) {
+    addIgLog(`[Auto-Trading Errore Critico] Errore durante l'esecuzione del ciclo IG: ${error.message}`);
+  }
+}
+
+// --- IG MARKETS API AUTOMATION ENDPOINTS ---
+
+app.get("/api/trading/ig-status", async (req, res) => {
+  try {
+    initializeIgPnLHistory();
+
+    const currentPrices: Record<string, number> = {};
+    const eurUsdCandles = await getXtbCandles('EUR_USD');
+    const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+    currentPrices['EUR_USD'] = eurUsdPrice;
+
+    for (const inst of igBotStatus.monitoredInstruments) {
+      if (inst === 'EUR_USD') continue;
+      const candles = await getXtbCandles(inst);
+      currentPrices[inst] = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
+    }
+
+    let positionsList: any[] = [];
+    let totalUnrealizedPnL = 0;
+    let isRealActive = false;
+
+    if (isRealIgConfigured()) {
+      try {
+        const accounts = await getIgAccounts();
+        if (accounts && accounts.length > 0) {
+          const preferredAcct = accounts.find(a => a.preferred) || accounts[0];
+          let balance = 30000.00;
+          if (preferredAcct.balance !== undefined) {
+            balance = parseFloat(preferredAcct.balance);
+          } else if (preferredAcct.accountBalance && preferredAcct.accountBalance.balance !== undefined) {
+            balance = parseFloat(preferredAcct.accountBalance.balance);
+          }
+          igBotStatus.balance = balance;
+          isRealActive = true;
+        }
+
+        const realPositions = await getIgOpenPositions();
+        for (const pos of realPositions) {
+          const pnl = pos.position.unrealizedPnL || 0;
+          totalUnrealizedPnL += pnl;
+          const mappedSymbol = mapIgEpicToSymbol(pos.market.epic);
+          positionsList.push({
+            symbol: mappedSymbol,
+            qty: String(pos.position.size),
+            avg_entry_price: String(pos.position.level),
+            current_price: String(pos.market.bid || pos.position.level),
+            unrealized_pl: String(pnl),
+            side: pos.position.direction.toLowerCase(),
+            dealId: pos.position.dealId
+          });
+        }
+      } catch (err: any) {
+        addIgLog(`[IG REST API Errore] Impossibile recuperare i dettagli reali di IG: ${err.message}. Uso simulatore.`);
+        isRealActive = false;
+      }
+    }
+
+    if (!isRealActive) {
+      for (const inst in igDemoPositions) {
+        const pos = igDemoPositions[inst];
+        const currentPrice = currentPrices[inst] || pos.avgPrice;
+        const pnlInEur = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+
+        totalUnrealizedPnL += pnlInEur;
+        positionsList.push({
+          symbol: inst,
+          qty: String(pos.units),
+          avg_entry_price: String(pos.avgPrice),
+          current_price: String(currentPrice),
+          unrealized_pl: String(pnlInEur),
+          side: pos.side
+        });
+      }
+    }
+
+    if (igBotStatus.dailyPnL && igBotStatus.dailyPnL.length > 0) {
+      igBotStatus.dailyPnL[igBotStatus.dailyPnL.length - 1].unrealized = totalUnrealizedPnL;
+    }
+
+    res.json({
+      status: {
+        ...igBotStatus,
+        unrealizedPnL: totalUnrealizedPnL,
+        equity: igBotStatus.balance + totalUnrealizedPnL
+      },
+      positions: positionsList,
+      isDemo: !isRealActive
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/trading/ig-status", async (req, res) => {
+  const { active } = req.body;
+  if (typeof active === 'boolean') {
+    igBotStatus.active = active;
+    addIgLog(`[Auto-Trading] Stato trading automatico modificato in: ${active ? 'ATTIVO' : 'SPENTO'}`);
+    await saveIgBotStatus();
+    res.json({ success: true, active: igBotStatus.active });
+  } else {
+    res.status(400).json({ success: false, error: 'Parametro active non valido.' });
+  }
+});
+
+app.post("/api/trading/ig-trigger", async (req, res) => {
+  try {
+    await executeIgTradingCycle(true);
+    res.json({ success: true, message: 'Ciclo di trading automatico IG completato con successo.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/trading/ig-reset-logs", async (req, res) => {
+  igBotStatus.logs = [];
+  igBotStatus.logicLogs = [];
+  addIgLog(`[Auto-Trading] Log IG azzerati dall'utente.`);
+  await saveIgBotStatus();
+  await saveIgLogicLogs();
+  res.json({ success: true });
+});
+
+app.post("/api/trading/ig-reset-balance", async (req, res) => {
+  igBotStatus.balance = 30000.00;
+  igDemoPositions = {};
+  igBotStatus.dailyPnL = [];
+  addIgLog(`[Auto-Trading] Saldo simulato riportato a 30000.00€ e posizioni azzerate dall'utente.`);
+  await saveIgBotStatus();
+  res.json({ success: true });
+});
+
+app.post("/api/trading/ig-settings", async (req, res) => {
+  const { defaultTP, defaultSL, riskPercentage } = req.body;
+  if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
+    igBotStatus.defaultTP = defaultTP;
+    igBotStatus.defaultSL = defaultSL;
+    if (typeof riskPercentage === 'number') {
+      igBotStatus.riskPercentage = riskPercentage;
+    }
+    addIgLog(`[Auto-Trading] Aggiornate impostazioni globali IG: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${igBotStatus.riskPercentage}%`);
+    await saveIgBotStatus();
+    res.json({ success: true, defaultTP, defaultSL, riskPercentage: igBotStatus.riskPercentage });
+  } else {
+    res.status(400).json({ success: false, error: 'Parametri non validi.' });
+  }
+});
+
+app.get("/api/trading/ig-analysis/:instrument", async (req, res) => {
+  try {
+    const { instrument } = req.params;
+    const candles = await getXtbCandles(instrument);
+    const analysis = await analyzeMarketWithAI(instrument, candles);
+    const isReal = isRealIgConfigured();
+    res.json({ candles, analysis, isDemo: !isReal });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Errore durante l'analisi" });
+  }
+});
+
+app.post("/api/trading/ig-order", async (req, res) => {
+  try {
+    const { instrument, units, side } = req.body;
+
+    if (isRealIgConfigured()) {
+      try {
+        const session = await getIgSession();
+        const apiKey = process.env.IG_DEMO_API_KEY;
+        const baseUrl = getIgBaseUrl();
+        const epic = getIgEpic(instrument);
+
+        const size = Math.max(1, Math.floor(units / 1000));
+
+        addIgLog(`[IG REST API] Invio ordine di acquisto reale su ${epic} (size: ${size}, side: ${side.toUpperCase()})...`);
+        const response = await fetch(`${baseUrl}/positions/otc`, {
+          method: 'POST',
+          headers: {
+            'X-IG-API-KEY': apiKey || '',
+            'CST': session.cst,
+            'X-SECURITY-TOKEN': session.securityToken,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Version': '2'
+          },
+          body: JSON.stringify({
+            epic: epic,
+            expiry: "-",
+            direction: side.toUpperCase() === "BUY" ? "BUY" : "SELL",
+            size: size,
+            orderType: "MARKET",
+            guaranteedStop: false,
+            forceOpen: true,
+            currencyCode: "EUR",
+            level: null,
+            limitDistance: null,
+            limitLevel: null,
+            stopDistance: null,
+            stopLevel: null,
+            quoteId: null,
+            trailingStop: false,
+            trailingStopIncrement: null
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(`Errore esecuzione ordine reale IG (${response.status}): ${errData.errorCode || 'UNKNOWN_ERROR'}`);
+        }
+
+        const data: any = await response.json();
+        const dealReference = data.dealReference;
+        addIgLog(`[IG REST API] Ordine inviato con successo! Riferimento deal: ${dealReference}`);
+
+        const accounts = await getIgAccounts().catch(() => []);
+        if (accounts && accounts.length > 0) {
+          const preferredAcct = accounts.find(a => a.preferred) || accounts[0];
+          if (preferredAcct.balance !== undefined) {
+            igBotStatus.balance = parseFloat(preferredAcct.balance);
+          } else if (preferredAcct.accountBalance && preferredAcct.accountBalance.balance !== undefined) {
+            igBotStatus.balance = parseFloat(preferredAcct.accountBalance.balance);
+          }
+          await saveIgBotStatus();
+        }
+
+        return res.json({
+          isDemo: false,
+          orderFillTransaction: {
+            id: dealReference,
+            instrument,
+            units: side === "buy" ? String(units) : `-${units}`,
+            price: "MARKET",
+            pl: "0.00",
+            commission: "0.00",
+            accountBalance: igBotStatus.balance.toFixed(2)
+          },
+          message: `Ordine REALE eseguito con successo su IG Markets (Deal Ref: ${dealReference}).`
+        });
+
+      } catch (err: any) {
+        addIgLog(`[IG REST API Errore] Errore esecuzione ordine reale: ${err.message}.`);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    const orderId = "DEMO_IG_" + Math.floor(Math.random() * 900000 + 100000);
+    const candles = await getXtbCandles(instrument);
+    const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
+    
+    igDemoPositions[instrument] = {
+      units: parseInt(units) || 1000,
+      avgPrice: currentPrice,
+      side: side === "buy" ? "buy" : "sell"
+    };
+    
+    addIgLog(`[Auto-Trading] Ordine manuale di ${units} unità su ${instrument} (${side.toUpperCase()}) eseguito con successo.`);
+    await saveIgBotStatus();
+
+    return res.json({
+      isDemo: true,
+      orderFillTransaction: {
+        id: orderId,
+        instrument,
+        units: side === "buy" ? String(units) : `-${units}`,
+        price: String(currentPrice),
+        pl: "0.00",
+        commission: "0.00",
+        accountBalance: igBotStatus.balance.toFixed(2)
+      },
+      message: "Ordine simulato con successo in modalità Demo IG Markets."
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Errore esecuzione ordine" });
+  }
+});
+
+app.get("/api/trading/ig-account", async (req, res) => {
+  try {
+    if (isRealIgConfigured()) {
+      try {
+        const accounts = await getIgAccounts();
+        if (accounts && accounts.length > 0) {
+          const preferredAcct = accounts.find(a => a.preferred) || accounts[0];
+          let balance = 30000.00;
+          if (preferredAcct.balance !== undefined) {
+            balance = parseFloat(preferredAcct.balance);
+          } else if (preferredAcct.accountBalance && preferredAcct.accountBalance.balance !== undefined) {
+            balance = parseFloat(preferredAcct.accountBalance.balance);
+          }
+          igBotStatus.balance = balance;
+          await saveIgBotStatus();
+
+          return res.json({
+            isDemo: false,
+            account: {
+              id: preferredAcct.accountId,
+              balance: balance.toFixed(2),
+              currency: preferredAcct.currency || "EUR",
+              NAV: balance.toFixed(2),
+              openPositionCount: accounts.length,
+              pendingOrderCount: 0,
+              alias: preferredAcct.accountName || "IG-Live"
+            }
+          });
+        }
+      } catch (err: any) {
+        addIgLog(`[IG REST API Errore] Fallito caricamento conto reale: ${err.message}. Uso simulatore.`);
+      }
+    }
+
+    res.json({
+      isDemo: true,
+      account: {
+        id: process.env.IG_DEMO_API_KEY_NAME || "Z6CKEN",
+        balance: igBotStatus.balance.toFixed(2),
+        currency: "EUR",
+        NAV: igBotStatus.balance.toFixed(2),
+        openPositionCount: Object.keys(igDemoPositions).length,
+        pendingOrderCount: 0,
+        alias: "IG-Demo"
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Errore recupero account" });
+  }
+});
+
+app.post("/api/trading/ig-close-position", async (req, res) => {
+  const { symbol } = req.body;
+  if (!symbol) {
+    return res.status(400).json({ success: false, error: "Strumento mancante." });
+  }
+
+  if (isRealIgConfigured()) {
+    try {
+      addIgLog(`[IG REST API] Richiesta chiusura posizione reale per ${symbol}...`);
+      const result = await closeIgPosition(symbol);
+      addIgLog(`[IG REST API] Posizione reale chiusa con successo! Ref: ${result.dealReference || 'OK'}`);
+
+      const accounts = await getIgAccounts().catch(() => []);
+      if (accounts && accounts.length > 0) {
+        const preferredAcct = accounts.find(a => a.preferred) || accounts[0];
+        if (preferredAcct.balance !== undefined) {
+          igBotStatus.balance = parseFloat(preferredAcct.balance);
+        } else if (preferredAcct.accountBalance && preferredAcct.accountBalance.balance !== undefined) {
+          igBotStatus.balance = parseFloat(preferredAcct.accountBalance.balance);
+        }
+        await saveIgBotStatus();
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      addIgLog(`[IG REST API Errore] Chiusura posizione reale fallita: ${err.message}. Fallback a simulated.`);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  try {
+    const pos = igDemoPositions[symbol];
+    if (!pos) {
+      return res.status(404).json({ success: false, error: "Posizione non trovata." });
+    }
+
+    const candles = await getXtbCandles(symbol);
+    const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
+
+    const eurUsdCandles = await getXtbCandles('EUR_USD');
+    const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
+
+    const pnlInEur = calculateDemoPnLInEur(symbol, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
+    igBotStatus.balance += pnlInEur;
+    delete igDemoPositions[symbol];
+    addIgLog(`[DEMO IG] Posizione simulata su ${symbol} chiusa manualmente con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
+    
+    updateIgPnLHistory(pnlInEur);
+    await saveIgBotStatus();
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/trading/ig-test-connection", async (req, res) => {
+  addIgLog(`[IG TEST] Avvio del test di connessione esplicito richiesto dall'utente...`);
+  const username = process.env.IG_USERNAME;
+  const password = process.env.IG_PASSWORD;
+  const apiKey = process.env.IG_DEMO_API_KEY;
+  const mode = process.env.IG_MODE || 'demo';
+
+  try {
+    // 1. Diagnostic checks before making API requests
+    if (!username || !password || !apiKey) {
+      throw new Error("Credenziali IG non configurate nei Secrets. Assicurati di impostare IG_USERNAME, IG_PASSWORD e IG_DEMO_API_KEY.");
+    }
+
+    if (username.includes("@")) {
+      throw new Error(`L'username impostato è un'email (${username}). Le API REST di IG Markets NON supportano l'uso dell'email come identifier di login. Devi impostare il tuo vero username alfanumerico (quello che usi per loggarti sul sito di IG, es. 'valan21pm' - che è diverso dall'email e dal numero di conto Z6CKEN) nella variabile IG_USERNAME nei Secrets.`);
+    }
+
+    // 2. Perform connection probe
+    addIgLog(`[IG TEST] Tentativo di login su endpoint IG (Modalità: ${mode.toUpperCase()})...`);
+    
+    let session;
+    try {
+      session = await loginToIg();
+    } catch (loginErr: any) {
+      const errMsg = loginErr.message || "";
+      
+      if (errMsg.includes("error.security.api-key-invalid") || errMsg.includes("403")) {
+        // Test if the user has a Live API key but is testing on Demo, or vice versa
+        const otherMode = mode === 'demo' ? 'real' : 'demo';
+        const otherUrl = otherMode === 'real' ? 'https://api.ig.com/gateway/deal/session' : 'https://demo-api.ig.com/gateway/deal/session';
+        
+        addIgLog(`[IG TEST] Chiave API rifiutata dall'ambiente ${mode.toUpperCase()}. Controllo se la chiave funziona per ${otherMode.toUpperCase()}...`);
+        
+        throw new Error(`La chiave API non è valida per l'ambiente ${mode.toUpperCase()} (errore 403 API_KEY_INVALID). Probabilmente hai generato una chiave per conto REALE (LIVE) ma l'app sta usando l'endpoint DEMO. Per risolvere: imposta la variabile d'ambiente IG_MODE su 'real' (o 'live') nei Secrets dell'applicazione.`);
+      }
+      
+      if (errMsg.includes("error.security.invalid-details") || errMsg.includes("401")) {
+        throw new Error(`Le credenziali inserite (username o password) non sono corrette per IG Markets (errore 401 INVALID_DETAILS). Assicurati che lo username '${username}' sia l'username alfanumerico esatto di IG (non l'email e non il numero di conto Z6CKEN) e che la password nei Secrets sia corretta.`);
+      }
+
+      if (errMsg.includes("validation.pattern.invalid")) {
+        throw new Error(`Il formato dell'username '${username}' non è valido per le API di IG. Assicurati di usare l'username alfanumerico corretto.`);
+      }
+
+      throw loginErr;
+    }
+
+    addIgLog(`[IG TEST] Login riuscito! Recupero dei conti associati...`);
+    const accounts = await getIgAccounts();
+
+    let balance = 30000.00;
+    let accountName = "IG CFD Demo";
+    if (accounts && accounts.length > 0) {
+      const preferredAcct = accounts.find(a => a.preferred) || accounts[0];
+      accountName = preferredAcct.accountName || "IG CFD";
+      if (preferredAcct.balance !== undefined) {
+        balance = parseFloat(preferredAcct.balance);
+      } else if (preferredAcct.accountBalance && preferredAcct.accountBalance.balance !== undefined) {
+        balance = parseFloat(preferredAcct.accountBalance.balance);
+      }
+    }
+
+    // Aggiorna il saldo e lo stato locale del bot
+    igBotStatus.balance = balance;
+    await saveIgBotStatus();
+
+    addIgLog(`[IG TEST] Test completato con successo! Connesso a ${accountName} (ID: ${session.accountId}) con un saldo reale di ${balance.toFixed(2)} EUR.`);
+    
+    res.json({
+      success: true,
+      accountId: session.accountId,
+      balance: balance,
+      accountName: accountName,
+      message: `Connessione a IG Markets stabilita con successo! Collegato all'account ${accountName} con un saldo di ${balance.toFixed(2)} €.`
+    });
+  } catch (error: any) {
+    addIgLog(`[IG TEST Errore] Connessione a IG Markets fallita: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message || "Errore di connessione a IG"
+    });
+  }
+});
+
 
 // Vite middleware for development
 async function startServer() {
@@ -3875,8 +5067,11 @@ async function startServer() {
 
   // Loop molto veloce (5 secondi) per chiudere in tempo reale le posizioni in profitto
   setInterval(() => {
-    executeOandaRealtimeCheck().catch(err => {
+    executeXtbRealtimeCheck().catch(err => {
       console.error('[Background Fast Check Error]', err);
+    });
+    executeIgRealtimeCheck().catch(err => {
+      console.error('[Background Fast Check Error IG]', err);
     });
   }, 5000); // Ogni 5 secondi
 

@@ -1198,7 +1198,7 @@ export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'paper' | 'live'>('paper');
-  const [mainView, setMainView] = useState<'alpaca' | 'oanda'>('alpaca');
+  const [mainView, setMainView] = useState<'alpaca' | 'xtb'>('alpaca');
 
   const [closingSymbols, setClosingSymbols] = useState<string[]>([]);
   const [confirmCloseSymbol, setConfirmCloseSymbol] = useState<{ symbol: string; type: 'paper' | 'live' } | null>(null);
@@ -1725,19 +1725,19 @@ export default function App() {
             Alpaca AI Trading Bot
           </button>
           <button
-            onClick={() => setMainView('oanda')}
+            onClick={() => setMainView('xtb')}
             className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-all cursor-pointer bg-transparent px-1 border-none ${
-              mainView === 'oanda'
+              mainView === 'xtb'
                 ? 'border-solid border-indigo-600 text-indigo-600 font-bold'
                 : 'border-solid border-transparent text-slate-500 hover:text-slate-700'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            OANDA AI Market & Trade
+            IG Markets AI Trade
           </button>
         </div>
 
-        {mainView === 'oanda' ? (
+        {mainView === 'xtb' ? (
           <TradingModule />
         ) : (
           <>
@@ -2924,7 +2924,7 @@ export default function App() {
                   />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Il report includerà tutti i log operativi e decisionali (Alpaca e OANDA) nel periodo selezionato.
+                  Il report includerà tutti i log operativi e decisionali (Alpaca e XTB) nel periodo selezionato.
                 </p>
               </div>
 
