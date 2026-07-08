@@ -1,20 +1,10 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/28355229-654c-4c49-94c7-18d05071ecc6
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+{
+  "projectId": "project-88b687bc-f709-4722-bc0",
+  "appId": "1:904887295261:web:580d3f4e7651f946eb15f4",
+  "apiKey": "AIzaSyAJ_dVhd1wq-sChVib0gcm6bwSyaRlHQE4",
+  "authDomain": "project-88b687bc-f709-4722-bc0.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-remixuntitled-28355229-654c-4c49-94c7-18d05071ecc6",
+  "storageBucket": "project-88b687bc-f709-4722-bc0.firebasestorage.app",
+  "messagingSenderId": "904887295261",
+  "measurementId": ""
+}
