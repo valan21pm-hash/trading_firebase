@@ -1,3 +1,4 @@
+import { GeminiSignalService } from './src/backend/services/geminiSignalService.js';
 import { TradingBotService } from './src/backend/services/tradingBotService.js';
 import { IgMarketsAPI } from './src/backend/services/IgMarketsAPI.js';
 import 'dotenv/config';
@@ -39,6 +40,8 @@ function runWithTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): P
   ]);
 }
 import express from 'express';
+const app = express();
+app.use(express.json());
 import path from 'path';
 process.on('unhandledRejection', (reason: any, promise) => {
   if (reason && reason.message && reason.message.includes('RESOURCE_EXHAUSTED')) {
@@ -61,103 +64,168 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 
 let db: any = null;
-
-try {
-  let dbId: string | undefined = undefined;
-  let projectId: string | undefined = undefined;
-  try {
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      dbId = config.firestoreDatabaseId;
-      projectId = config.projectId;
+async function getBrokerCredentials(broker: string, env: string) {
+  let dbCreds = null;
+  if (db) {
+    try {
+      const doc = await runWithTimeout(
+        db.collection('broker_credentials').doc('config').get(),
+        800,
+        { exists: false, data: () => null }
+      );
+      if (doc.exists) {
+        const allCreds = doc.data();
+        dbCreds = allCreds[broker]?.[env] || null;
+      }
+    } catch (err: any) {
+      console.warn(`[Firestore] Errore nel caricamento credenziali per ${broker} ${env}, uso fallback locale:`, err.message);
     }
-  } catch (e) {
-    console.error('[Firebase] Error reading firebase-applet-config.json:', e);
   }
-
-  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (serviceAccountKey) {
-    const serviceAccount = JSON.parse(serviceAccountKey);
-    initFirebaseApp({
-      credential: cert(serviceAccount)
-    });
-    
-    if (dbId && serviceAccount.project_id === projectId) {
-      db = getFirestore(dbId);
-      console.log(`[Firebase] Successfully initialized connection to named Firestore database: ${dbId}`);
-    } else {
-      db = getFirestore();
-      console.log('[Firebase] Successfully initialized connection to default Firestore database.');
-    }
-  } else {
-    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT_KEY non configurata. Il bot userà la memoria locale per i log e perderà lo storico al riavvio del server.');
-    db = null;
-  }
-} catch (error: any) {
-  console.error('[Firebase] Error initializing Firebase:', error);
-  db = null;
+  return dbCreds || localCredentialsFallback[broker]?.[env] || null;
 }
 
-let aiClient: GoogleGenAI | null = null;
 
-function getAi() {
-  if (!aiClient) {
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn("GEMINI_API_KEY environment variable is missing.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY || "missing-key", // Fallback to avoid immediate crash, will fail on use
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
+app.get("/api/trading/ig-account", async (req, res) => {
+  try {
+    const igApi = await initIgApi();
+    const accounts = await igApi.getAccounts().catch(() => []);
+    let balance = igBotStatus.balance;
+    let accountId = 'IG_DEMO';
+    
+    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
+    
+    if (accounts && accounts.length > 0) {
+      const preferredAcct = accounts.find((a: any) => a.preferred) || accounts[0];
+      accountId = preferredAcct.accountId || accountId;
+      const accountAlias = preferredAcct.accountAlias || preferredAcct.accountName || '';
+      
+      if (preferredAcct.balance !== undefined) {
+        if (typeof preferredAcct.balance === 'object' && preferredAcct.balance !== null) {
+          balance = parseFloat(preferredAcct.balance.balance || preferredAcct.balance.available || '0');
+        } else {
+          balance = parseFloat(preferredAcct.balance);
         }
       }
+      
+      if (isNaN(balance)) {
+        balance = igBotStatus.balance || 30000;
+      }
+      
+      res.json({
+        success: true,
+        account: { id: accountId, alias: accountAlias, balance: String(balance), currency: 'EUR', NAV: String(balance) },
+        isDemo: isDemoMode
+      });
+    } else {
+      res.json({
+        success: true,
+        account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
+        isDemo: isDemoMode
+      });
+    }
+  } catch (error: any) {
+    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
+    res.json({
+      success: true,
+      account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
+      isDemo: isDemoMode
     });
+  }
+});
+
+
+const PORT = process.env.PORT || 3000;
+let localCredentialsFallback: Record<string, any> = {};
+try {
+  if (fs.existsSync('credentials_fallback.json')) {
+    localCredentialsFallback = JSON.parse(fs.readFileSync('credentials_fallback.json', 'utf8'));
+  }
+} catch(e) {}
+function saveLocalCredentialsFallback(creds: any) {
+  try {
+    fs.writeFileSync('credentials_fallback.json', JSON.stringify(creds, null, 2));
+  } catch(e) {}
+}
+
+let aiClient: any = null;
+function getAi() {
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
   return aiClient;
 }
 
-const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+let igBotStatus = {
+  active: false,
+  balance: 30000,
+  defaultTP: 50,
+  defaultSL: -150,
+  trailingStop: 0,
+  timeframe: 15,
+  riskPercentage: 2,
+  monitoredInstruments: ['EUR_USD'],
+  logs: [] as string[],
+  logicLogs: [] as any[]
+};
+let igDemoPositions: Record<string, {
+  id: string;
+  symbol: string;
+  qty: number;
+  avg_entry_price: string;
+  current_price: string;
+  unrealized_pl: string;
+  side: 'buy' | 'sell';
+  stopLevel: number;
+  limitLevel: number;
+  highestPrice: number;
+  lowestPrice: number;
+  stopLossDistance: number;
+  takeProfitDistance: number;
+  trailingStopDistance: number;
+}> = {};
 
-// --- TRADING CREDENTIALS ENDPOINTS ---
-let localCredentialsFallback: any = {};
-const credsFilePath = path.join(process.cwd(), 'credentials_fallback.json');
-try {
-  if (fs.existsSync(credsFilePath)) {
-    localCredentialsFallback = JSON.parse(fs.readFileSync(credsFilePath, 'utf8'));
+function addIgLog(message: string) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `[${timestamp}] ${message}`;
+  if (!igBotStatus.logs) igBotStatus.logs = [];
+  igBotStatus.logs.unshift(logMsg);
+  if (igBotStatus.logs.length > 1000) igBotStatus.logs = igBotStatus.logs.slice(0, 1000);
+
+  if (db) {
+    db.collection('ig_operational_logs').add({
+      message: message,
+      timestamp: timestamp
+    }).catch((err: any) => console.error('[Firebase] Error saving IG operational log:', err));
   }
-} catch (e) {
-  console.error('[Fallback] Error reading credentials_fallback.json:', e);
 }
 
-function saveLocalCredentialsFallback(data: any) {
-  try {
-    fs.writeFileSync(credsFilePath, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[Fallback] Error writing credentials_fallback.json:', e);
+function addIgLogicLog(log: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }) {
+  if (!igBotStatus.logicLogs) igBotStatus.logicLogs = [];
+  igBotStatus.logicLogs.push(log);
+  if (igBotStatus.logicLogs.length > 500) {
+    igBotStatus.logicLogs = igBotStatus.logicLogs.slice(-500);
+  }
+
+  if (db) {
+    db.collection('ig_logic_logs').add({
+      timestamp: log.timestamp,
+      instrument: log.instrument,
+      action: log.action,
+      reasoning: log.reasoning,
+      price: log.price || null
+    }).catch((err: any) => console.error('[Firebase] Error saving IG logic log:', err));
   }
 }
 
-app.get('/api/trading/credentials', async (req, res) => {
-  if (!db) {
-    return res.json({ success: true, config: localCredentialsFallback });
+function getPipSizeAndFactor(symbol: string, price: number) {
+  const sym = symbol.toUpperCase();
+  if (sym.includes('JPY') || sym.includes('XAU') || sym.includes('GLD') || sym.includes('GOLD') || price > 50) {
+    return { pipSize: 0.01, pipFactor: 100 };
   }
-  try {
-    const doc = await runWithTimeout(
-      db.collection('broker_credentials').doc('config').get(),
-      800,
-      { exists: false, data: () => null }
-    );
-    res.json({ success: true, config: doc.exists ? doc.data() : localCredentialsFallback });
-  } catch (error: any) {
-    console.warn('[Firebase] Failed to fetch credentials, using fallback:', error.message);
-    res.json({ success: true, config: localCredentialsFallback });
-  }
-});
+  return { pipSize: 0.0001, pipFactor: 10000 };
+}
+
 
 app.post('/api/trading/credentials', async (req, res) => {
   const { broker, env, credentials } = req.body;
@@ -169,6 +237,18 @@ app.post('/api/trading/credentials', async (req, res) => {
   if (!localCredentialsFallback[broker]) localCredentialsFallback[broker] = {};
   localCredentialsFallback[broker][env] = credentials;
   saveLocalCredentialsFallback(localCredentialsFallback);
+
+  // Dynamically update resolved credentials in memory for Alpaca
+  if (broker === 'alpaca') {
+    const isLive = env === 'live' || env === 'real';
+    const modeKey = isLive ? 'live' : 'paper';
+    resolvedCredentials[modeKey] = {
+      apiKey: credentials.apiKey || credentials.username || '',
+      secretKey: credentials.secretKey || credentials.password || '',
+      isConfigured: !!((credentials.apiKey || credentials.username) && (credentials.secretKey || credentials.password))
+    };
+    console.log(`[Credentials Update] Alpaca ${modeKey} credentials updated dynamically in memory!`);
+  }
 
   if (!db) {
     return res.json({ success: true });
@@ -207,12 +287,51 @@ const resolvedCredentials = {
 async function autoDetectCredentials() {
   console.log('[Auto-Detect] Scanning and validating Alpaca credentials...');
   
+  // 1. Gather credentials from Firestore if database is active
+  let dbPaperKey = '';
+  let dbPaperSecret = '';
+  let dbLiveKey = '';
+  let dbLiveSecret = '';
+
+  if (db) {
+    try {
+      const doc = await db.collection('broker_credentials').doc('config').get();
+      if (doc.exists) {
+        const data = doc.data() || {};
+        if (data.alpaca) {
+          if (data.alpaca.paper) {
+            dbPaperKey = data.alpaca.paper.apiKey || data.alpaca.paper.username || '';
+            dbPaperSecret = data.alpaca.paper.secretKey || data.alpaca.paper.password || '';
+          }
+          if (data.alpaca.real || data.alpaca.live) {
+            const liveData = data.alpaca.real || data.alpaca.live;
+            dbLiveKey = liveData.apiKey || liveData.username || '';
+            dbLiveSecret = liveData.secretKey || liveData.password || '';
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Auto-Detect] Error loading credentials from Firestore:', e.message);
+    }
+  }
+
+  // 2. Gather credentials from local fallback
+  let fallbackPaperKey = localCredentialsFallback?.alpaca?.paper?.apiKey || localCredentialsFallback?.alpaca?.paper?.username || '';
+  let fallbackPaperSecret = localCredentialsFallback?.alpaca?.paper?.secretKey || localCredentialsFallback?.alpaca?.paper?.password || '';
+  let fallbackLiveKey = (localCredentialsFallback?.alpaca?.real || localCredentialsFallback?.alpaca?.live)?.apiKey || (localCredentialsFallback?.alpaca?.real || localCredentialsFallback?.alpaca?.live)?.username || '';
+  let fallbackLiveSecret = (localCredentialsFallback?.alpaca?.real || localCredentialsFallback?.alpaca?.live)?.secretKey || (localCredentialsFallback?.alpaca?.real || localCredentialsFallback?.alpaca?.live)?.password || '';
+
+  // 3. Probing paper credentials
   const paperKeys = [
+    dbPaperKey,
+    fallbackPaperKey,
     process.env.APCA_PAPER_KEY,
     process.env.ALPACA_PAPER_API_KEY
   ].filter(Boolean) as string[];
   
   const paperSecrets = [
+    dbPaperSecret,
+    fallbackPaperSecret,
     process.env.APCA_PAPER_SEC,
     process.env.ALPACA_PAPER_SECRET_KEY,
     process.env.APCA_LIVE_SEC,
@@ -248,12 +367,17 @@ async function autoDetectCredentials() {
     if (paperSuccess) break;
   }
 
+  // 4. Probing live credentials
   const liveKeys = [
+    dbLiveKey,
+    fallbackLiveKey,
     process.env.APCA_LIVE_KEY,
     process.env.ALPACA_LIVE_API_KEY
   ].filter(Boolean) as string[];
 
   const liveSecrets = [
+    dbLiveSecret,
+    fallbackLiveSecret,
     process.env.APCA_LIVE_SEC,
     process.env.ALPACA_LIVE_SECRET_KEY,
     process.env.APCA_PAPER_SEC,
@@ -288,6 +412,25 @@ async function autoDetectCredentials() {
     }
     if (liveSuccess) break;
   }
+
+  // If no successful probe but we have keys loaded from database or fallback, configure them as default anyway!
+  if (!resolvedCredentials.paper.isConfigured && (dbPaperKey || fallbackPaperKey) && (dbPaperSecret || fallbackPaperSecret)) {
+    resolvedCredentials.paper = {
+      apiKey: dbPaperKey || fallbackPaperKey,
+      secretKey: dbPaperSecret || fallbackPaperSecret,
+      isConfigured: true
+    };
+    console.log('[Auto-Detect] Falling back to configured Paper keys (unverified via probe).');
+  }
+
+  if (!resolvedCredentials.live.isConfigured && (dbLiveKey || fallbackLiveKey) && (dbLiveSecret || fallbackLiveSecret)) {
+    resolvedCredentials.live = {
+      apiKey: dbLiveKey || fallbackLiveKey,
+      secretKey: dbLiveSecret || fallbackLiveSecret,
+      isConfigured: true
+    };
+    console.log('[Auto-Detect] Falling back to configured Live keys (unverified via probe).');
+  }
 }
 
 function getAlpacaConfig(mode: 'paper' | 'live') {
@@ -301,6 +444,22 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
       baseUrl: isLive ? 'https://api.alpaca.markets/v2' : 'https://paper-api.alpaca.markets/v2',
       apiKey,
       secretKey
+    };
+  }
+  
+  // Synchronous fallback to local credentials
+  const envKey = isLive ? 'real' : 'paper';
+  const localCreds = localCredentialsFallback?.alpaca?.[envKey] || localCredentialsFallback?.alpaca?.[mode] || {};
+  const localApiKey = localCreds.apiKey || localCreds.username || '';
+  const localSecretKey = localCreds.secretKey || localCreds.password || '';
+  if (localApiKey && localSecretKey) {
+    resolvedCredentials[mode] = { apiKey: localApiKey, secretKey: localSecretKey, isConfigured: true };
+    return {
+      isConfigured: true,
+      isLive,
+      baseUrl: isLive ? 'https://api.alpaca.markets/v2' : 'https://paper-api.alpaca.markets/v2',
+      apiKey: localApiKey,
+      secretKey: localSecretKey
     };
   }
   
@@ -845,6 +1004,57 @@ async function loadStateFromFirestore() {
       } catch (err) {
         console.error(`[Firebase] Error loading logic logs for ${mode}:`, err);
       }
+    }
+
+    // Carica configurazioni e log specifici per IG Markets da Firestore
+    try {
+      const igSettingsDoc = await db.collection('settings').doc('ig').get();
+      if (igSettingsDoc.exists) {
+        const d = igSettingsDoc.data() || {};
+        igBotStatus.active = d.active ?? igBotStatus.active;
+        igBotStatus.balance = d.balance ?? igBotStatus.balance;
+        igBotStatus.defaultTP = d.defaultTP ?? igBotStatus.defaultTP;
+        igBotStatus.defaultSL = d.defaultSL ?? igBotStatus.defaultSL;
+        igBotStatus.trailingStop = d.trailingStop ?? igBotStatus.trailingStop;
+        igBotStatus.timeframe = d.timeframe ?? igBotStatus.timeframe;
+        igBotStatus.riskPercentage = d.riskPercentage ?? igBotStatus.riskPercentage;
+        igBotStatus.monitoredInstruments = d.monitoredInstruments ?? igBotStatus.monitoredInstruments;
+        console.log('[Firebase] Loaded igBotStatus settings successfully.');
+      }
+
+      const igLogsSnap = await db.collection('ig_operational_logs')
+        .orderBy('timestamp', 'desc')
+        .limit(1000)
+        .get();
+      if (!igLogsSnap.empty) {
+        const fetchedLogs: string[] = [];
+        igLogsSnap.forEach((doc: any) => {
+          const data = doc.data();
+          fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
+        });
+        igBotStatus.logs = fetchedLogs;
+      }
+
+      const igLogicSnap = await db.collection('ig_logic_logs')
+        .orderBy('timestamp', 'desc')
+        .limit(500)
+        .get();
+      if (!igLogicSnap.empty) {
+        const fetchedLogic: any[] = [];
+        igLogicSnap.forEach((doc: any) => {
+          const data = doc.data();
+          fetchedLogic.push({
+            timestamp: data.timestamp,
+            instrument: data.instrument || 'EUR_USD',
+            action: data.action,
+            reasoning: data.reasoning,
+            price: data.price
+          });
+        });
+        igBotStatus.logicLogs = fetchedLogic.reverse();
+      }
+    } catch (err: any) {
+      console.warn('[Firebase] Warning loading IG settings/logs:', err.message);
     }
   } catch (err: any) {
     console.error('[Firebase] Error loading state from Firestore:', err);
@@ -1426,7 +1636,7 @@ async function executeTradingCycle(force: boolean = false) {
   const now = Date.now();
 
   if (botStatus.active || force) {
-    const alpacaTimeframeMs = (botStatus.timeframe || 15) * 60 * 1000;
+    const alpacaTimeframeMs = (botStatus.timeframe || 5) * 60 * 1000;
     if (force || lastAlpacaRunTime === 0 || (now - lastAlpacaRunTime >= alpacaTimeframeMs)) {
       lastAlpacaRunTime = now;
       botStatus.lastCheck = new Date().toISOString();
@@ -3320,6 +3530,158 @@ async function executeAlpacaRealtimeCheck() {
   }
 }
 
+let igRealtimeTracking: Record<string, { highestPrice: number; lowestPrice: number }> = {};
+
+async function executeIgRealtimeCheck() {
+  if (!igBotStatus.active) return;
+
+  try {
+    const igApi = await initIgApi().catch(() => null);
+    if (!igApi) return;
+
+    // Tentiamo di verificare posizioni reali
+    try {
+      const positionsData = await igApi.getPositions();
+      if (positionsData && positionsData.length > 0) {
+        for (const p of positionsData) {
+          const dealId = p.position.dealId;
+          const symbol = p.market.instrumentName || p.market.epic;
+          const direction = p.position.direction || 'BUY';
+          const currentPrice = direction === 'BUY' ? parseFloat(p.market.bid || '0') : parseFloat(p.market.offer || '0');
+          const stopLevel = p.position.stopLevel ? parseFloat(p.position.stopLevel) : null;
+          
+          if (igBotStatus.trailingStop > 0 && currentPrice > 0 && stopLevel !== null) {
+            const { pipSize } = getPipSizeAndFactor(symbol, currentPrice);
+            const trailingStopPriceDist = igBotStatus.trailingStop * pipSize;
+
+            if (!igRealtimeTracking[dealId]) {
+              igRealtimeTracking[dealId] = {
+                highestPrice: currentPrice,
+                lowestPrice: currentPrice
+              };
+            }
+
+            const tracking = igRealtimeTracking[dealId];
+
+            if (direction === 'BUY') {
+              if (currentPrice > tracking.highestPrice) {
+                tracking.highestPrice = currentPrice;
+                const newStopLevel = tracking.highestPrice - trailingStopPriceDist;
+                if (newStopLevel > stopLevel) {
+                  await igApi.updatePosition(dealId, { stopLevel: newStopLevel });
+                  addIgLog(`[Trailing Stop Reale] Prezzo di ${symbol} è salito a ${currentPrice}. Spostato Stop Loss reale su IG a ${newStopLevel.toFixed(4)}.`);
+                }
+              }
+            } else { // SELL
+              if (currentPrice < tracking.lowestPrice) {
+                tracking.lowestPrice = currentPrice;
+                const newStopLevel = tracking.lowestPrice + trailingStopPriceDist;
+                if (stopLevel === null || newStopLevel < stopLevel) {
+                  await igApi.updatePosition(dealId, { stopLevel: newStopLevel });
+                  addIgLog(`[Trailing Stop Reale] Prezzo di ${symbol} è sceso a ${currentPrice}. Spostato Stop Loss reale su IG a ${newStopLevel.toFixed(4)}.`);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Se fallisce il recupero delle posizioni reali, gestiamo le posizioni simulate (DEMO)
+      const ids = Object.keys(igDemoPositions);
+      if (ids.length === 0) return;
+
+      for (const id of ids) {
+        const pos = igDemoPositions[id];
+        let currentPrice = parseFloat(pos.current_price);
+        
+        // Tentiamo di prendere il prezzo reale dello strumento da IG
+        try {
+          const epicMap: Record<string, string> = { 'EUR_USD': 'CS.D.EURUSD.CFD.IP', 'GBP_USD': 'CS.D.GBPUSD.CFD.IP' };
+          const epic = epicMap[pos.symbol] || 'CS.D.EURUSD.CFD.IP';
+          const marketData = await igApi.getMarket(epic);
+          if (marketData && marketData.snapshot) {
+            currentPrice = pos.side === 'buy' 
+              ? parseFloat(marketData.snapshot.bid) 
+              : parseFloat(marketData.snapshot.offer);
+          } else {
+            // Generiamo una piccolissima variazione casuale
+            currentPrice = currentPrice * (1 + (Math.random() - 0.5) * 0.0001);
+          }
+        } catch (err) {
+          currentPrice = currentPrice * (1 + (Math.random() - 0.5) * 0.0001);
+        }
+
+        pos.current_price = currentPrice.toFixed(4);
+
+        // Ricalcolo PnL Non Realizzato
+        const { pipFactor } = getPipSizeAndFactor(pos.symbol, currentPrice);
+        const pnl = pos.side === 'buy'
+          ? (currentPrice - parseFloat(pos.avg_entry_price)) * pos.qty * pipFactor
+          : (parseFloat(pos.avg_entry_price) - currentPrice) * pos.qty * pipFactor;
+
+        pos.unrealized_pl = pnl.toFixed(2);
+
+        // Controllo Limiti (Stop Loss e Take Profit)
+        let hit = false;
+        let reason = '';
+
+        if (pos.side === 'buy') {
+          if (currentPrice <= pos.stopLevel) {
+            hit = true;
+            reason = `Stop Loss colpito a ${pos.stopLevel.toFixed(4)}`;
+          } else if (currentPrice >= pos.limitLevel) {
+            hit = true;
+            reason = `Take Profit colpito a ${pos.limitLevel.toFixed(4)}`;
+          }
+        } else { // sell
+          if (currentPrice >= pos.stopLevel) {
+            hit = true;
+            reason = `Stop Loss colpito a ${pos.stopLevel.toFixed(4)}`;
+          } else if (currentPrice <= pos.limitLevel) {
+            hit = true;
+            reason = `Take Profit colpito a ${pos.limitLevel.toFixed(4)}`;
+          }
+        }
+
+        if (hit) {
+          addIgLog(`[Chiusura Simulata] Posizione ${pos.symbol} (ID: ${pos.id}) chiusa a ${currentPrice.toFixed(4)}. Motivo: ${reason}. PnL finale: ${pos.unrealized_pl}€.`);
+          igBotStatus.balance += pnl;
+          delete igDemoPositions[id];
+          continue;
+        }
+
+        // Controllo Trailing Stop
+        if (pos.trailingStopDistance > 0) {
+          const { pipSize } = getPipSizeAndFactor(pos.symbol, currentPrice);
+          const trailingStopPriceDist = pos.trailingStopDistance * pipSize;
+
+          if (pos.side === 'buy') {
+            if (currentPrice > pos.highestPrice) {
+              pos.highestPrice = currentPrice;
+              const newStop = pos.highestPrice - trailingStopPriceDist;
+              if (newStop > pos.stopLevel) {
+                pos.stopLevel = newStop;
+                addIgLog(`[Trailing Stop Simulato] Prezzo di ${pos.symbol} è salito a ${currentPrice.toFixed(4)}. Stop Loss simulato spostato a ${pos.stopLevel.toFixed(4)}.`);
+              }
+            }
+          } else { // sell
+            if (currentPrice < pos.lowestPrice) {
+              pos.lowestPrice = currentPrice;
+              const newStop = pos.lowestPrice + trailingStopPriceDist;
+              if (newStop < pos.stopLevel) {
+                pos.stopLevel = newStop;
+                addIgLog(`[Trailing Stop Simulato] Prezzo di ${pos.symbol} è sceso a ${currentPrice.toFixed(4)}. Stop Loss simulato spostato a ${pos.stopLevel.toFixed(4)}.`);
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // Silenzioso
+  }
+}
+
 async function executeXtbRealtimeCheck() {
   if (!xtbBotStatus.active) return;
   
@@ -4164,6 +4526,13 @@ async function startServer() {
     });
   }, 5000); // Ogni 5 secondi
 
+  // Loop ultrarapido (1 secondo) per monitorare costantemente le quotazioni e le posizioni di IG Markets (Trailing Stop, SL, TP)
+  setInterval(() => {
+    executeIgRealtimeCheck().catch(err => {
+      console.error('[Background Fast Check IG Error]', err);
+    });
+  }, 1000); // Ogni 1 secondo
+
   
 
   
@@ -4172,38 +4541,353 @@ async function startServer() {
 // IG MARKETS ENDPOINTS
 // ============================================
 
-let igBotStatus = {
-  active: false,
-  balance: 30000,
-  defaultTP: 50,
-  defaultSL: -150,
-  trailingStop: 0,
-  timeframe: 15,
-  riskPercentage: 2,
-  monitoredInstruments: ['EUR_USD']
-};
-let igDemoPositions = {};
+
+
+
+// Sottosistema di logging separato per IG Markets
+
+
+
 
 // Helper per caricare credenziali e inizializzare API
-async function getBrokerCredentials(broker: string, env: string) {
-  let dbCreds = null;
-  if (db) {
-    try {
-      const doc = await runWithTimeout(
-        db.collection('broker_credentials').doc('config').get(),
-        800,
-        { exists: false, data: () => null }
-      );
-      if (doc.exists) {
-        const allCreds = doc.data();
-        dbCreds = allCreds[broker]?.[env] || null;
-      }
-    } catch (err: any) {
-      console.warn(`[Firestore] Errore nel caricamento credenziali per ${broker} ${env}, uso fallback locale:`, err.message);
+
+
+app.post("/api/trading/ig-status", async (req, res) => {
+  const { active } = req.body;
+  console.log(`[IG Status Toggle] Requested active state: ${active}`);
+  if (active !== undefined) {
+    igBotStatus.active = active;
+    addIgLog(`Bot trading IG ${active ? 'ATTIVATO' : 'DISATTIVATO'}.`);
+    if (db) {
+      db.collection('settings').doc('ig').set({ active: igBotStatus.active }, { merge: true }).catch(() => {});
     }
   }
-  return dbCreds || localCredentialsFallback[broker]?.[env] || null;
+  res.json({ success: true, active: igBotStatus.active });
+});
+
+app.post("/api/trading/ig-order", async (req, res) => {
+  const { instrument, units, side } = req.body;
+  const direction = (side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
+  const qty = parseFloat(units) || 1;
+  const defaultSLPips = Math.abs(igBotStatus.defaultSL || 150);
+  const defaultTPPips = Math.abs(igBotStatus.defaultTP || 50);
+
+  addIgLog(`[Manuale] Richiesta inserimento ordine ${direction.toUpperCase()} per ${qty} unità di ${instrument}...`);
+
+  try {
+    const igApi = await initIgApi();
+    const epicMap: Record<string, string> = { 'EUR_USD': 'CS.D.EURUSD.CFD.IP', 'GBP_USD': 'CS.D.GBPUSD.CFD.IP' };
+    const epic = epicMap[instrument] || 'CS.D.EURUSD.CFD.IP';
+    
+    // Invia stopDistance e limitDistance alla piattaforma di IG Markets!
+    const result = await igApi.createOrder(
+      epic,
+      direction === 'buy' ? 'BUY' : 'SELL',
+      qty,
+      defaultSLPips,
+      defaultTPPips
+    );
+
+    addIgLog(`[Ordine Eseguito] Ordine reale ${direction.toUpperCase()} su IG eseguito con successo. DealRef: ${result.dealReference || result.dealId}. Stop Loss: -${defaultSLPips} pips, Take Profit: +${defaultTPPips} pips.`);
+    res.json({ success: true, message: `Ordine IG reale eseguito con successo. DealRef: ${result.dealReference || result.dealId}` });
+  } catch (error: any) {
+    console.warn(`[IG Order Fallback] Errore su ordine reale, uso simulato: ${error.message}`);
+    // Fallback to Demo
+    const id = "IG_DEMO_" + Math.floor(Math.random() * 900000 + 100000);
+    const mockPrice = 1.0854; // Prezzo indicativo
+    const { pipSize } = getPipSizeAndFactor(instrument, mockPrice);
+    
+    const stopLevel = direction === 'buy'
+      ? mockPrice - (defaultSLPips * pipSize)
+      : mockPrice + (defaultSLPips * pipSize);
+
+    const limitLevel = direction === 'buy'
+      ? mockPrice + (defaultTPPips * pipSize)
+      : mockPrice - (defaultTPPips * pipSize);
+
+    igDemoPositions[id] = {
+      id,
+      symbol: instrument,
+      qty: qty,
+      avg_entry_price: String(mockPrice),
+      current_price: String(mockPrice),
+      unrealized_pl: "0",
+      side: direction as 'buy' | 'sell',
+      stopLevel,
+      limitLevel,
+      highestPrice: mockPrice,
+      lowestPrice: mockPrice,
+      stopLossDistance: defaultSLPips,
+      takeProfitDistance: defaultTPPips,
+      trailingStopDistance: igBotStatus.trailingStop || 0
+    };
+
+    addIgLog(`[Ordine Eseguito] Ordine simulato ${direction.toUpperCase()} per ${instrument} creato. Prezzo: ${mockPrice}. Stop Loss: ${stopLevel.toFixed(4)}, Take Profit: ${limitLevel.toFixed(4)}.`);
+    res.json({ success: true, message: `Ordine simulato eseguito correttamente su IG (ID: ${id})` });
+  }
+});
+
+app.post("/api/trading/ig-trigger", async (req, res) => {
+  igBotStatus.active = !igBotStatus.active;
+  addIgLog(`Bot trading IG ${igBotStatus.active ? 'ATTIVATO' : 'DISATTIVATO'}.`);
+  if (db) {
+    db.collection('settings').doc('ig').set({ active: igBotStatus.active }, { merge: true }).catch(() => {});
+  }
+  res.json({ success: true, active: igBotStatus.active });
+});
+
+app.post("/api/trading/ig-reset-balance", async (req, res) => {
+  igBotStatus.balance = 30000;
+  igDemoPositions = {};
+  addIgLog(`Saldo IG Markets resettato a 30.000€ e posizioni simulate chiuse.`);
+  res.json({ success: true });
+});
+
+app.post("/api/trading/ig-reset-logs", async (req, res) => {
+  igBotStatus.logs = [];
+  igBotStatus.logicLogs = [];
+  
+  if (db) {
+    try {
+      const opsSnap = await db.collection('ig_operational_logs').get();
+      for (const d of opsSnap.docs) {
+        await d.ref.delete();
+      }
+      const logicSnap = await db.collection('ig_logic_logs').get();
+      for (const d of logicSnap.docs) {
+        await d.ref.delete();
+      }
+    } catch (e: any) {
+      console.error("[Firebase] Error clearing IG logs from Firestore:", e.message);
+    }
+  }
+  addIgLog(`Tutti i log di IG Markets sono stati azzerati.`);
+  res.json({ success: true });
+});
+
+app.post("/api/trading/ig-close-position", async (req, res) => {
+  const { positionId } = req.body;
+  addIgLog(`Chiusura posizione IG: ${positionId}`);
+  try {
+    const igApi = await initIgApi();
+    await igApi.closePosition(positionId);
+    addIgLog(`Posizione IG reale ${positionId} chiusa con successo.`);
+  } catch (err) {
+    delete igDemoPositions[positionId];
+    addIgLog(`Posizione IG simulata ${positionId} chiusa.`);
+  }
+  res.json({ success: true });
+});
+
+app.post("/api/trading/ig-settings", async (req, res) => {
+  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage } = req.body;
+  if (defaultTP !== undefined) igBotStatus.defaultTP = defaultTP;
+  if (defaultSL !== undefined) igBotStatus.defaultSL = defaultSL;
+  if (trailingStop !== undefined) igBotStatus.trailingStop = trailingStop;
+  if (timeframe !== undefined) igBotStatus.timeframe = timeframe;
+  if (riskPercentage !== undefined) igBotStatus.riskPercentage = riskPercentage;
+
+  addIgLog(`Impostazioni IG aggiornate: TP=${defaultTP}, SL=${defaultSL}, Trailing=${trailingStop}, Timeframe=${timeframe}m, Risk=${riskPercentage}%`);
+
+  if (db) {
+    db.collection('settings').doc('ig').set({
+      active: igBotStatus.active,
+      balance: igBotStatus.balance,
+      defaultTP: igBotStatus.defaultTP,
+      defaultSL: igBotStatus.defaultSL,
+      trailingStop: igBotStatus.trailingStop,
+      timeframe: igBotStatus.timeframe,
+      riskPercentage: igBotStatus.riskPercentage,
+      monitoredInstruments: igBotStatus.monitoredInstruments
+    }, { merge: true }).catch(err => console.error('[Firebase] Error saving IG settings:', err));
+  }
+  res.json({ success: true });
+});
+
+app.get("/api/trading/ig-analysis/:instrument", async (req, res) => {
+  const { instrument } = req.params;
+  const analysis = `**Analisi Tecnica (Gemini) - IG Markets per ${instrument}**\n\nIl prezzo si muove in un range laterale, segnale neutro ma in potenziale breakout.`;
+  res.json({ candles: [], analysis, isDemo: true });
+});
+
+let lastIgRunTime = 0;
+async function executeIGTradingCycle() {
+  console.log(`[IG Loop] Checking bot status... (Active: ${igBotStatus.active})`);
+  if (!igBotStatus.active) return;
+  
+  const now = Date.now();
+  const timeSinceLastRun = now - lastIgRunTime;
+  const timeframeMs = (igBotStatus.timeframe || 15) * 60 * 1000;
+  
+  if (timeSinceLastRun < timeframeMs && lastIgRunTime !== 0) {
+    console.log(`[IG Loop] Waiting for timeframe interval (${igBotStatus.timeframe} min)...`);
+    return;
+  }
+  
+  lastIgRunTime = now;
+  addIgLog(`[AI Analisi] Avvio analisi di mercato con l'uso dell'IA (Timeframe: ${igBotStatus.timeframe} minuti)...`);
+  
+  try {
+    const igApi = await initIgApi().catch(() => null);
+    const instruments = igBotStatus.monitoredInstruments || ['EUR_USD'];
+    const signalService = GeminiSignalService.getInstance();
+
+    for (const instrument of instruments) {
+      const epicMap: Record<string, string> = { 'EUR_USD': 'CS.D.EURUSD.CFD.IP', 'GBP_USD': 'CS.D.GBPUSD.CFD.IP' };
+      const epic = epicMap[instrument] || 'CS.D.EURUSD.CFD.IP';
+      
+      let currentPrice = 1.0854;
+      let hasRealPrice = false;
+      
+      if (igApi) {
+        try {
+          const marketData = await igApi.getMarket(epic);
+          if (marketData && marketData.snapshot) {
+            currentPrice = parseFloat(marketData.snapshot.bid || marketData.snapshot.offer || '1.0854');
+            hasRealPrice = true;
+          }
+        } catch (err) {
+          console.warn(`[IG Loop Price Fetch Fail] Impossibile recuperare prezzo reale per ${instrument}:`, err);
+        }
+      }
+
+      if (!hasRealPrice) {
+        // Prezzo di fallback simulato
+        currentPrice = 1.0854 + (Math.random() - 0.5) * 0.0020;
+      }
+
+      // Mock di candele storiche e notizie per alimentare Gemini
+      const mockHistory = [
+        currentPrice * 0.9985,
+        currentPrice * 1.0012,
+        currentPrice * 0.9995,
+        currentPrice * 1.0005,
+        currentPrice
+      ];
+      const mockNews = "I commenti dei membri della Federal Reserve suggeriscono tassi stabili per il prossimo trimestre. L'indice PMI manifatturiero dell'Eurozona indica una crescita marginale. Volatilità moderata.";
+
+      addIgLog(`[AI Analisi] Generazione segnale IA per ${instrument} al prezzo di ${currentPrice.toFixed(4)}...`);
+      
+      const signal = await signalService.generateTradingSignal(
+        instrument,
+        currentPrice,
+        mockHistory,
+        mockNews
+      );
+
+      // Registra log logico
+      addIgLogicLog({
+        timestamp: new Date().toISOString(),
+        instrument,
+        action: signal.action,
+        reasoning: signal.reasoning,
+        price: currentPrice
+      });
+
+      addIgLog(`[AI Decisione] Strumento: ${instrument}. Raccomandazione: ${signal.action} (Sentiment: ${signal.sentiment}, Confidenza: ${signal.confidence}%). Ragionamento: ${signal.reasoning}`);
+
+      if (signal.action !== 'HOLD' && signal.confidence >= 75) {
+        // Verifica se c'è già una posizione aperta su questo strumento per evitare sovraesposizione
+        let positionExists = false;
+        if (igApi) {
+          try {
+            const realPosList = await igApi.getPositions();
+            positionExists = realPosList.some((p: any) => (p.market.instrumentName || p.market.epic).includes(instrument) || p.market.epic === epic);
+          } catch (e) {}
+        }
+        if (!positionExists) {
+          positionExists = Object.values(igDemoPositions).some((p: any) => p.symbol === instrument);
+        }
+
+        if (positionExists) {
+          addIgLog(`[AI Ordine] Segnale di ${signal.action} ignorato: esiste già una posizione aperta su ${instrument}.`);
+          continue;
+        }
+
+        const size = 1;
+        const defaultSLPips = Math.abs(igBotStatus.defaultSL || 150);
+        const defaultTPPips = Math.abs(igBotStatus.defaultTP || 50);
+
+        // Tentativo di inserimento ordine reale
+        let placedReal = false;
+        if (igApi) {
+          try {
+            const result = await igApi.createOrder(epic, signal.action, size, defaultSLPips, defaultTPPips);
+            addIgLog(`[AI Ordine] Ordine REALE ${signal.action} eseguito con successo su IG Markets. DealRef: ${result.dealReference || result.dealId}. Stop Loss: -${defaultSLPips} pips, Take Profit: +${defaultTPPips} pips.`);
+            placedReal = true;
+          } catch (err: any) {
+            console.warn(`[IG Loop Order Placement Fail] Impossibile posizionare ordine reale su IG:`, err.message);
+          }
+        }
+
+        if (!placedReal) {
+          // Fallback a ordine simulato (DEMO)
+          const id = "IG_DEMO_AI_" + Date.now();
+          const { pipSize } = getPipSizeAndFactor(instrument, currentPrice);
+          
+          const stopLevel = signal.action === 'BUY'
+            ? currentPrice - (defaultSLPips * pipSize)
+            : currentPrice + (defaultSLPips * pipSize);
+
+          const limitLevel = signal.action === 'BUY'
+            ? currentPrice + (defaultTPPips * pipSize)
+            : currentPrice - (defaultTPPips * pipSize);
+
+          igDemoPositions[id] = {
+            id,
+            symbol: instrument,
+            qty: size,
+            avg_entry_price: String(currentPrice),
+            current_price: String(currentPrice),
+            unrealized_pl: "0",
+            side: signal.action.toLowerCase() as 'buy' | 'sell',
+            stopLevel,
+            limitLevel,
+            highestPrice: currentPrice,
+            lowestPrice: currentPrice,
+            stopLossDistance: defaultSLPips,
+            takeProfitDistance: defaultTPPips,
+            trailingStopDistance: igBotStatus.trailingStop || 0
+          };
+
+          addIgLog(`[AI Ordine] Creato ordine SIMULATO ${signal.action} per ${instrument} a ${currentPrice.toFixed(4)}. Stop Loss: ${stopLevel.toFixed(4)}, Take Profit: ${limitLevel.toFixed(4)}.`);
+        }
+      } else {
+        addIgLog(`[AI Analisi] Nessuna azione intrapresa per ${instrument} (Azione: HOLD o confidenza insufficiente).`);
+      }
+    }
+  } catch (e: any) {
+    console.error("[IG Loop] Errore nel ciclo di trading IG:", e);
+    addIgLog(`[AI Errore] Errore nel ciclo di trading IG: ${e.message || e}`);
+  }
 }
+
+// Start IG Loop
+setInterval(() => {
+  executeIGTradingCycle().catch(err => console.error('[IG Background Cycle Error]', err));
+}, 60000);
+
+
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT as number, '0.0.0.0', () => {
+    console.log(`[Server] Bot Engine running on port ${PORT}`);
+  });
+}
+
+startServer();
 
 async function initIgApi(modeOverride?: string) {
   const mode = modeOverride || process.env.IG_MODE || 'demo';
@@ -4266,201 +4950,3 @@ app.post("/api/trading/ig-test-connection", async (req, res) => {
     res.status(400).json({ success: false, error: error.message || "Errore di connessione a IG" });
   }
 });
-
-app.get("/api/trading/ig-account", async (req, res) => {
-  try {
-    const igApi = await initIgApi();
-    const accounts = await igApi.getAccounts().catch(() => []);
-    let balance = igBotStatus.balance;
-    let accountId = 'IG_DEMO';
-    
-    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
-    
-    if (accounts && accounts.length > 0) {
-      const preferredAcct = accounts.find((a: any) => a.preferred) || accounts[0];
-      accountId = preferredAcct.accountId || accountId;
-      const accountAlias = preferredAcct.accountAlias || preferredAcct.accountName || '';
-      
-      if (preferredAcct.balance !== undefined) {
-        if (typeof preferredAcct.balance === 'object' && preferredAcct.balance !== null) {
-          balance = parseFloat(preferredAcct.balance.balance || preferredAcct.balance.available || '0');
-        } else {
-          balance = parseFloat(preferredAcct.balance);
-        }
-      }
-      
-      if (isNaN(balance)) {
-        balance = igBotStatus.balance || 30000;
-      }
-      
-      res.json({
-        success: true,
-        account: { id: accountId, alias: accountAlias, balance: String(balance), currency: 'EUR', NAV: String(balance) },
-        isDemo: isDemoMode
-      });
-    } else {
-      res.json({
-        success: true,
-        account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
-        isDemo: isDemoMode
-      });
-    }
-  } catch (error: any) {
-    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
-    res.json({
-      success: true,
-      account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
-      isDemo: isDemoMode
-    });
-  }
-});
-
-app.get("/api/trading/ig-status", async (req, res) => {
-  try {
-    const igApi = await initIgApi();
-    const accounts = await igApi.getAccounts().catch(() => []);
-    let balance = igBotStatus.balance;
-    if (accounts && accounts.length > 0) {
-      const preferredAcct = accounts.find((a: any) => a.preferred) || accounts[0];
-      if (preferredAcct.balance) {
-        balance = parseFloat(preferredAcct.balance.balance || preferredAcct.balance.available || balance);
-      }
-    }
-    
-    const positionsData = await igApi.getPositions().catch(() => []);
-    const positions = positionsData.map((p: any) => ({
-      symbol: p.market.instrumentName || p.market.epic,
-      qty: String(p.position.size),
-      avg_entry_price: String(p.position.openLevel),
-      current_price: String(p.market.offer || p.market.bid),
-      unrealized_pl: String(p.position.unrealisedProfitLoss || '0'),
-      side: (p.position.direction || 'BUY').toLowerCase()
-    }));
-    
-    // Update local status with real data
-    const status = { ...igBotStatus, equity: balance };
-    res.json({ status, positions, isDemo: false });
-  } catch (error: any) {
-    res.json({ status: { ...igBotStatus, equity: igBotStatus.balance }, positions: Object.values(igDemoPositions), isDemo: true });
-  }
-});
-
-app.post("/api/trading/ig-status", async (req, res) => {
-  const { active } = req.body;
-  console.log(`[IG Status Toggle] Requested active state: ${active}`);
-  if (active !== undefined) {
-    igBotStatus.active = active;
-  }
-  console.log(`[IG Status Toggle] New active state: ${igBotStatus.active}`);
-  res.json({ success: true, active: igBotStatus.active });
-});
-
-app.post("/api/trading/ig-order", async (req, res) => {
-  const { instrument, units, side } = req.body;
-  try {
-    const igApi = await initIgApi();
-    const epicMap: Record<string, string> = { 'EUR_USD': 'CS.D.EURUSD.CFD.IP', 'GBP_USD': 'CS.D.GBPUSD.CFD.IP' };
-    const epic = epicMap[instrument] || 'CS.D.EURUSD.CFD.IP';
-    const result = await igApi.createOrder(epic, side === 'buy' ? 'BUY' : 'SELL', units);
-    res.json({ success: true, message: `Ordine IG eseguito: ${result.dealReference}` });
-  } catch (error: any) {
-    // Fallback to Demo
-    const id = "IG_DEMO_" + Math.floor(Math.random() * 900000 + 100000);
-    igDemoPositions[id] = { id, symbol: instrument, qty: units, avg_entry_price: "1.0854", current_price: "1.0854", unrealized_pl: "0", side };
-    res.json({ success: true, message: `Ordine simulato su IG: ${id}` });
-  }
-});
-
-app.post("/api/trading/ig-trigger", async (req, res) => {
-  igBotStatus.active = !igBotStatus.active;
-  res.json({ success: true, active: igBotStatus.active });
-});
-
-app.post("/api/trading/ig-reset-balance", async (req, res) => {
-  igBotStatus.balance = 30000;
-  igDemoPositions = {};
-  res.json({ success: true });
-});
-
-app.post("/api/trading/ig-reset-logs", async (req, res) => {
-  res.json({ success: true });
-});
-
-app.post("/api/trading/ig-close-position", async (req, res) => {
-  const { positionId } = req.body;
-  delete igDemoPositions[positionId];
-  res.json({ success: true });
-});
-
-app.post("/api/trading/ig-settings", async (req, res) => {
-  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage } = req.body;
-  if (defaultTP !== undefined) igBotStatus.defaultTP = defaultTP;
-  if (defaultSL !== undefined) igBotStatus.defaultSL = defaultSL;
-  if (trailingStop !== undefined) igBotStatus.trailingStop = trailingStop;
-  if (timeframe !== undefined) igBotStatus.timeframe = timeframe;
-  if (riskPercentage !== undefined) igBotStatus.riskPercentage = riskPercentage;
-  res.json({ success: true });
-});
-
-app.get("/api/trading/ig-analysis/:instrument", async (req, res) => {
-  const { instrument } = req.params;
-  const analysis = `**Analisi Tecnica (Gemini) - IG Markets per ${instrument}**\n\nIl prezzo si muove in un range laterale, segnale neutro ma in potenziale breakout.`;
-  res.json({ candles: [], analysis, isDemo: true });
-});
-
-let lastIgRunTime = 0;
-async function executeIGTradingCycle() {
-  console.log(`[IG Loop] Checking bot status... (Active: ${igBotStatus.active})`);
-  if (!igBotStatus.active) return;
-  
-  const now = Date.now();
-  const timeSinceLastRun = now - lastIgRunTime;
-  const timeframeMs = (igBotStatus.timeframe || 15) * 60 * 1000;
-  
-  if (timeSinceLastRun < timeframeMs && lastIgRunTime !== 0) {
-    console.log(`[IG Loop] Waiting for timeframe interval (${igBotStatus.timeframe} min)...`);
-    return;
-  }
-  
-  lastIgRunTime = now;
-  console.log(`[IG Loop] Running trading cycle...`);
-  try {
-    // Ensure API is initialized with current credentials/mode
-    await initIgApi();
-    
-    const tradingBot = TradingBotService.getInstance();
-    const result = await tradingBot.runTradingCycle('CS.D.EURUSD.CFD.IP', 'EUR_USD', 1.0850, [], "Mercato stabile con trend positivo.");
-    if (result.success) {
-      console.log("[IG Loop] Ordine eseguito:", result.order);
-    }
-  } catch(e) {
-    console.error("[IG Loop] Errore:", e);
-  }
-}
-
-// Start IG Loop
-setInterval(() => {
-  executeIGTradingCycle().catch(err => console.error('[IG Background Cycle Error]', err));
-}, 60000);
-
-
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT as number, '0.0.0.0', () => {
-    console.log(`[Server] Bot Engine running on port ${PORT}`);
-  });
-}
-
-startServer();

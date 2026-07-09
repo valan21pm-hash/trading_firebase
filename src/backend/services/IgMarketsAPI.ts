@@ -385,4 +385,23 @@ export class IgMarketsAPI {
     return response.json();
   }
 
+  async updatePosition(dealId: string, body: { limitLevel?: number; stopLevel?: number; trailingStop?: boolean; trailingStopDistance?: number }) {
+    const headers = await this.getHeaders();
+    const response = await fetch(`${this.getBaseUrl()}/positions/otc/${dealId}`, {
+      method: 'PUT',
+      headers: { ...headers, 'VERSION': '2' },
+      body: JSON.stringify({
+        limitLevel: body.limitLevel || null,
+        stopLevel: body.stopLevel || null,
+        trailingStop: body.trailingStop ?? false,
+        trailingStopDistance: body.trailingStopDistance || null
+      })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(`Update Position Failed: ${JSON.stringify(err)}`);
+    }
+    return response.json();
+  }
+
 }

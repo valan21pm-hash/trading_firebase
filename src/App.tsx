@@ -740,7 +740,8 @@ function AccountPanel({
   onClosePosition,
   closingSymbols,
   confirmCloseSymbol,
-  setConfirmCloseSymbol
+  setConfirmCloseSymbol,
+  fetchStatus
 }: { 
   account: AccountData; 
   title: string; 
@@ -751,6 +752,7 @@ function AccountPanel({
   closingSymbols: string[];
   confirmCloseSymbol: { symbol: string; type: 'paper' | 'live' } | null;
   setConfirmCloseSymbol: (state: { symbol: string; type: 'paper' | 'live' } | null) => void;
+  fetchStatus: () => Promise<void>;
 }) {
   if (!account) return null;
 
@@ -766,6 +768,60 @@ function AccountPanel({
     const saved = localStorage.getItem(`alpaca_${type}_showTimestamps`);
     return saved !== null ? saved === 'true' : true;
   });
+
+  const [showAlpacaCredsForm, setShowAlpacaCredsForm] = useState(false);
+  const [alpacaApiKey, setAlpacaApiKey] = useState('');
+  const [alpacaSecretKey, setAlpacaSecretKey] = useState('');
+  const [savingAlpacaCreds, setSavingAlpacaCreds] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleOpenCredsForm = async () => {
+    setShowAlpacaCredsForm(!showAlpacaCredsForm);
+    setSaveStatus(null);
+    try {
+      const res = await fetch('/api/trading/credentials');
+      if (res.ok) {
+        const data = await res.json();
+        const alpacaCreds = data.config?.alpaca?.[type === 'live' ? 'real' : 'paper'] || {};
+        setAlpacaApiKey(alpacaCreds.apiKey || alpacaCreds.username || '');
+        setAlpacaSecretKey(alpacaCreds.secretKey || alpacaCreds.password || '');
+      }
+    } catch (e) {
+      console.error('Errore durante il recupero delle credenziali:', e);
+    }
+  };
+
+  const handleSaveAlpacaCreds = async () => {
+    setSavingAlpacaCreds(true);
+    setSaveStatus(null);
+    try {
+      const res = await fetch('/api/trading/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          broker: 'alpaca',
+          env: type === 'live' ? 'real' : 'paper',
+          credentials: {
+            apiKey: alpacaApiKey.trim(),
+            secretKey: alpacaSecretKey.trim()
+          }
+        })
+      });
+      if (res.ok) {
+        setSaveStatus({ success: true, message: 'Credenziali salvate con successo!' });
+        if (fetchStatus) {
+          await fetchStatus();
+        }
+        setTimeout(() => setShowAlpacaCredsForm(false), 1500);
+      } else {
+        setSaveStatus({ success: false, message: 'Errore durante il salvataggio.' });
+      }
+    } catch (e: any) {
+      setSaveStatus({ success: false, message: e.message || 'Errore di rete.' });
+    } finally {
+      setSavingAlpacaCreds(false);
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem(`alpaca_${type}_wrapLogs`, String(wrapLogs));
@@ -813,12 +869,75 @@ function AccountPanel({
           <div className="text-2xl font-bold text-gray-900">${(account.balance ?? 0).toFixed(2)}</div>
         </div>
 
-        <div className="flex justify-between items-center text-sm">
-          <div className="text-gray-500">Broker</div>
-          <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
-            {account.modeLabel}
+        <div className="flex justify-between items-start text-sm">
+          <div className="text-gray-500 font-medium">Broker</div>
+          <div className="flex flex-col items-end">
+            <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
+              {account.modeLabel}
+            </div>
+            <button
+              onClick={handleOpenCredsForm}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer mt-0.5 p-0"
+            >
+              [Configura Chiavi]
+            </button>
           </div>
         </div>
+
+        {showAlpacaCredsForm && (
+          <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-3 mt-2 animate-in fade-in duration-200">
+            <div className="flex justify-between items-center">
+              <h4 className="text-xs font-bold text-indigo-400 uppercase">Configurazione Alpaca {type === 'live' ? 'Reale' : 'Paper'}</h4>
+              <span className="text-[10px] text-slate-400">Salvate nel Cloud</span>
+            </div>
+            
+            <div className="space-y-3 text-xs text-left">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1 text-left">API Key ID</label>
+                <input
+                  type="text"
+                  placeholder="Es. PKXXXXXXXXXXXXXXXXXX"
+                  value={alpacaApiKey}
+                  onChange={(e) => setAlpacaApiKey(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1 text-left">Secret Key</label>
+                <input
+                  type="password"
+                  placeholder="La tua Secret Key..."
+                  value={alpacaSecretKey}
+                  onChange={(e) => setAlpacaSecretKey(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {saveStatus && (
+                <div className={`p-2.5 rounded-lg text-xs font-sans ${saveStatus.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
+                  {saveStatus.message}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleSaveAlpacaCreds}
+                  disabled={savingAlpacaCreds || !alpacaApiKey.trim() || !alpacaSecretKey.trim()}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold py-2 rounded-lg text-xs transition cursor-pointer border-none"
+                >
+                  {savingAlpacaCreds ? 'Salvataggio...' : 'SALVA'}
+                </button>
+                <button
+                  onClick={() => setShowAlpacaCredsForm(false)}
+                  disabled={savingAlpacaCreds}
+                  className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none"
+                >
+                  CHIUDI
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Grafico P&L Realizzato e Non Realizzato */}
         <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">
@@ -1824,6 +1943,7 @@ export default function App() {
               closingSymbols={closingSymbols}
               confirmCloseSymbol={confirmCloseSymbol}
               setConfirmCloseSymbol={setConfirmCloseSymbol}
+              fetchStatus={fetchStatus}
             />
           )}
           {selectedTab === 'live' && status?.live && (
@@ -1837,6 +1957,7 @@ export default function App() {
               closingSymbols={closingSymbols}
               confirmCloseSymbol={confirmCloseSymbol}
               setConfirmCloseSymbol={setConfirmCloseSymbol}
+              fetchStatus={fetchStatus}
             />
           )}
         </div>
