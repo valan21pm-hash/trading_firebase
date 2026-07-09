@@ -360,6 +360,10 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
     ? 'https://api.alpaca.markets/v2'
     : 'https://paper-api.alpaca.markets/v2';
     
+  if (isConfigured) {
+    resolvedCredentials[mode] = { apiKey, secretKey, isConfigured: true };
+  }
+    
   return { isConfigured, isLive, baseUrl, apiKey, secretKey };
 }
 
@@ -3211,18 +3215,10 @@ function updateXtbPnLHistory(pnlChange: number) {
   }
 }
 
-async function executeXtbRealtimeCheck() {
-
 async function executeAlpacaRealtimeCheck() {
-  if (!botStatus.active) return;
-  
-  const { mode } = botStatus;
-  const { apiKey, secretKey, isConfigured } = resolvedCredentials[mode as 'live' | 'paper'];
+  const mode = botStatus.tradingMode || 'paper';
+  const { apiKey, secretKey, isConfigured, baseUrl } = getAlpacaConfig(mode);
   if (!isConfigured) return;
-
-  const baseUrl = mode === 'live' 
-      ? 'https://api.alpaca.markets/v2' 
-      : 'https://paper-api.alpaca.markets/v2';
 
   try {
     const posResponse = await fetch(`${baseUrl}/positions`, {
@@ -3234,6 +3230,26 @@ async function executeAlpacaRealtimeCheck() {
 
     if (!posResponse.ok) return;
     const positions = await posResponse.json();
+
+    const activeSymbols = positions.map((p: any) => p.symbol);
+
+    // Sincronizza posizioni attive ed eventualmente disattiva quelle non più presenti
+    if (db) {
+      try {
+        const snapshot = await db.collection('alpaca_positions').where('status', '==', 'ACTIVE').get();
+        for (const doc of snapshot.docs) {
+          const sym = doc.id;
+          if (!activeSymbols.includes(sym)) {
+            await db.collection('alpaca_positions').doc(sym).update({
+              status: 'CLOSED',
+              closedAt: new Date().toISOString()
+            });
+          }
+        }
+      } catch (e) {
+        // Ignora silenziosamente
+      }
+    }
 
     const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
     const config = { y: botStatus.y || 1 };
@@ -3303,6 +3319,8 @@ async function executeAlpacaRealtimeCheck() {
     // Silenzioso per non inquinare i log nel loop veloce
   }
 }
+
+async function executeXtbRealtimeCheck() {
   if (!xtbBotStatus.active) return;
   
   const XTB_USER_ID = process.env.XTB_USER_ID;
@@ -4141,7 +4159,9 @@ async function startServer() {
     executeXtbRealtimeCheck().catch(err => {
       console.error('[Background Fast Check Error]', err);
     });
-    
+    executeAlpacaRealtimeCheck().catch(err => {
+      console.error('[Background Fast Check Alpaca Error]', err);
+    });
   }, 5000); // Ogni 5 secondi
 
   
@@ -4267,6 +4287,10 @@ app.get("/api/trading/ig-account", async (req, res) => {
         } else {
           balance = parseFloat(preferredAcct.balance);
         }
+      }
+      
+      if (isNaN(balance)) {
+        balance = igBotStatus.balance || 30000;
       }
       
       res.json({
