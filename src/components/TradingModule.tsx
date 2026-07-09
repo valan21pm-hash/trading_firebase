@@ -49,7 +49,7 @@ interface XtbAccount {
 }
 
 export default function TradingModule() {
-  const [activeBroker, setActiveBroker] = useState<'xtb' | 'ig'>('ig');
+  const [activeBroker, setActiveBroker] = useState<'xtb' | 'ig' | 'alpaca'>('ig');
   const [selectedInstrument, setSelectedInstrument] = useState<string>('EUR_USD');
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [analysis, setAnalysis] = useState<string>('');
@@ -68,12 +68,12 @@ export default function TradingModule() {
   const [xtbAutoStatus, setXtbAutoStatus] = useState<any | null>(null);
   const [xtbPositions, setXtbPositions] = useState<any[]>([]);
 
-  // Auto-Trading states (IG)
-  const [igAutoStatus, setIgAutoStatus] = useState<any | null>(null);
-  const [igPositions, setIgPositions] = useState<any[]>([]);
+  
 
   const [closingInstruments, setClosingInstruments] = useState<string[]>([]);
   const [confirmCloseInstrument, setConfirmCloseInstrument] = useState<string | null>(null);
+  const [testingConn, setTestingConn] = useState<boolean>(false);
+  const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
   const [loadingAutoStatus, setLoadingAutoStatus] = useState<boolean>(false);
   const [submittingAutoToggle, setSubmittingAutoToggle] = useState<boolean>(false);
   const [triggeringCycle, setTriggeringCycle] = useState<boolean>(false);
@@ -84,17 +84,17 @@ export default function TradingModule() {
   const [draftSL, setDraftSL] = useState<string>('-1.00');
   const [draftRisk, setDraftRisk] = useState<string>('2');
   const [savingSettings, setSavingSettings] = useState(false);
-  const [testingConn, setTestingConn] = useState<boolean>(false);
-  const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
+  
+  
 
-  const currentAutoStatus = activeBroker === 'xtb' ? xtbAutoStatus : igAutoStatus;
-  const currentPositions = activeBroker === 'xtb' ? xtbPositions : igPositions;
+  const currentAutoStatus = xtbAutoStatus;
+  const currentPositions = xtbPositions;
 
   useEffect(() => {
     if (currentAutoStatus) {
-      setDraftTP(String(currentAutoStatus.defaultTP ?? (activeBroker === 'xtb' ? 0.10 : 20.00)));
-      setDraftSL(String(currentAutoStatus.defaultSL ?? (activeBroker === 'xtb' ? -1.00 : -50.00)));
-      setDraftRisk(String(currentAutoStatus.riskPercentage ?? (activeBroker === 'xtb' ? 2 : 5)));
+      setDraftTP(String(currentAutoStatus.defaultTP ?? (0.10)));
+      setDraftSL(String(currentAutoStatus.defaultSL ?? (-1.00)));
+      setDraftRisk(String(currentAutoStatus.riskPercentage ?? (2)));
     }
   }, [currentAutoStatus?.defaultTP, currentAutoStatus?.defaultSL, currentAutoStatus?.riskPercentage, activeBroker]);
 
@@ -126,19 +126,13 @@ export default function TradingModule() {
   const fetchAutoStatus = async (broker = activeBroker) => {
     setLoadingAutoStatus(true);
     try {
-      const url = broker === 'xtb' ? '/api/trading/xtb-status' : '/api/trading/ig-status';
+      const url = `/api/trading/${activeBroker}-status`;
       const res = await fetch(url);
       if (res.ok) {
         const contentType = res.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const data = await res.json();
-          if (broker === 'xtb') {
-            setXtbAutoStatus(data.status);
-            setXtbPositions(data.positions || []);
-          } else {
-            setIgAutoStatus(data.status);
-            setIgPositions(data.positions || []);
-          }
+          setXtbAutoStatus(data.status); setXtbPositions(data.positions || []);
         } else {
           console.warn(`Expected JSON response from ${url}, received alternative content type.`);
         }
@@ -154,7 +148,7 @@ export default function TradingModule() {
     if (!currentAutoStatus) return;
     setSubmittingAutoToggle(true);
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/xtb-status' : '/api/trading/ig-status';
+      const url = `/api/trading/${activeBroker}-status`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -162,11 +156,7 @@ export default function TradingModule() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (activeBroker === 'xtb') {
-          setXtbAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
-        } else {
-          setIgAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
-        }
+        setXtbAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
         setSuccessMessage(`Trading automatico ${activeBroker.toUpperCase()} ${data.active ? 'attivato' : 'disattivato'} con successo!`);
         fetchAutoStatus();
       }
@@ -182,7 +172,7 @@ export default function TradingModule() {
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/xtb-trigger' : '/api/trading/ig-trigger';
+      const url = `/api/trading/${activeBroker}-trigger`;
       const res = await fetch(url, {
         method: 'POST'
       });
@@ -205,7 +195,7 @@ export default function TradingModule() {
   const handleResetXtbLogs = async () => {
     if (!window.confirm(`Sei sicuro di voler azzerare tutti i log di ${activeBroker.toUpperCase()}?`)) return;
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/xtb-reset-logs' : '/api/trading/ig-reset-logs';
+      const url = `/api/trading/${activeBroker}-reset-logs`;
       const res = await fetch(url, {
         method: 'POST'
       });
@@ -220,10 +210,12 @@ export default function TradingModule() {
 
   const handleResetBalance = async () => {
     const isXtb = activeBroker === 'xtb';
-    const limitMsg = isXtb ? '50€' : '30000.00€';
+    const isIg = activeBroker === 'ig';
+    const isAlpaca = activeBroker === 'alpaca';
+    const limitMsg = isXtb ? '50€' : (isIg ? '30000€' : '100000$');
     if (!window.confirm(`Sei sicuro di voler azzerare il saldo (${limitMsg}) e tutte le posizioni di ${activeBroker.toUpperCase()}?`)) return;
     try {
-      const url = isXtb ? '/api/trading/xtb-reset-balance' : '/api/trading/ig-reset-balance';
+      const url = `/api/trading/${activeBroker}-reset-balance`;
       const res = await fetch(url, {
         method: 'POST'
       });
@@ -240,7 +232,7 @@ export default function TradingModule() {
   const handleCloseXtbPosition = async (symbol: string) => {
     setClosingInstruments(prev => [...prev, symbol]);
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/xtb-close-position' : '/api/trading/ig-close-position';
+      const url = `/api/trading/${activeBroker}-close-position`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -264,25 +256,41 @@ export default function TradingModule() {
 
 
   // Available instruments
-  const instruments = [
-    { value: 'EUR_USD', label: 'EUR/USD (Euro / Dollaro US)' },
-    { value: 'GBP_USD', label: 'GBP/USD (Sterlina / Dollaro US)' },
-    { value: 'USD_JPY', label: 'USD/JPY (Dollaro US / Yen Giapponese)' },
-    { value: 'AUD_USD', label: 'AUD/USD (Dollaro Australiano / Dollaro US)' },
-    { value: 'EUR_GBP', label: 'EUR/GBP (Euro / Sterlina)' },
-  ];
+  const instruments = useMemo(() => {
+    if (activeBroker === 'alpaca') {
+      return [
+        { value: 'SPY', label: 'SPY (S&P 500 ETF)' },
+        { value: 'QQQ', label: 'QQQ (Nasdaq 100 ETF)' },
+        { value: 'NVDA', label: 'NVDA (NVIDIA Corporation)' },
+        { value: 'AAPL', label: 'AAPL (Apple Inc.)' },
+        { value: 'TSLA', label: 'TSLA (Tesla Inc.)' },
+      ];
+    }
+    return [
+      { value: 'EUR_USD', label: 'EUR/USD (Euro / Dollaro US)' },
+      { value: 'GBP_USD', label: 'GBP/USD (Sterlina / Dollaro US)' },
+      { value: 'USD_JPY', label: 'USD/JPY (Dollaro US / Yen Giapponese)' },
+      { value: 'AUD_USD', label: 'AUD/USD (Dollaro Australiano / Dollaro US)' },
+      { value: 'EUR_GBP', label: 'EUR/GBP (Euro / Sterlina)' },
+    ];
+  }, [activeBroker]);
+
+  useEffect(() => {
+    // Reset selection when broker changes
+    setSelectedInstrument(activeBroker === 'alpaca' ? 'SPY' : 'EUR_USD');
+  }, [activeBroker]);
 
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/xtb-settings' : '/api/trading/ig-settings';
+      const url = `/api/trading/${activeBroker}-settings`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          defaultTP: parseFloat(draftTP) || (activeBroker === 'xtb' ? 0.10 : 20.00),
-          defaultSL: parseFloat(draftSL) || (activeBroker === 'xtb' ? -1.00 : -50.00),
-          riskPercentage: parseFloat(draftRisk) || (activeBroker === 'xtb' ? 2 : 5)
+          defaultTP: parseFloat(draftTP) || (0.10),
+          defaultSL: parseFloat(draftSL) || (-1.00),
+          riskPercentage: parseFloat(draftRisk) || (2)
         })
       });
       if (res.ok) {
@@ -300,10 +308,9 @@ export default function TradingModule() {
     }
   };
 
+  
   const handleTestConnection = async () => {
     setTestingConn(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
     setConnTestResult(null);
     try {
       const res = await fetch('/api/trading/ig-test-connection', {
@@ -311,20 +318,18 @@ export default function TradingModule() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        const msg = `Test di connessione IG Markets completato con successo! Collegato all'account ${data.accountName || 'IG'} (ID: ${data.accountId}) con un saldo di ${parseFloat(data.balance).toFixed(2)} € (caricato in tempo reale).`;
-        setSuccessMessage(msg);
-        setConnTestResult({ success: true, message: msg });
-        fetchAccount('ig');
-        fetchAutoStatus('ig');
+        setConnTestResult({
+          success: true,
+          message: data.message
+        });
       } else {
-        const errMsg = data.error || 'Test di connessione fallito. Controlla le credenziali.';
-        setErrorMessage(errMsg);
-        setConnTestResult({ success: false, message: errMsg });
+        throw new Error(data.error || 'Errore sconosciuto');
       }
     } catch (err: any) {
-      const errMsg = err.message || 'Errore di rete durante il test di connessione.';
-      setErrorMessage(errMsg);
-      setConnTestResult({ success: false, message: errMsg });
+      setConnTestResult({
+        success: false,
+        message: err.message || 'Errore durante la connessione'
+      });
     } finally {
       setTestingConn(false);
     }
@@ -333,7 +338,7 @@ export default function TradingModule() {
   const fetchAccount = async (broker = activeBroker) => {
     setLoadingAccount(true);
     try {
-      const url = broker === 'xtb' ? '/api/trading/account' : '/api/trading/ig-account';
+      const url = `/api/trading/${broker}-account`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -351,7 +356,7 @@ export default function TradingModule() {
     setLoadingAnalysis(true);
     setErrorMessage(null);
     try {
-      const url = broker === 'xtb' ? `/api/trading/analysis/${instrument}` : `/api/trading/ig-analysis/${instrument}`;
+      const url = `/api/trading/${broker}-analysis/${instrument}`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -403,7 +408,7 @@ export default function TradingModule() {
     setOrderResult(null);
 
     try {
-      const url = activeBroker === 'xtb' ? '/api/trading/order' : '/api/trading/ig-order';
+      const url = `/api/trading/${activeBroker}-order`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -494,6 +499,23 @@ export default function TradingModule() {
   return (
     <div className="space-y-6">
 
+      {/* Broker Switcher */}
+      <div className="flex gap-2 p-1 bg-slate-100 rounded-xl w-fit">
+        {(['ig', 'xtb', 'alpaca'] as const).map((b) => (
+          <button
+            key={b}
+            onClick={() => setActiveBroker(b)}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+              activeBroker === b 
+                ? 'bg-white text-indigo-600 shadow-sm' 
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {b.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
       {/* Banner di modalità Demo o Connessione */}
       {isDemo ? (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
@@ -503,10 +525,10 @@ export default function TradingModule() {
             </div>
             <div>
               <h3 className="font-semibold text-amber-900 text-sm">
-                Modalità Demo {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} Attiva
+                Modalità Demo {activeBroker.toUpperCase()} Attiva
               </h3>
               <p className="text-xs text-amber-700 mt-1">
-                L'applicazione sta funzionando in modalità simulata Sandbox per {activeBroker === 'xtb' ? 'XTB' : 'IG Markets (chiave: Z6CKEN)'}.
+                L'applicazione sta funzionando in modalità simulata Sandbox per {activeBroker.toUpperCase()}.
               </p>
             </div>
           </div>
@@ -521,8 +543,8 @@ export default function TradingModule() {
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-emerald-950 text-sm">Connessione {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} Attiva</h3>
-              <p className="text-xs text-emerald-700">Il modulo è correttamente collegato al tuo account reale/practice su {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}.</p>
+              <h3 className="font-semibold text-emerald-950 text-sm">Connessione {activeBroker.toUpperCase()} Attiva</h3>
+              <p className="text-xs text-emerald-700">Il modulo è correttamente collegato al tuo account reale/practice su {activeBroker.toUpperCase()}.</p>
             </div>
           </div>
           <div className="text-xs bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-lg font-medium border border-emerald-200 shrink-0">
@@ -531,32 +553,16 @@ export default function TradingModule() {
         </div>
       )}
 
+      
       {/* Risultato del Test di Connessione IG */}
       {connTestResult && (
         <div className={`rounded-2xl p-5 border shadow-sm ${connTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
           <div className="flex gap-3">
-            <div className={`p-2 rounded-xl shrink-0 ${connTestResult.success ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-              {connTestResult.success ? (
-                <CheckCircle2 className="w-5 h-5" />
-              ) : (
-                <AlertTriangle className="w-5 h-5" />
-              )}
-            </div>
             <div className="space-y-1.5">
               <h4 className="font-bold text-sm">
                 {connTestResult.success ? 'Esito Test: Connessione Stabilita!' : 'Esito Test: Errore di Connessione'}
               </h4>
               <p className="text-xs leading-relaxed">{connTestResult.message}</p>
-              {!connTestResult.success && (
-                <div className="text-xs text-red-700 bg-red-100/50 p-3 rounded-lg border border-red-200/50 mt-2 font-medium">
-                  <strong>Istruzioni Utente per IG Markets:</strong>
-                  <ul className="list-disc pl-4 mt-1 space-y-1">
-                    <li>Verifica che <strong>IG_USERNAME</strong> nei Secrets di AI Studio non sia la tua email. Deve essere lo username alfanumerico esatto del sito di IG.</li>
-                    <li>La tua chiave API Demo (a9ce41...) e l'ID Account (Z6CKEO) sono pre-configurati. Assicurati che lo username e la password nei Secrets corrispondano al tuo account demo.</li>
-                    <li>Se vuoi usare l'account Demo virtuale integrato nel bot, puoi usare il saldo di simulazione a 30.000,00 € (il saldo di default di IG).</li>
-                  </ul>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -568,11 +574,13 @@ export default function TradingModule() {
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Account {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Account {activeBroker.toUpperCase()}</h3>
               {loadingAccount ? (
                 <RefreshCcw className="w-3.5 h-3.5 animate-spin text-slate-400" />
               ) : (
                 <div className="flex gap-2 items-center">
+                  
+                  
                   {activeBroker === 'ig' && (
                     <button 
                       onClick={handleTestConnection}
@@ -585,15 +593,16 @@ export default function TradingModule() {
                       ) : (
                         <Activity className="w-3 h-3" />
                       )}
-                      Test Connessione
+                      Test API IG
                     </button>
                   )}
+
                   <button 
                     onClick={handleResetBalance}
                     className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-600 rounded text-xs font-medium hover:bg-rose-100 transition border-none cursor-pointer"
-                    title={`Azzera conto simulazione a ${activeBroker === 'xtb' ? '50' : '30000'}€ e chiudi posizioni`}
+                    title={`Azzera conto simulazione e chiudi posizioni`}
                   >
-                    Reset {activeBroker === 'xtb' ? '50€' : '30k€'}
+                    Reset Conto
                   </button>
                   <button 
                     onClick={() => fetchAccount(activeBroker)}
@@ -606,10 +615,10 @@ export default function TradingModule() {
               )}
             </div>
             <p className="text-lg font-bold text-slate-800 mt-2 font-mono">
-              {account?.id || (activeBroker === 'xtb' ? 'IT/M189975/EUR' : 'Z6CKEN')}
+              {account?.id || (activeBroker === 'xtb' ? 'IT/M189975/EUR' : (activeBroker === 'ig' ? 'IG_DEMO' : 'ALPACA_DEMO'))}
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Broker: <span className="font-semibold text-slate-700">{activeBroker === 'xtb' ? 'XTB' : 'IG Markets'}</span>
+              Broker: <span className="font-semibold text-slate-700">{activeBroker.toUpperCase()}</span>
             </p>
           </div>
 
@@ -617,13 +626,13 @@ export default function TradingModule() {
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Bilancio</p>
               <p className="text-xl font-bold text-slate-900 mt-0.5 font-mono">
-                {(parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : '30000.00')) || 0).toFixed(2)} {account?.currency || 'EUR'}
+                {parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {account?.currency || (activeBroker === 'alpaca' ? 'USD' : 'EUR')}
               </p>
             </div>
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-semibold">Net Asset Value (NAV)</p>
               <p className="text-xl font-bold text-indigo-600 mt-0.5 font-mono">
-                {(parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : '30000.00')) || 0).toFixed(2)} {account?.currency || 'EUR'}
+                {parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {account?.currency || (activeBroker === 'alpaca' ? 'USD' : 'EUR')}
               </p>
             </div>
           </div>
@@ -635,7 +644,7 @@ export default function TradingModule() {
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Strumento di Trading</h3>
               <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${activeBroker === 'xtb' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-800'}`}>
-                {activeBroker === 'xtb' ? 'XTB FX' : 'IG Markets FX'}
+                {activeBroker.toUpperCase()} {activeBroker === 'alpaca' ? 'STOCKS' : 'FX'}
               </span>
             </div>
             
@@ -676,7 +685,7 @@ export default function TradingModule() {
                 priceChange.isPositive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
               }`}>
                 {priceChange.isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{priceChange.isPositive ? '+' : ''}{(priceChange.value || 0).toFixed(5)} ({(priceChange.percent || 0).toFixed(2)}%)</span>
+                <span>{priceChange.isPositive ? '+' : ''}{priceChange.value.toFixed(5)} ({priceChange.percent.toFixed(2)}%)</span>
               </div>
             )}
           </div>
@@ -799,25 +808,25 @@ export default function TradingModule() {
               <div className="flex items-center gap-2">
                 <Bot className="w-5 h-5 text-indigo-600 animate-pulse" />
                 <h3 className="text-sm font-bold text-slate-800">
-                  Conto Simulato {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} AI
+                  Conto Simulato {activeBroker.toUpperCase()} AI
                 </h3>
               </div>
               <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${currentAutoStatus?.active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
                 {currentAutoStatus?.active ? 'AUTO ATTIVO' : 'AUTO FERMO'}
               </span>
             </div>
- 
+
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Equity</p>
-              <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
-                  {(currentAutoStatus?.equity ?? 0).toFixed(2)} €
+                <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
+                  {currentAutoStatus?.equity !== undefined ? currentAutoStatus.equity.toFixed(2) : parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {activeBroker === 'alpaca' ? '$' : '€'}
                 </p>
               </div>
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-semibold">Broker</p>
                 <p className="text-sm font-semibold text-indigo-600 mt-1">
-                  {activeBroker === 'xtb' ? 'XTB Forex Sandbox' : 'IG Markets CFD Sandbox'}
+                  {activeBroker.toUpperCase()} {activeBroker === 'alpaca' ? 'Stock' : 'Forex'} Sandbox
                 </p>
               </div>
             </div>
@@ -828,9 +837,9 @@ export default function TradingModule() {
                 <div>
                   <h4 className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
                     <BarChart2 className="w-3.5 h-3.5 text-slate-500" />
-                    Andamento Storico P&L ({activeBroker === 'xtb' ? 'Forex' : 'CFD'})
+                    Andamento Storico P&L ({activeBroker === 'alpaca' ? 'Stocks' : 'Forex'})
                   </h4>
-                  <p className="text-[10px] text-slate-500">Profitti/perdite realizzati cumulativi in EUR</p>
+                  <p className="text-[10px] text-slate-500">Profitti/perdite realizzati cumulativi in {activeBroker === 'alpaca' ? 'USD' : 'EUR'}</p>
                 </div>
                 <div className="flex gap-4 text-[10px] font-medium">
                   <div className="flex items-center gap-1.5">
@@ -862,10 +871,10 @@ export default function TradingModule() {
                         </linearGradient>
                       </defs>
                       <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} />
-                      <YAxis stroke="#94a3b8" fontSize={9} tickFormatter={(v) => `${(v ?? 0).toFixed(2)}€`} />
+                      <YAxis stroke="#94a3b8" fontSize={9} tickFormatter={(v) => `${v.toFixed(2)}${activeBroker === 'alpaca' ? '$' : '€'}`} />
                       <Tooltip 
                         contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '11px' }}
-                        formatter={(value: any) => [`${(parseFloat(value) || 0).toFixed(2)} €`]}
+                        formatter={(value: any) => [`${parseFloat(value).toFixed(2)} ${activeBroker === 'alpaca' ? '$' : '€'}`]}
                       />
                       <Area type="monotone" dataKey="realized" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorRealized)`} />
                       <Area type="monotone" dataKey="unrealized" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorUnrealized)`} />
@@ -882,7 +891,7 @@ export default function TradingModule() {
             {/* Posizioni Aperte */}
             <div>
               <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5 border-b pb-1">
-                Posizioni {activeBroker === 'xtb' ? 'Forex' : 'CFD'} Aperte
+                Posizioni {activeBroker === 'alpaca' ? 'Stocks' : 'Forex'} Aperte
               </h4>
               <div className="space-y-2">
                 {currentPositions && currentPositions.length > 0 ? (
@@ -917,7 +926,7 @@ export default function TradingModule() {
  
                         <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0">
                           <span className={`font-mono font-bold text-xs ${unrealizedPlNum >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {unrealizedPlNum >= 0 ? '+' : ''}{unrealizedPlNum.toFixed(2)} €
+                            {unrealizedPlNum >= 0 ? '+' : ''}{unrealizedPlNum.toFixed(2)} {activeBroker === 'alpaca' ? '$' : '€'}
                           </span>
  
                           {confirmCloseInstrument === pos.symbol ? (
@@ -953,7 +962,7 @@ export default function TradingModule() {
                   })
                 ) : (
                   <div className="text-center py-6 text-slate-400 italic">
-                    Nessuna posizione {activeBroker === 'xtb' ? 'Forex' : 'CFD'} attualmente aperta.
+                    Nessuna posizione {activeBroker === 'alpaca' ? 'Stocks' : 'Forex'} attualmente aperta.
                   </div>
                 )}
               </div>
@@ -965,7 +974,7 @@ export default function TradingModule() {
           {/* Bot Automation Controller Card */}
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-              Automazione & Controllo IA ({activeBroker === 'xtb' ? 'XTB' : 'IG Markets'})
+              Automazione & Controllo IA ({activeBroker.toUpperCase()})
             </h4>
  
             <div className="space-y-4">
@@ -1038,7 +1047,7 @@ export default function TradingModule() {
                     <div className="flex gap-3">
                       <div className="flex-1">
                         <label className="text-[10px] text-slate-500 font-medium block mb-1">
-                          Take Profit ({activeBroker === 'xtb' ? '€' : 'pips'})
+                          Take Profit ({'€'})
                         </label>
                         <input 
                           type="number"
@@ -1050,7 +1059,7 @@ export default function TradingModule() {
                       </div>
                       <div className="flex-1">
                         <label className="text-[10px] text-slate-500 font-medium block mb-1">
-                          Stop Loss ({activeBroker === 'xtb' ? '€' : 'pips'})
+                          Stop Loss ({'€'})
                         </label>
                         <input 
                           type="number"
@@ -1080,13 +1089,13 @@ export default function TradingModule() {
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Take Profit</span>
                       <span className="text-xs font-bold text-green-600">
-                        {activeBroker === 'xtb' ? '+' : ''}{currentAutoStatus?.defaultTP?.toFixed(2) || (activeBroker === 'xtb' ? '0.10' : '20.00')} {activeBroker === 'xtb' ? '€' : 'pips'}
+                        {'+'}{currentAutoStatus?.defaultTP?.toFixed(2) || (activeBroker === 'xtb' ? '0.10' : '20.00')} {'€'}
                       </span>
                     </div>
                     <div className="flex-1">
                       <span className="text-[10px] text-slate-500 font-medium block">Stop Loss</span>
                       <span className="text-xs font-bold text-rose-600">
-                        {currentAutoStatus?.defaultSL?.toFixed(2) || (activeBroker === 'xtb' ? '-1.00' : '-50.00')} {activeBroker === 'xtb' ? '€' : 'pips'}
+                        {currentAutoStatus?.defaultSL?.toFixed(2) || (activeBroker === 'xtb' ? '-1.00' : '-50.00')} {'€'}
                       </span>
                     </div>
                     <div className="flex-1">
@@ -1208,7 +1217,7 @@ export default function TradingModule() {
  
                   return processedLogs.map((log: string, idx: number) => {
                     let colorClass = 'text-slate-400';
-                    if (log.includes('[XTB Errore]') || log.includes('[IG Errore]') || log.includes('Errore Critico')) {
+                    if (log.includes('[XTB Errore]')  || log.includes('Errore Critico')) {
                       colorClass = 'text-rose-400';
                     } else if (log.includes('eseguito') || log.includes('chiusa con successo') || log.includes('chiusa manualmente')) {
                       colorClass = 'text-emerald-400';
@@ -1408,7 +1417,7 @@ export default function TradingModule() {
             </div>
 
             <div className="text-[10px] text-slate-400 mt-4 leading-normal">
-              Gli ordini di mercato {activeBroker === 'xtb' ? 'XTB' : 'IG Markets'} vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
+              Gli ordini di mercato {'XTB'} vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
             </div>
           </div>
         </div>
