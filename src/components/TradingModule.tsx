@@ -49,7 +49,7 @@ interface XtbAccount {
 }
 
 export default function TradingModule() {
-  const [activeBroker, setActiveBroker] = useState<'xtb' | 'ig' | 'alpaca'>('ig');
+  const activeBroker = 'ig';
   const [selectedInstrument, setSelectedInstrument] = useState<string>('EUR_USD');
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [analysis, setAnalysis] = useState<string>('');
@@ -64,9 +64,9 @@ export default function TradingModule() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Auto-Trading states (XTB)
-  const [xtbAutoStatus, setXtbAutoStatus] = useState<any | null>(null);
-  const [xtbPositions, setXtbPositions] = useState<any[]>([]);
+  // Auto-Trading states
+  const [autoStatus, setAutoStatus] = useState<any | null>(null);
+  const [openPositions, setOpenPositions] = useState<any[]>([]);
 
   
 
@@ -87,8 +87,8 @@ export default function TradingModule() {
   
   
 
-  const currentAutoStatus = xtbAutoStatus;
-  const currentPositions = xtbPositions;
+  const currentAutoStatus = autoStatus;
+  const currentPositions = openPositions;
 
   useEffect(() => {
     if (currentAutoStatus) {
@@ -99,28 +99,28 @@ export default function TradingModule() {
   }, [currentAutoStatus?.defaultTP, currentAutoStatus?.defaultSL, currentAutoStatus?.riskPercentage, activeBroker]);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
-    const saved = localStorage.getItem('xtb_wrapLogs');
+    const saved = localStorage.getItem('ig_wrapLogs');
     return saved !== null ? saved === 'true' : true;
   });
   const [reverseLogs, setReverseLogs] = useState<boolean>(() => {
-    const saved = localStorage.getItem('xtb_reverseLogs');
+    const saved = localStorage.getItem('ig_reverseLogs');
     return saved !== null ? saved === 'true' : true;
   });
   const [showTimestamps, setShowTimestamps] = useState<boolean>(() => {
-    const saved = localStorage.getItem('xtb_showTimestamps');
+    const saved = localStorage.getItem('ig_showTimestamps');
     return saved !== null ? saved === 'true' : true;
   });
 
   useEffect(() => {
-    localStorage.setItem('xtb_wrapLogs', String(wrapLogs));
+    localStorage.setItem('ig_wrapLogs', String(wrapLogs));
   }, [wrapLogs]);
 
   useEffect(() => {
-    localStorage.setItem('xtb_reverseLogs', String(reverseLogs));
+    localStorage.setItem('ig_reverseLogs', String(reverseLogs));
   }, [reverseLogs]);
 
   useEffect(() => {
-    localStorage.setItem('xtb_showTimestamps', String(showTimestamps));
+    localStorage.setItem('ig_showTimestamps', String(showTimestamps));
   }, [showTimestamps]);
 
   const fetchAutoStatus = async (broker = activeBroker) => {
@@ -132,7 +132,7 @@ export default function TradingModule() {
         const contentType = res.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const data = await res.json();
-          setXtbAutoStatus(data.status); setXtbPositions(data.positions || []);
+          setAutoStatus(data.status); setOpenPositions(data.positions || []);
         } else {
           console.warn(`Expected JSON response from ${url}, received alternative content type.`);
         }
@@ -156,7 +156,7 @@ export default function TradingModule() {
       });
       if (res.ok) {
         const data = await res.json();
-        setXtbAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
+        setAutoStatus(prev => prev ? { ...prev, active: data.active } : null);
         setSuccessMessage(`Trading automatico ${activeBroker.toUpperCase()} ${data.active ? 'attivato' : 'disattivato'} con successo!`);
         fetchAutoStatus();
       }
@@ -192,7 +192,7 @@ export default function TradingModule() {
     }
   };
 
-  const handleResetXtbLogs = async () => {
+  const handleResetLogs = async () => {
     if (!window.confirm(`Sei sicuro di voler azzerare tutti i log di ${activeBroker.toUpperCase()}?`)) return;
     try {
       const url = `/api/trading/${activeBroker}-reset-logs`;
@@ -209,9 +209,9 @@ export default function TradingModule() {
   };
 
   const handleResetBalance = async () => {
-    const isXtb = activeBroker === 'xtb';
-    const isIg = activeBroker === 'ig';
-    const isAlpaca = activeBroker === 'alpaca';
+    const isXtb = false;
+    const isIg = true;
+    const isAlpaca = false;
     const limitMsg = isXtb ? '50€' : (isIg ? '30000€' : '100000$');
     if (!window.confirm(`Sei sicuro di voler azzerare il saldo (${limitMsg}) e tutte le posizioni di ${activeBroker.toUpperCase()}?`)) return;
     try {
@@ -229,7 +229,7 @@ export default function TradingModule() {
     }
   };
 
-  const handleCloseXtbPosition = async (symbol: string) => {
+  const handleClosePosition = async (symbol: string) => {
     setClosingInstruments(prev => [...prev, symbol]);
     try {
       const url = `/api/trading/${activeBroker}-close-position`;
@@ -255,17 +255,65 @@ export default function TradingModule() {
   };
 
 
+  const [credentials, setCredentials] = useState<any>({});
+  const [loadingCreds, setLoadingCreds] = useState(false);
+  const [showCredForm, setShowCredForm] = useState<{ broker: string, env: string } | null>(null);
+  const [tempCreds, setTempCreds] = useState<any>({});
+
+  const fetchCredentials = async () => {
+    try {
+      const res = await fetch('/api/trading/credentials');
+      const data = await res.json();
+      if (data.success) {
+        // Uniamo le credenziali ricevute dal server con i valori predefiniti forniti dall'utente
+        const merged = {
+          ig: {
+            real: {
+              apiKey: '105b853f29b3410a78ca67b9f6212e53fa306602',
+              accountId: 'Z6CKEN',
+              username: '',
+              password: '',
+              ...((data.config && data.config.ig && data.config.ig.real) || {})
+            },
+            demo: {
+              apiKey: 'a8d55b956ea4c124366088c0424c6a59d44bb6a3',
+              accountId: 'Z6CKEN2',
+              username: '',
+              password: '',
+              ...((data.config && data.config.ig && data.config.ig.demo) || {})
+            }
+          }
+        };
+        setCredentials(merged);
+      }
+    } catch (err) {
+      console.error('Error fetching credentials:', err);
+    }
+  };
+
+  const saveCredentials = async (broker: string, env: string) => {
+    try {
+      const res = await fetch('/api/trading/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ broker, env, credentials: tempCreds })
+      });
+      if (res.ok) {
+        setSuccessMessage(`Credenziali ${broker.toUpperCase()} ${env.toUpperCase()} salvate con successo!`);
+        setShowCredForm(null);
+        fetchCredentials();
+      }
+    } catch (err) {
+      setErrorMessage('Errore salvataggio credenziali.');
+    }
+  };
+
+  useEffect(() => {
+    fetchCredentials();
+  }, []);
+
   // Available instruments
   const instruments = useMemo(() => {
-    if (activeBroker === 'alpaca') {
-      return [
-        { value: 'SPY', label: 'SPY (S&P 500 ETF)' },
-        { value: 'QQQ', label: 'QQQ (Nasdaq 100 ETF)' },
-        { value: 'NVDA', label: 'NVDA (NVIDIA Corporation)' },
-        { value: 'AAPL', label: 'AAPL (Apple Inc.)' },
-        { value: 'TSLA', label: 'TSLA (Tesla Inc.)' },
-      ];
-    }
     return [
       { value: 'EUR_USD', label: 'EUR/USD (Euro / Dollaro US)' },
       { value: 'GBP_USD', label: 'GBP/USD (Sterlina / Dollaro US)' },
@@ -273,11 +321,11 @@ export default function TradingModule() {
       { value: 'AUD_USD', label: 'AUD/USD (Dollaro Australiano / Dollaro US)' },
       { value: 'EUR_GBP', label: 'EUR/GBP (Euro / Sterlina)' },
     ];
-  }, [activeBroker]);
+  }, []);
 
   useEffect(() => {
     // Reset selection when broker changes
-    setSelectedInstrument(activeBroker === 'alpaca' ? 'SPY' : 'EUR_USD');
+    setSelectedInstrument('EUR_USD');
   }, [activeBroker]);
 
   const handleSaveSettings = async () => {
@@ -499,195 +547,432 @@ export default function TradingModule() {
   return (
     <div className="space-y-6">
 
-      {/* Broker Switcher */}
-      <div className="flex gap-2 p-1 bg-slate-100 rounded-xl w-fit">
-        {(['ig', 'xtb', 'alpaca'] as const).map((b) => (
-          <button
-            key={b}
-            onClick={() => setActiveBroker(b)}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
-              activeBroker === b 
-                ? 'bg-white text-indigo-600 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {b.toUpperCase()}
-          </button>
-        ))}
+      {/* Broker Switcher removed */}
+
+      {/* SEZIONI CONTO REAL E DEMO */}
+      <div className="flex flex-col gap-8">
+        {/* SEZIONE CONTO REAL */}
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <TrendingUp className="w-5 h-5" />
+              <h3 className="font-bold uppercase tracking-wider text-sm">Conto Reale IG</h3>
+            </div>
+            <button 
+              onClick={() => {
+                setTempCreds(credentials[activeBroker]?.real || {});
+                setShowCredForm({ broker: activeBroker, env: 'real' });
+              }}
+              className="bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg backdrop-blur-md transition border-none cursor-pointer"
+            >
+              GESTISCI CREDENZIALI
+            </button>
+          </div>
+
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Account Info Column */}
+              <div className="md:col-span-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Bilancio</p>
+                    <p className="text-xl font-bold text-slate-900 font-mono">0.00 EUR</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">NAV</p>
+                    <p className="text-xl font-bold text-indigo-600 font-mono">0.00 EUR</p>
+                  </div>
+                </div>
+                
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">ID Conto</span>
+                    <span className="text-xs font-bold text-slate-700 font-mono">{credentials[activeBroker]?.real?.accountId || 'Non configurato'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Stato</span>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-200 text-slate-600">Disconnesso</span>
+                  </div>
+                </div>
+
+                {showCredForm?.broker === activeBroker && showCredForm?.env === 'real' && (
+                  <div className="bg-slate-900 p-5 rounded-2xl shadow-xl space-y-4 animate-in fade-in zoom-in-95">
+                    <h4 className="text-[10px] font-bold text-emerald-400 uppercase">Configurazione Real IG</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Seleziona Conto Reale Preconfigurato</label>
+                        <select 
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none mb-2 cursor-pointer"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'custom') {
+                              setTempCreds({ apiKey: '', username: '', password: '', accountId: '' });
+                            } else if (val === 'Z6CKEN') {
+                              setTempCreds({
+                                apiKey: '105b853f29b3410a78ca67b9f6212e53fa306602',
+                                accountId: 'Z6CKEN',
+                                username: tempCreds.username || '',
+                                password: tempCreds.password || ''
+                              });
+                            }
+                          }}
+                          value={tempCreds.accountId === 'Z6CKEN' && tempCreds.apiKey === '105b853f29b3410a78ca67b9f6212e53fa306602' ? 'Z6CKEN' : 'custom'}
+                        >
+                          <option value="custom">-- Personalizzato / Inserimento Manuale --</option>
+                          <option value="Z6CKEN">Z6CKEN (Chiave API: 105b853f29...)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Chiave API (Real)</label>
+                        <input 
+                          type="text" 
+                          placeholder="Inserisci la Chiave API Real..."
+                          value={tempCreds.apiKey || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, apiKey: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Nome Utente IG</label>
+                        <input 
+                          type="text" 
+                          placeholder="Il tuo username di login..."
+                          value={tempCreds.username || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, username: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Password IG</label>
+                        <input 
+                          type="password" 
+                          placeholder="La tua password..."
+                          value={tempCreds.password || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, password: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">ID Conto (Opzionale)</label>
+                        <input 
+                          type="text" 
+                          placeholder="Es. XY123..."
+                          value={tempCreds.accountId || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, accountId: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div className="flex gap-2 pt-2">
+                        <button onClick={() => saveCredentials(activeBroker, 'real')} className="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-emerald-700 transition cursor-pointer border-none">SALVA</button>
+                        <button onClick={() => setShowCredForm(null)} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bot Controls & Positions Column */}
+              <div className="md:col-span-8 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3">Automazione Reale</h4>
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={`w-3 h-3 rounded-full ${false ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                        <span className="text-xs font-bold text-slate-700">{false ? 'BOT ATTIVO' : 'BOT DISATTIVATO'}</span>
+                      </div>
+                    </div>
+                    <button className="w-full py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition border-none cursor-pointer">
+                      AVVIA TRADING REALE
+                    </button>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3">P&L Giornaliero</h4>
+                      <p className="text-xl font-bold text-slate-800 font-mono">0.00 EUR</p>
+                    </div>
+                    <div className="h-10 bg-slate-200/50 rounded-lg mt-2"></div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3 flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5" />
+                    Posizioni Reali Aperte
+                  </h4>
+                  <div className="bg-slate-50 rounded-2xl border border-slate-100 p-8 flex flex-col items-center justify-center text-slate-400">
+                    <Activity className="w-8 h-8 opacity-20 mb-2" />
+                    <p className="text-xs italic">Nessuna posizione reale attiva.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* SEZIONE CONTO DEMO */}
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-amber-500 px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <Activity className="w-5 h-5" />
+              <h3 className="font-bold uppercase tracking-wider text-sm">Conto Demo IG</h3>
+            </div>
+            <button 
+              onClick={() => {
+                setTempCreds(credentials[activeBroker]?.demo || {});
+                setShowCredForm({ broker: activeBroker, env: 'demo' });
+              }}
+              className="bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg backdrop-blur-md transition border-none cursor-pointer"
+            >
+              GESTISCI CREDENZIALI
+            </button>
+          </div>
+
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Account Info Column */}
+              <div className="md:col-span-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Bilancio</p>
+                    <p className="text-xl font-bold text-slate-900 font-mono">{parseFloat(account?.balance || '0').toFixed(2)} EUR</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">NAV</p>
+                    <p className="text-xl font-bold text-indigo-600 font-mono">{parseFloat(account?.NAV || '0').toFixed(2)} EUR</p>
+                  </div>
+                </div>
+                
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">ID Conto</span>
+                    <span className="text-xs font-bold text-slate-700 font-mono">{account?.id || credentials[activeBroker]?.demo?.accountId || 'DEMO_ACC'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Stato</span>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-100 text-amber-700">Simulazione</span>
+                  </div>
+                </div>
+
+                {showCredForm?.broker === activeBroker && showCredForm?.env === 'demo' && (
+                  <div className="bg-slate-900 p-5 rounded-2xl shadow-xl space-y-4 animate-in fade-in zoom-in-95">
+                    <h4 className="text-[10px] font-bold text-amber-400 uppercase">Configurazione Demo IG</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Seleziona Conto Demo Preconfigurato</label>
+                        <select 
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none mb-2 cursor-pointer"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'custom') {
+                              setTempCreds({ apiKey: '', username: '', password: '', accountId: '' });
+                            } else if (val === 'Z6CKEN2') {
+                              setTempCreds({
+                                apiKey: 'a8d55b956ea4c124366088c0424c6a59d44bb6a3',
+                                accountId: 'Z6CKEN2',
+                                username: tempCreds.username || '',
+                                password: tempCreds.password || ''
+                              });
+                            } else if (val === 'Z6CKEO') {
+                              setTempCreds({
+                                apiKey: 'a9ce4121b0e9ee3153111e44a4152dfb141d1ea8',
+                                accountId: 'Z6CKEO',
+                                username: tempCreds.username || '',
+                                password: tempCreds.password || ''
+                              });
+                            }
+                          }}
+                          value={
+                            tempCreds.accountId === 'Z6CKEN2' && tempCreds.apiKey === 'a8d55b956ea4c124366088c0424c6a59d44bb6a3' ? 'Z6CKEN2' : 
+                            tempCreds.accountId === 'Z6CKEO' && tempCreds.apiKey === 'a9ce4121b0e9ee3153111e44a4152dfb141d1ea8' ? 'Z6CKEO' : 'custom'
+                          }
+                        >
+                          <option value="custom">-- Personalizzato / Inserimento Manuale --</option>
+                          <option value="Z6CKEN2">Z6CKEN2 (Chiave API: a8d55b956e...)</option>
+                          <option value="Z6CKEO">Z6CKEO (Chiave API: a9ce4121b0...)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Chiave API (Demo)</label>
+                        <input 
+                          type="text" 
+                          placeholder="Inserisci la Chiave API Demo..."
+                          value={tempCreds.apiKey || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, apiKey: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Nome Utente IG</label>
+                        <input 
+                          type="text" 
+                          placeholder="Il tuo username di login..."
+                          value={tempCreds.username || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, username: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Password IG</label>
+                        <input 
+                          type="password" 
+                          placeholder="La tua password..."
+                          value={tempCreds.password || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, password: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">ID Conto (Opzionale)</label>
+                        <input 
+                          type="text" 
+                          placeholder="Es. XY123..."
+                          value={tempCreds.accountId || ''} 
+                          onChange={(e) => setTempCreds({ ...tempCreds, accountId: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none"
+                        />
+                      </div>
+                      <div className="flex gap-2 pt-2">
+                        <button onClick={() => saveCredentials(activeBroker, 'demo')} className="flex-1 bg-amber-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-amber-700 transition cursor-pointer border-none">SALVA</button>
+                        <button onClick={() => setShowCredForm(null)} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bot Controls & Positions Column */}
+              <div className="md:col-span-8 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3">Automazione Demo</h4>
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={`w-3 h-3 rounded-full ${currentAutoStatus?.active ? 'bg-amber-500 animate-pulse' : 'bg-slate-300'}`}></div>
+                        <span className="text-xs font-bold text-slate-700">{currentAutoStatus?.active ? 'BOT ATTIVO' : 'BOT DISATTIVATO'}</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleToggleAutoTrading}
+                        className={`flex-1 py-2 rounded-xl text-xs font-bold transition border-none cursor-pointer ${
+                          currentAutoStatus?.active ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'bg-amber-600 text-white hover:bg-amber-700'
+                        }`}
+                      >
+                        {currentAutoStatus?.active ? 'FERMA' : 'AVVIA'}
+                      </button>
+                      <button 
+                        onClick={handleTriggerAutoTrading}
+                        disabled={triggeringCycle}
+                        className="p-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition border-none cursor-pointer disabled:opacity-50"
+                        title="Esegui ciclo ora"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${triggeringCycle ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase">P&L Storico Demo</h4>
+                      <span className="text-[9px] font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-500">Sandbox</span>
+                    </div>
+                    <div className="h-16 w-full">
+                      {currentAutoStatus?.dailyPnL && currentAutoStatus.dailyPnL.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={currentAutoStatus.dailyPnL}>
+                            <Area type="monotone" dataKey="realized" stroke="#f59e0b" fill="#fef3c7" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full bg-slate-200/30 rounded-lg flex items-center justify-center">
+                          <BarChart2 className="w-4 h-4 text-slate-300" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3 flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5" />
+                    Posizioni Demo Aperte
+                  </h4>
+                  <div className="space-y-2">
+                    {currentPositions && currentPositions.length > 0 ? (
+                      currentPositions.map((pos: any, i: number) => (
+                        <div key={i} className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-3">
+                            <span className="font-bold text-slate-900">{pos.symbol}</span>
+                            <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-bold ${pos.side === 'buy' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                              {pos.side.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="font-mono text-slate-600">{parseFloat(pos.qty).toFixed(2)}</span>
+                            <span className={`font-mono font-bold ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {parseFloat(pos.unrealized_pl).toFixed(2)}
+                            </span>
+                            <button 
+                              onClick={() => handleClosePosition(pos.symbol)}
+                              className="text-slate-400 hover:text-rose-600 transition p-1"
+                            >
+                              <TrendingDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-slate-50 rounded-2xl border border-slate-100 p-6 flex flex-col items-center justify-center text-slate-400">
+                        <p className="text-[11px] italic">Nessuna posizione demo attiva.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Banner di modalità Demo o Connessione */}
-      {isDemo ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="p-2 bg-amber-100 text-amber-800 rounded-xl mt-0.5 sm:mt-0">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-amber-900 text-sm">
-                Modalità Demo {activeBroker.toUpperCase()} Attiva
-              </h3>
-              <p className="text-xs text-amber-700 mt-1">
-                L'applicazione sta funzionando in modalità simulata Sandbox per {activeBroker.toUpperCase()}.
-              </p>
-            </div>
-          </div>
-          <div className="text-xs bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-medium border border-amber-200 shrink-0">
-            Demo Sandbox
-          </div>
+      {/* Selezione Strumento */}
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Strumento di Trading</h3>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-800`}>
+            IG FX
+          </span>
         </div>
-      ) : (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-center justify-between gap-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-emerald-950 text-sm">Connessione {activeBroker.toUpperCase()} Attiva</h3>
-              <p className="text-xs text-emerald-700">Il modulo è correttamente collegato al tuo account reale/practice su {activeBroker.toUpperCase()}.</p>
-            </div>
-          </div>
-          <div className="text-xs bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-lg font-medium border border-emerald-200 shrink-0">
-            Live Connected
-          </div>
-        </div>
-      )}
-
-      
-      {/* Risultato del Test di Connessione IG */}
-      {connTestResult && (
-        <div className={`rounded-2xl p-5 border shadow-sm ${connTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
-          <div className="flex gap-3">
-            <div className="space-y-1.5">
-              <h4 className="font-bold text-sm">
-                {connTestResult.success ? 'Esito Test: Connessione Stabilita!' : 'Esito Test: Errore di Connessione'}
-              </h4>
-              <p className="text-xs leading-relaxed">{connTestResult.message}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Grid Superiore: Informazioni Account e Selezione Strumento */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Info Account */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Account {activeBroker.toUpperCase()}</h3>
-              {loadingAccount ? (
-                <RefreshCcw className="w-3.5 h-3.5 animate-spin text-slate-400" />
-              ) : (
-                <div className="flex gap-2 items-center">
-                  
-                  
-                  {activeBroker === 'ig' && (
-                    <button 
-                      onClick={handleTestConnection}
-                      disabled={testingConn}
-                      className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-semibold hover:bg-indigo-100 transition border-none cursor-pointer disabled:opacity-50"
-                      title="Esegui test di connessione REST API a IG"
-                    >
-                      {testingConn ? (
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Activity className="w-3 h-3" />
-                      )}
-                      Test API IG
-                    </button>
-                  )}
-
-                  <button 
-                    onClick={handleResetBalance}
-                    className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-600 rounded text-xs font-medium hover:bg-rose-100 transition border-none cursor-pointer"
-                    title={`Azzera conto simulazione e chiudi posizioni`}
-                  >
-                    Reset Conto
-                  </button>
-                  <button 
-                    onClick={() => fetchAccount(activeBroker)}
-                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition border-none cursor-pointer bg-transparent"
-                    title="Aggiorna dati account"
-                  >
-                    <RefreshCcw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-            </div>
-            <p className="text-lg font-bold text-slate-800 mt-2 font-mono">
-              {account?.id || (activeBroker === 'xtb' ? 'IT/M189975/EUR' : (activeBroker === 'ig' ? 'IG_DEMO' : 'ALPACA_DEMO'))}
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Broker: <span className="font-semibold text-slate-700">{activeBroker.toUpperCase()}</span>
-            </p>
+        
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <div className="relative w-full sm:w-auto">
+            <select 
+              value={selectedInstrument} 
+              onChange={(e) => handleInstrumentChange(e.target.value)}
+              className="w-full sm:w-80 appearance-none bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-3 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer pr-10"
+            >
+              {instruments.map(inst => (
+                <option key={inst.value} value={inst.value}>{inst.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
           </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-[10px] text-slate-400 uppercase font-semibold">Bilancio</p>
-              <p className="text-xl font-bold text-slate-900 mt-0.5 font-mono">
-                {parseFloat(account?.balance || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {account?.currency || (activeBroker === 'alpaca' ? 'USD' : 'EUR')}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-slate-400 uppercase font-semibold">Net Asset Value (NAV)</p>
-              <p className="text-xl font-bold text-indigo-600 mt-0.5 font-mono">
-                {parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {account?.currency || (activeBroker === 'alpaca' ? 'USD' : 'EUR')}
-              </p>
-            </div>
-          </div>
-        </div>
+          <button 
+            onClick={() => fetchAnalysisAndCandles(selectedInstrument)}
+            disabled={loadingAnalysis}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-5 py-3 text-sm font-semibold shadow-sm transition disabled:opacity-50 cursor-pointer border-none"
+          >
+            <RefreshCcw className={`w-4 h-4 ${loadingAnalysis ? 'animate-spin' : ''}`} />
+            Aggiorna Analisi IA
+          </button>
 
-        {/* Selezione Strumento */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between md:col-span-2">
-          <div>
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Strumento di Trading</h3>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${activeBroker === 'xtb' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-800'}`}>
-                {activeBroker.toUpperCase()} {activeBroker === 'alpaca' ? 'STOCKS' : 'FX'}
-              </span>
-            </div>
-            
-            <div className="mt-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-              <div className="relative w-full sm:w-auto">
-                <select 
-                  value={selectedInstrument} 
-                  onChange={(e) => handleInstrumentChange(e.target.value)}
-                  className="w-full sm:w-80 appearance-none bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-3 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer pr-10"
-                >
-                  {instruments.map(inst => (
-                    <option key={inst.value} value={inst.value}>{inst.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
-              </div>
-
-              <button 
-                onClick={() => fetchAnalysisAndCandles(selectedInstrument)}
-                disabled={loadingAnalysis}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-5 py-3 text-sm font-semibold shadow-sm transition disabled:opacity-50 cursor-pointer border-none"
-              >
-                <RefreshCcw className={`w-4 h-4 ${loadingAnalysis ? 'animate-spin' : ''}`} />
-                Aggiorna Analisi IA
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <div className="flex items-baseline gap-2">
-              <span className="text-xs text-slate-400 font-medium">Prezzo Ultimo:</span>
-              <span className="text-2xl font-bold text-slate-900 font-mono">
-                {currentPrice ? currentPrice.toFixed(5) : '...'}
-              </span>
-            </div>
-            {currentPrice !== 0 && (
-              <div className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${
-                priceChange.isPositive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-              }`}>
-                {priceChange.isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{priceChange.isPositive ? '+' : ''}{priceChange.value.toFixed(5)} ({priceChange.percent.toFixed(2)}%)</span>
-              </div>
-            )}
+          <div className="flex items-baseline gap-2 ml-auto">
+            <span className="text-xs text-slate-400 font-medium">Prezzo Ultimo:</span>
+            <span className="text-xl font-bold text-slate-900 font-mono">
+              {currentPrice ? currentPrice.toFixed(5) : '...'}
+            </span>
           </div>
         </div>
       </div>
@@ -799,332 +1084,7 @@ export default function TradingModule() {
         </div>
       </div>
 
-      {/* Sezione: Pannello Controllo Auto-Trading AI */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        {/* Pannello Account & P&L */}
-        <div className="lg:col-span-7 bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between border-b pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-indigo-600 animate-pulse" />
-                <h3 className="text-sm font-bold text-slate-800">
-                  Conto Simulato {activeBroker.toUpperCase()} AI
-                </h3>
-              </div>
-              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${currentAutoStatus?.active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                {currentAutoStatus?.active ? 'AUTO ATTIVO' : 'AUTO FERMO'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div>
-                <p className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Equity</p>
-                <p className="text-2xl font-bold text-slate-900 mt-0.5 font-mono">
-                  {currentAutoStatus?.equity !== undefined ? currentAutoStatus.equity.toFixed(2) : parseFloat(account?.NAV || (activeBroker === 'xtb' ? '50.00' : (activeBroker === 'ig' ? '30000.00' : '100000.00'))).toFixed(2)} {activeBroker === 'alpaca' ? '$' : '€'}
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] text-slate-400 uppercase font-semibold">Broker</p>
-                <p className="text-sm font-semibold text-indigo-600 mt-1">
-                  {activeBroker.toUpperCase()} {activeBroker === 'alpaca' ? 'Stock' : 'Forex'} Sandbox
-                </p>
-              </div>
-            </div>
- 
-            {/* Grafico P&L Storico */}
-            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 mb-6">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                  <h4 className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                    <BarChart2 className="w-3.5 h-3.5 text-slate-500" />
-                    Andamento Storico P&L ({activeBroker === 'alpaca' ? 'Stocks' : 'Forex'})
-                  </h4>
-                  <p className="text-[10px] text-slate-500">Profitti/perdite realizzati cumulativi in {activeBroker === 'alpaca' ? 'USD' : 'EUR'}</p>
-                </div>
-                <div className="flex gap-4 text-[10px] font-medium">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block"></span>
-                    <span className="text-slate-600">Realizzato</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded bg-sky-400 inline-block"></span>
-                    <span className="text-slate-600">Non Realizzato</span>
-                  </div>
-                </div>
-              </div>
- 
-              <div className="h-44 w-full">
-                {currentAutoStatus?.dailyPnL && currentAutoStatus.dailyPnL.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={currentAutoStatus.dailyPnL}
-                      margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
-                    >
-                      <defs>
-                        <linearGradient id={`${activeBroker}ColorRealized`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id={`${activeBroker}ColorUnrealized`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.15}/>
-                          <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} />
-                      <YAxis stroke="#94a3b8" fontSize={9} tickFormatter={(v) => `${v.toFixed(2)}${activeBroker === 'alpaca' ? '$' : '€'}`} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '11px' }}
-                        formatter={(value: any) => [`${parseFloat(value).toFixed(2)} ${activeBroker === 'alpaca' ? '$' : '€'}`]}
-                      />
-                      <Area type="monotone" dataKey="realized" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorRealized)`} />
-                      <Area type="monotone" dataKey="unrealized" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill={`url(#${activeBroker}ColorUnrealized)`} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-slate-400 text-xs">
-                    In attesa di transazioni per generare il grafico P&L
-                  </div>
-                )}
-              </div>
-            </div>
- 
-            {/* Posizioni Aperte */}
-            <div>
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5 border-b pb-1">
-                Posizioni {activeBroker === 'alpaca' ? 'Stocks' : 'Forex'} Aperte
-              </h4>
-              <div className="space-y-2">
-                {currentPositions && currentPositions.length > 0 ? (
-                  currentPositions.map((pos: any, i: number) => {
-                    const unrealizedPlNum = parseFloat(pos.unrealized_pl || '0');
-                    return (
-                      <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/60 gap-2">
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900 text-sm">{pos.symbol.replace('_', '/')}</span>
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                              pos.side === 'buy' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'
-                            }`}>
-                              {pos.side === 'buy' ? 'LONG' : 'SHORT'}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-2 sm:flex sm:gap-4 text-[11px] text-slate-500">
-                            <div>
-                              <span className="text-slate-400">Dimensione: </span>
-                              <span className="font-mono font-semibold text-slate-700">{pos.qty} unità</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400">Prezzo acq: </span>
-                              <span className="font-mono font-semibold text-slate-700">{parseFloat(pos.avg_entry_price).toFixed(5)}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400">Attuale: </span>
-                              <span className="font-mono font-semibold text-slate-700">{parseFloat(pos.current_price).toFixed(5)}</span>
-                            </div>
-                          </div>
-                        </div>
- 
-                        <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0">
-                          <span className={`font-mono font-bold text-xs ${unrealizedPlNum >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {unrealizedPlNum >= 0 ? '+' : ''}{unrealizedPlNum.toFixed(2)} {activeBroker === 'alpaca' ? '$' : '€'}
-                          </span>
- 
-                          {confirmCloseInstrument === pos.symbol ? (
-                            <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-100">
-                              <button
-                                type="button"
-                                onClick={() => handleCloseXtbPosition(pos.symbol)}
-                                disabled={closingInstruments.includes(pos.symbol)}
-                                className="bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] px-2.5 py-1 rounded transition border-none cursor-pointer"
-                              >
-                                {closingInstruments.includes(pos.symbol) ? '...' : 'Sì'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmCloseInstrument(null)}
-                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] px-2 py-1 rounded transition border-none cursor-pointer"
-                              >
-                                No
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmCloseInstrument(pos.symbol)}
-                              className="text-[10px] font-semibold text-rose-600 hover:text-white hover:bg-rose-600 px-2.5 py-1 rounded-lg border border-rose-200 hover:border-rose-600 transition cursor-pointer"
-                            >
-                              Liquida
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="text-center py-6 text-slate-400 italic">
-                    Nessuna posizione {activeBroker === 'alpaca' ? 'Stocks' : 'Forex'} attualmente aperta.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-                {/* Pannello Controllo Bot & Logs */}
-        <div className="lg:col-span-5 flex flex-col gap-6">
-          {/* Bot Automation Controller Card */}
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-              Automazione & Controllo IA ({activeBroker.toUpperCase()})
-            </h4>
- 
-            <div className="space-y-4">
-              <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                <div>
-                  <span className="text-xs font-bold text-slate-700 block">Stato Robot</span>
-                  <span className="text-[10px] text-slate-400">Periodicità di analisi: 1 ora</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleToggleAutoTrading}
-                  disabled={submittingAutoToggle || !currentAutoStatus}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-semibold text-xs transition-all border-none cursor-pointer ${
-                    currentAutoStatus?.active
-                      ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                  }`}
-                >
-                  {currentAutoStatus?.active ? 'Fermare Bot' : 'Avviare Bot'}
-                </button>
-              </div>
- 
-              <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                <div>
-                  <span className="text-xs font-bold text-slate-700 block">Esecuzione Forzata</span>
-                  <span className="text-[10px] text-slate-400">Analizza mercati adesso</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleTriggerAutoTrading}
-                  disabled={triggeringCycle || !currentAutoStatus}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl transition disabled:opacity-50 shadow-sm border-none cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${triggeringCycle ? 'animate-spin' : ''}`} />
-                  {triggeringCycle ? 'Analisi...' : 'Esegui Ciclo'}
-                </button>
-              </div>
- 
-              {/* Impostazioni Globali Trade */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-700">Impostazioni Trade</span>
-                  {editingSettings ? (
-                     <div className="flex gap-2">
-                       <button 
-                         onClick={() => setEditingSettings(false)}
-                         className="text-[10px] font-semibold text-slate-500 hover:text-slate-700 transition"
-                       >
-                         Annulla
-                       </button>
-                       <button 
-                         onClick={handleSaveSettings}
-                         disabled={savingSettings}
-                         className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition"
-                       >
-                         {savingSettings ? 'Salvataggio...' : 'Salva'}
-                       </button>
-                     </div>
-                  ) : (
-                    <button 
-                      onClick={() => setEditingSettings(true)}
-                      className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition flex items-center gap-1"
-                    >
-                      Modifica
-                    </button>
-                  )}
-                </div>
-                {editingSettings ? (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <label className="text-[10px] text-slate-500 font-medium block mb-1">
-                          Take Profit ({'€'})
-                        </label>
-                        <input 
-                          type="number"
-                          step="0.01"
-                          value={draftTP}
-                          onChange={e => setDraftTP(e.target.value)}
-                          className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-[10px] text-slate-500 font-medium block mb-1">
-                          Stop Loss ({'€'})
-                        </label>
-                        <input 
-                          type="number"
-                          step="0.01"
-                          value={draftSL}
-                          onChange={e => setDraftSL(e.target.value)}
-                          className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-500 font-medium block mb-1">Rischio per Trade (% saldo)</label>
-                      <input 
-                        type="number"
-                        step="0.5"
-                        min="0.5"
-                        max="10"
-                        value={draftRisk}
-                        onChange={e => setDraftRisk(e.target.value)}
-                        className="w-full text-xs p-1.5 rounded-lg border border-slate-200 bg-white"
-                      />
-                      <span className="text-[9px] text-slate-400 mt-1 block">Calcola la dimensione della posizione per rischiare questa % del saldo (Money Management)</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="flex-1">
-                      <span className="text-[10px] text-slate-500 font-medium block">Take Profit</span>
-                      <span className="text-xs font-bold text-green-600">
-                        {'+'}{currentAutoStatus?.defaultTP?.toFixed(2) || (activeBroker === 'xtb' ? '0.10' : '20.00')} {'€'}
-                      </span>
-                    </div>
-                    <div className="flex-1">
-                      <span className="text-[10px] text-slate-500 font-medium block">Stop Loss</span>
-                      <span className="text-xs font-bold text-rose-600">
-                        {currentAutoStatus?.defaultSL?.toFixed(2) || (activeBroker === 'xtb' ? '-1.00' : '-50.00')} {'€'}
-                      </span>
-                    </div>
-                    <div className="flex-1">
-                      <span className="text-[10px] text-slate-500 font-medium block">Rischio</span>
-                      <span className="text-xs font-bold text-indigo-600">{currentAutoStatus?.riskPercentage || (activeBroker === 'xtb' ? '2' : '5')}%</span>
-                    </div>
-                  </div>
-                )}
-              </div>
- 
-              <div className="text-[10px] text-slate-500 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/40">
-                <span className="font-bold text-indigo-950 block mb-0.5">Asset Monitorati dal Bot ({currentAutoStatus?.monitoredInstruments?.length || 0})</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {currentAutoStatus?.monitoredInstruments?.map((inst: string) => (
-                    <span key={inst} className="text-[9px] font-bold bg-white text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100 uppercase">
-                      {inst.replace('_', '/')}
-                    </span>
-                  ))}
-                </div>
-                {currentAutoStatus?.lastCheck && (
-                  <span className="text-[9px] text-slate-400 block mt-2">
-                    Ultimo ciclo: {new Date(currentAutoStatus.lastCheck).toLocaleString('it-IT')}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
- 
-          {/* Console Logs */}
+      {/* Console Logs */}
           <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex flex-col h-[560px]">
             <div className="flex items-center justify-between px-4 py-2 bg-slate-950 border-b border-slate-800">
               <div className="flex gap-2">
@@ -1150,7 +1110,7 @@ export default function TradingModule() {
               
               <button
                 type="button"
-                onClick={handleResetXtbLogs}
+                onClick={handleResetLogs}
                 className="text-[10px] font-semibold text-rose-400 hover:text-rose-300 bg-transparent border-none cursor-pointer px-2 py-0.5 rounded transition"
               >
                 Azzera
@@ -1217,7 +1177,7 @@ export default function TradingModule() {
  
                   return processedLogs.map((log: string, idx: number) => {
                     let colorClass = 'text-slate-400';
-                    if (log.includes('[XTB Errore]')  || log.includes('Errore Critico')) {
+                    if (log.includes('[Errore]')  || log.includes('Errore Critico')) {
                       colorClass = 'text-rose-400';
                     } else if (log.includes('eseguito') || log.includes('chiusa con successo') || log.includes('chiusa manualmente')) {
                       colorClass = 'text-emerald-400';
@@ -1279,8 +1239,6 @@ export default function TradingModule() {
               )}
             </div>
           </div>
-        </div>
-      </div>
 
       {/* Sezione Inferiore: Desk di Trading */}
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -1417,7 +1375,7 @@ export default function TradingModule() {
             </div>
 
             <div className="text-[10px] text-slate-400 mt-4 leading-normal">
-              Gli ordini di mercato {'XTB'} vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
+              Gli ordini di mercato {'IG Markets'} vengono eseguiti con modalità FOK (Fill-Or-Kill) per prevenire slittamenti improvvisi di prezzo.
             </div>
           </div>
         </div>

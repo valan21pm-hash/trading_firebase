@@ -3,6 +3,8 @@ import 'dotenv/config';
 export class IgMarketsAPI {
   private static instance: IgMarketsAPI;
   private session: any = null;
+  private credentials: any = null;
+  private mode: string = 'demo';
   
   private constructor() {}
 
@@ -13,12 +15,20 @@ export class IgMarketsAPI {
     return IgMarketsAPI.instance;
   }
 
+  setCredentials(creds: any, mode: string = 'demo') {
+    this.credentials = creds;
+    this.mode = mode;
+    this.session = null; // Reset session when credentials change
+  }
+
   getBaseUrl() {
-    const mode = process.env.IG_MODE || 'demo';
-    return mode === 'live' || mode === 'real' ? 'https://api.ig.com/gateway/deal' : 'https://demo-api.ig.com/gateway/deal';
+    return this.mode === 'live' || this.mode === 'real' ? 'https://api.ig.com/gateway/deal' : 'https://demo-api.ig.com/gateway/deal';
   }
 
   getApiKey() {
+    if (this.credentials) {
+      return this.credentials.apiKey || '';
+    }
     const mode = (process.env.IG_MODE || 'demo').toLowerCase();
     if (mode === 'live' || mode === 'real') {
       return process.env.IG_API_KEY || '';
@@ -27,17 +37,16 @@ export class IgMarketsAPI {
   }
 
   async login() {
-    const mode = (process.env.IG_MODE || 'demo').toLowerCase();
-    const username = process.env.IG_USERNAME;
-    const password = process.env.IG_PASSWORD;
+    const username = this.credentials?.username || process.env.IG_USERNAME;
+    const password = this.credentials?.password || process.env.IG_PASSWORD;
     const apiKey = this.getApiKey();
 
     if (!username || !password || !apiKey) {
       const missing = [];
-      if (!username) missing.push('IG_USERNAME');
-      if (!password) missing.push('IG_PASSWORD');
-      if (!apiKey) missing.push(mode === 'live' || mode === 'real' ? 'IG_API_KEY' : 'IG_DEMO_API_KEY');
-      throw new Error(`Credenziali IG Markets mancanti nei Secrets: ${missing.join(', ')}.`);
+      if (!username) missing.push('Username');
+      if (!password) missing.push('Password');
+      if (!apiKey) missing.push('API Key');
+      throw new Error(`Credenziali IG Markets mancanti: ${missing.join(', ')}.`);
     }
 
     if (username.includes('@')) {
@@ -57,17 +66,13 @@ export class IgMarketsAPI {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       const errMsg = JSON.stringify(errorData);
-      const mode = process.env.IG_MODE || 'demo';
       
       if (errMsg.includes("error.security.api-key-invalid") || response.status === 403) {
-        const advice = mode === 'demo' 
-          ? "Se stai usando una chiave REALE (tab 'Conti'), imposta IG_MODE=real. Per il DEMO, usa la chiave della tab 'Conti demo'."
-          : "Assicurati di usare la chiave corretta della tab 'Conti' per l'ambiente reale.";
-        throw new Error(`La chiave API non è valida per l'ambiente ${mode.toUpperCase()}. ${advice}`);
+        throw new Error(`La chiave API non è valida per l'ambiente ${this.mode.toUpperCase()}.`);
       }
       
       if (errMsg.includes("error.security.invalid-details") || response.status === 401) {
-        throw new Error(`Le credenziali inserite (username o password) non sono corrette (401). Verifica IG_USERNAME e IG_PASSWORD.`);
+        throw new Error(`Le credenziali inserite (username o password) non sono corrette (401).`);
       }
 
       throw new Error(`IG Login Failed: ${response.status} - ${errMsg}`);

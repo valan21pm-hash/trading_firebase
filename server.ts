@@ -96,6 +96,40 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// --- TRADING CREDENTIALS ENDPOINTS ---
+app.get('/api/trading/credentials', async (req, res) => {
+  if (!db) return res.status(500).json({ success: false, error: 'Database non inizializzato' });
+  try {
+    const doc = await db.collection('broker_credentials').doc('config').get();
+    res.json({ success: true, config: doc.exists ? doc.data() : {} });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/trading/credentials', async (req, res) => {
+  if (!db) return res.status(500).json({ success: false, error: 'Database non inizializzato' });
+  const { broker, env, credentials } = req.body;
+  if (!broker || !env || !credentials) {
+    return res.status(400).json({ success: false, error: 'Parametri mancanti' });
+  }
+
+  try {
+    const docRef = db.collection('broker_credentials').doc('config');
+    const doc = await docRef.get();
+    let currentData = doc.exists ? doc.data() : {};
+    
+    if (!currentData[broker]) currentData[broker] = {};
+    currentData[broker][env] = credentials;
+
+    await docRef.set(currentData);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+// -------------------------------------
+
 const resolvedCredentials = {
   paper: { apiKey: '', secretKey: '', isConfigured: false },
   live: { apiKey: '', secretKey: '', isConfigured: false }
@@ -3916,36 +3950,37 @@ app.post("/api/trading/xtb-order", async (req, res) => {
 
 app.get("/api/trading/xtb-account", async (req, res) => {
   try {
-    const XTB_USER_ID = process.env.XTB_USER_ID;
-    const XTB_PASSWORD = process.env.XTB_PASSWORD;
-    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-
-    if (true) {
-      return res.json({
-        isDemo: true,
-        account: {
-          id: "IT/M189975/EUR",
-          balance: xtbBotStatus.balance.toFixed(2),
-          currency: "EUR",
-          NAV: xtbBotStatus.balance.toFixed(2),
-          openPositionCount: Object.keys(xtbDemoPositions).length,
-          pendingOrderCount: 0,
-          alias: "XTB-MT5-Demo"
-        }
-      });
+    // Carica credenziali da Firestore
+    let credentials: any = {};
+    if (db) {
+      const doc = await db.collection('broker_credentials').doc('config').get();
+      if (doc.exists) {
+        credentials = doc.data()?.xtb || {};
+      }
     }
 
-    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/summary`, {
-      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
+    const env = (process.env.XTB_MODE || 'demo').toLowerCase();
+    const envCreds = credentials[env === 'real' || env === 'live' ? 'real' : 'demo'] || {};
+    
+    // Se abbiamo un account ID nelle credenziali, usiamolo per il display
+    const displayAccountId = envCreds.accountId || (env === 'demo' ? "IT/M189975/EUR" : "Non configurato");
+    const alias = env === 'demo' ? "XTB-Demo" : "XTB-Real";
+
+    // Per ora XTB è simulato nel backend, quindi restituiamo lo stato simulato
+    // Ma usiamo l'ID conto inserito dall'utente se disponibile
+    res.json({
+      success: true,
+      isDemo: env === 'demo',
+      account: {
+        id: displayAccountId,
+        balance: xtbBotStatus.balance.toFixed(2),
+        currency: "EUR",
+        NAV: xtbBotStatus.balance.toFixed(2),
+        openPositionCount: Object.keys(xtbDemoPositions).length,
+        pendingOrderCount: 0,
+        alias: alias
+      }
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Errore API XTB Account: ${response.status} - ${errText}`);
-    }
-
-    const data = await response.json();
-    res.json({ success: true, account: data.account });
   } catch (error: any) {
     console.error("Errore recupero account XTB:", error);
     res.status(500).json({ error: error.message || "Errore recupero account" });
@@ -4012,9 +4047,37 @@ let igBotStatus = {
 };
 let igDemoPositions = {};
 
+// Helper per caricare credenziali e inizializzare API
+async function getBrokerCredentials(broker: string, env: string) {
+  if (!db) return null;
+  try {
+    const doc = await db.collection('broker_credentials').doc('config').get();
+    if (doc.exists) {
+      const allCreds = doc.data();
+      return allCreds[broker]?.[env] || null;
+    }
+  } catch (err) {
+    console.error(`[Firestore] Errore nel caricamento credenziali per ${broker} ${env}:`, err);
+  }
+  return null;
+}
+
+async function initIgApi(modeOverride?: string) {
+  const mode = modeOverride || process.env.IG_MODE || 'demo';
+  const igApi = IgMarketsAPI.getInstance();
+  const creds = await getBrokerCredentials('ig', mode === 'real' || mode === 'live' ? 'real' : 'demo');
+  if (creds) {
+    igApi.setCredentials(creds, mode);
+  } else {
+    // Fallback ai secrets dell'ambiente se non ci sono credenziali su Firestore
+    igApi.setCredentials(null, mode);
+  }
+  return igApi;
+}
+
 app.post("/api/trading/ig-test-connection", async (req, res) => {
   try {
-    const igApi = IgMarketsAPI.getInstance();
+    const igApi = await initIgApi();
     const result = await igApi.testConnection();
     res.json(result);
   } catch (error: any) {
@@ -4024,14 +4087,17 @@ app.post("/api/trading/ig-test-connection", async (req, res) => {
 
 app.get("/api/trading/ig-account", async (req, res) => {
   try {
-    const igApi = IgMarketsAPI.getInstance();
+    const igApi = await initIgApi();
     const accounts = await igApi.getAccounts().catch(() => []);
     let balance = igBotStatus.balance;
     let accountId = 'IG_DEMO';
     
+    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
+    
     if (accounts && accounts.length > 0) {
       const preferredAcct = accounts.find((a: any) => a.preferred) || accounts[0];
       accountId = preferredAcct.accountId || accountId;
+      const accountAlias = preferredAcct.accountAlias || preferredAcct.accountName || '';
       
       if (preferredAcct.balance !== undefined) {
         if (typeof preferredAcct.balance === 'object' && preferredAcct.balance !== null) {
@@ -4040,25 +4106,32 @@ app.get("/api/trading/ig-account", async (req, res) => {
           balance = parseFloat(preferredAcct.balance);
         }
       }
+      
+      res.json({
+        success: true,
+        account: { id: accountId, alias: accountAlias, balance: String(balance), currency: 'EUR', NAV: String(balance) },
+        isDemo: isDemoMode
+      });
+    } else {
+      res.json({
+        success: true,
+        account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
+        isDemo: isDemoMode
+      });
     }
-    
-    res.json({
-      success: true,
-      account: { id: accountId, balance: String(balance), currency: 'EUR', NAV: String(balance) },
-      isDemo: true
-    });
   } catch (error: any) {
+    const isDemoMode = (process.env.IG_MODE || 'demo').toLowerCase() !== 'real' && (process.env.IG_MODE || 'demo').toLowerCase() !== 'live';
     res.json({
       success: true,
       account: { id: 'IG_DEMO', balance: String(igBotStatus.balance), currency: 'EUR', NAV: String(igBotStatus.balance) },
-      isDemo: true
+      isDemo: isDemoMode
     });
   }
 });
 
 app.get("/api/trading/ig-status", async (req, res) => {
   try {
-    const igApi = IgMarketsAPI.getInstance();
+    const igApi = await initIgApi();
     const accounts = await igApi.getAccounts().catch(() => []);
     let balance = igBotStatus.balance;
     if (accounts && accounts.length > 0) {
@@ -4089,7 +4162,7 @@ app.get("/api/trading/ig-status", async (req, res) => {
 app.post("/api/trading/ig-order", async (req, res) => {
   const { instrument, units, side } = req.body;
   try {
-    const igApi = IgMarketsAPI.getInstance();
+    const igApi = await initIgApi();
     const epicMap: Record<string, string> = { 'EUR_USD': 'CS.D.EURUSD.CFD.IP', 'GBP_USD': 'CS.D.GBPUSD.CFD.IP' };
     const epic = epicMap[instrument] || 'CS.D.EURUSD.CFD.IP';
     const result = await igApi.createOrder(epic, side === 'buy' ? 'BUY' : 'SELL', units);

@@ -1,0 +1,80 @@
+{
+  "collections": [
+    {
+      "collectionId": "broker_config",
+      "documents": [
+        {
+          "documentId": "ig",
+          "fields": {
+            "real": {
+              "mapValue": {
+                "fields": {
+                  "username": { "stringValue": "" },
+                  "password": { "stringValue": "" },
+                  "accountId": { "stringValue": "" },
+                  "apiKey": { "stringValue": "" }
+                }
+              }
+            },
+            "demo": {
+              "mapValue": {
+                "fields": {
+                  "username": { "stringValue": "" },
+                  "password": { "stringValue": "" },
+                  "accountId": { "stringValue": "" },
+                  "apiKey": { "stringValue": "" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "documentId": "xtb",
+          "fields": {
+            "real": {
+              "mapValue": {
+                "fields": {
+                  "username": { "stringValue": "" },
+                  "password": { "stringValue": "" },
+                  "accountId": { "stringValue": "" }
+                }
+              }
+            },
+            "demo": {
+              "mapValue": {
+                "fields": {
+                  "username": { "stringValue": "" },
+                  "password": { "stringValue": "" },
+                  "accountId": { "stringValue": "" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "documentId": "alpaca",
+          "fields": {
+            "real": {
+              "mapValue": {
+                "fields": {
+                  "apiKey": { "stringValue": "" },
+                  "secretKey": { "stringValue": "" },
+                  "accountId": { "stringValue": "" }
+                }
+              }
+            },
+            "demo": {
+              "mapValue": {
+                "fields": {
+                  "apiKey": { "stringValue": "" },
+                  "secretKey": { "stringValue": "" },
+                  "accountId": { "stringValue": "" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
