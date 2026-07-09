@@ -402,6 +402,11 @@ let botStatus: {
   monitoredSymbols?: string[];
   historicalProfits?: number;
   y?: number;
+  defaultTP?: number;
+  defaultSL?: number;
+  trailingStop?: number;
+  timeframe?: number;
+  riskPercentage?: number;
 } = {
   active: false,
   paperActive: false,
@@ -433,6 +438,8 @@ let xtbBotStatus = {
   dailyPnL: [] as { date: string; realized: number; unrealized: number }[],
   defaultTP: 0.10,
   defaultSL: -1.00,
+  trailingStop: 0,
+  timeframe: 15,
   riskPercentage: 2
 };
 let xtbDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
@@ -508,7 +515,13 @@ app.post("/api/trading/alpaca-reset-balance", async (req, res) => {
 });
 
 app.post("/api/trading/alpaca-settings", async (req, res) => {
-  // Alpaca settings could be expanded here
+  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage } = req.body;
+  // Store Alpaca settings (assuming botStatus or botData is used)
+  botStatus.defaultTP = defaultTP;
+  botStatus.defaultSL = defaultSL;
+  botStatus.trailingStop = trailingStop;
+  botStatus.timeframe = timeframe;
+  botStatus.riskPercentage = riskPercentage;
   res.json({ success: true });
 });
 
@@ -1396,6 +1409,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   }
 }
 
+let lastAlpacaRunTime = 0;
+let lastXtbRunTime = 0;
+
 async function executeTradingCycle(force: boolean = false) {
   const anyActive = botStatus.active || xtbBotStatus.active;
   if (!anyActive && !force) {
@@ -1403,27 +1419,39 @@ async function executeTradingCycle(force: boolean = false) {
     return;
   }
   
+  const now = Date.now();
+
   if (botStatus.active || force) {
-    botStatus.lastCheck = new Date().toISOString();
-    let executed = false;
-    if (botStatus.paperActive || force) {
-      await executeTradingCycleForMode('paper', force);
-      executed = true;
-    }
-    if (botStatus.liveActive || force) {
-      await executeTradingCycleForMode('live', force);
-      executed = true;
-    }
-    if (!executed && force) {
-      addLog('system', `[Alpaca] Nessun conto attivo per il trading.`);
+    const alpacaTimeframeMs = (botStatus.timeframe || 15) * 60 * 1000;
+    if (force || lastAlpacaRunTime === 0 || (now - lastAlpacaRunTime >= alpacaTimeframeMs)) {
+      lastAlpacaRunTime = now;
+      botStatus.lastCheck = new Date().toISOString();
+      let executed = false;
+      if (botStatus.paperActive || force) {
+        await executeTradingCycleForMode('paper', force);
+        executed = true;
+      }
+      if (botStatus.liveActive || force) {
+        await executeTradingCycleForMode('live', force);
+        executed = true;
+      }
+      if (!executed && force) {
+        addLog('system', `[Alpaca] Nessun conto attivo per il trading.`);
+      }
+    } else {
+      addLog('system', `[Alpaca] Attesa timeframe (${botStatus.timeframe || 15} min)...`);
     }
   }
 
   if (xtbBotStatus.active || force) {
-    await executeXtbTradingCycle(force);
+    const xtbTimeframeMs = (xtbBotStatus.timeframe || 15) * 60 * 1000;
+    if (force || lastXtbRunTime === 0 || (now - lastXtbRunTime >= xtbTimeframeMs)) {
+      lastXtbRunTime = now;
+      await executeXtbTradingCycle(force);
+    } else {
+      addXtbLog(`[XTB] Attesa timeframe (${xtbBotStatus.timeframe || 15} min)...`);
+    }
   }
-
-  
 }
 
 async function generateAndSendDailyReport() {
@@ -3033,7 +3061,7 @@ Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown
 }`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
 
@@ -3855,12 +3883,18 @@ app.post("/api/trading/xtb-reset-balance", async (req, res) => {
 });
 
 app.post("/api/trading/xtb-settings", async (req, res) => {
-  const { defaultTP, defaultSL, riskPercentage } = req.body;
+  const { defaultTP, defaultSL, riskPercentage, timeframe, trailingStop } = req.body;
   if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
     xtbBotStatus.defaultTP = defaultTP;
     xtbBotStatus.defaultSL = defaultSL;
     if (typeof riskPercentage === 'number') {
       xtbBotStatus.riskPercentage = riskPercentage;
+    }
+    if (typeof timeframe === 'number') {
+      xtbBotStatus.timeframe = timeframe;
+    }
+    if (typeof trailingStop === 'number') {
+      xtbBotStatus.trailingStop = trailingStop;
     }
     addXtbLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${xtbBotStatus.riskPercentage}%`);
     await saveXtbBotStatus();
@@ -3889,7 +3923,7 @@ Il servizio di intelligenza artificiale di Gemini è momentaneamente in cooldown
     Fornisci un'analisi tecnica concisa in italiano, il sentiment attuale (Rialzista/Ribassista/Neutrale) e un suggerimento operativo chiaro (BUY/SELL/HOLD).`;
     
     const response = await getAi().models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
     return response.text || "Nessun testo generato da Gemini.";
@@ -4100,7 +4134,7 @@ async function startServer() {
     executeTradingCycle(false).catch(err => {
       console.error('[Background Cycle Error] Errore nel ciclo di trading in background:', err);
     });
-  }, 300000); // Ogni 5 minuti
+  }, 60000); // Ogni 1 minuto
 
   // Loop molto veloce (5 secondi) per chiudere in tempo reale le posizioni in profitto
   setInterval(() => {
@@ -4123,6 +4157,8 @@ let igBotStatus = {
   balance: 30000,
   defaultTP: 50,
   defaultSL: -150,
+  trailingStop: 0,
+  timeframe: 15,
   riskPercentage: 2,
   monitoredInstruments: ['EUR_USD']
 };
@@ -4164,9 +4200,48 @@ async function initIgApi(modeOverride?: string) {
 
 app.post("/api/trading/ig-test-connection", async (req, res) => {
   try {
-    const igApi = await initIgApi();
+    const { credentials, mode } = req.body || {};
+    const igApi = IgMarketsAPI.getInstance();
+    
+    if (credentials && credentials.username && credentials.password) {
+      const targetMode = mode || process.env.IG_MODE || 'demo';
+      igApi.setCredentials(credentials, targetMode);
+    } else {
+      await initIgApi();
+    }
     const result = await igApi.testConnection();
-    res.json(result);
+    
+    // Verifica aggiuntiva per la connettività del motore AI Gemini
+    let geminiStatus = { success: true, message: "Motore AI (Gemini) collegato con successo." };
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        geminiStatus = {
+          success: false,
+          message: "Chiave API Gemini (GEMINI_API_KEY) mancante nei Secrets dell'applicazione."
+        };
+      } else {
+        const response = await getAi().models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: "Test connection, respond with OK."
+        });
+        if (!response || !response.text) {
+          geminiStatus = { success: false, message: "Nessuna risposta ricevuta dal motore Gemini." };
+        }
+      }
+    } catch (gError: any) {
+      let gMsg = gError.message || String(gError);
+      if (gMsg.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT") || gMsg.includes("insufficient authentication scopes") || gError.status === 403) {
+        gMsg = "La chiave GEMINI_API_KEY è assente o non valida (errore: ACCESS_TOKEN_SCOPE_INSUFFICIENT). Assicurati di inserire nei Secrets dell'app una chiave API valida creata su Google AI Studio (che inizia con 'AIzaSy').";
+      } else if (gMsg.includes("SERVICE_DISABLED") || gMsg.includes("disabled")) {
+        gMsg = "Il servizio Generative Language API è disabilitato nel progetto Cloud. Assicurati di utilizzare una chiave API esterna valida.";
+      }
+      geminiStatus = { success: false, message: `Errore IA: ${gMsg}` };
+    }
+
+    res.json({
+      ...result,
+      geminiStatus
+    });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message || "Errore di connessione a IG" });
   }
@@ -4294,9 +4369,11 @@ app.post("/api/trading/ig-close-position", async (req, res) => {
 });
 
 app.post("/api/trading/ig-settings", async (req, res) => {
-  const { defaultTP, defaultSL, riskPercentage } = req.body;
+  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage } = req.body;
   if (defaultTP !== undefined) igBotStatus.defaultTP = defaultTP;
   if (defaultSL !== undefined) igBotStatus.defaultSL = defaultSL;
+  if (trailingStop !== undefined) igBotStatus.trailingStop = trailingStop;
+  if (timeframe !== undefined) igBotStatus.timeframe = timeframe;
   if (riskPercentage !== undefined) igBotStatus.riskPercentage = riskPercentage;
   res.json({ success: true });
 });
@@ -4307,9 +4384,21 @@ app.get("/api/trading/ig-analysis/:instrument", async (req, res) => {
   res.json({ candles: [], analysis, isDemo: true });
 });
 
+let lastIgRunTime = 0;
 async function executeIGTradingCycle() {
   console.log(`[IG Loop] Checking bot status... (Active: ${igBotStatus.active})`);
   if (!igBotStatus.active) return;
+  
+  const now = Date.now();
+  const timeSinceLastRun = now - lastIgRunTime;
+  const timeframeMs = (igBotStatus.timeframe || 15) * 60 * 1000;
+  
+  if (timeSinceLastRun < timeframeMs && lastIgRunTime !== 0) {
+    console.log(`[IG Loop] Waiting for timeframe interval (${igBotStatus.timeframe} min)...`);
+    return;
+  }
+  
+  lastIgRunTime = now;
   console.log(`[IG Loop] Running trading cycle...`);
   try {
     // Ensure API is initialized with current credentials/mode

@@ -1,10 +1,21 @@
 import 'dotenv/config';
 
+const SPREAD_BET_EPICS: Record<string, string[]> = {
+  'EURUSD': ['IX.D.EURUSD.IFS.IP', 'IX.D.EURUSD.daily.IP', 'IX.D.EURUSD.CFD.IP'],
+  'GBPUSD': ['IX.D.GBPUSD.IFS.IP', 'IX.D.GBPUSD.daily.IP', 'IX.D.GBPUSD.CFD.IP']
+};
+
+const CFD_EPICS: Record<string, string[]> = {
+  'EURUSD': ['CS.D.EURUSD.CFD.IP', 'CS.D.EURUSD.daily.IP'],
+  'GBPUSD': ['CS.D.GBPUSD.CFD.IP', 'CS.D.GBPUSD.daily.IP']
+};
+
 export class IgMarketsAPI {
   private static instance: IgMarketsAPI;
   private session: any = null;
   private credentials: any = null;
   private mode: string = 'demo';
+  private accountType: string = 'CFD';
   
   private constructor() {}
 
@@ -13,6 +24,23 @@ export class IgMarketsAPI {
       IgMarketsAPI.instance = new IgMarketsAPI();
     }
     return IgMarketsAPI.instance;
+  }
+
+  async getActiveAccountType(): Promise<string> {
+    try {
+      const accounts = await this.getAccounts();
+      if (accounts && accounts.length > 0) {
+        const preferredAcct = accounts.find((a: any) => a.preferred) || accounts[0];
+        if (preferredAcct && preferredAcct.accountType) {
+          this.accountType = preferredAcct.accountType.toUpperCase();
+          console.log(`[IG API] Active Account Type determined: ${this.accountType}`);
+          return this.accountType;
+        }
+      }
+    } catch (e: any) {
+      console.warn('[IG API] Could not determine active account type, defaulting to CFD. Error:', e.message || e);
+    }
+    return this.accountType;
   }
 
   setCredentials(creds: any, mode: string = 'demo') {
@@ -105,8 +133,14 @@ export class IgMarketsAPI {
 
   async getAccounts() {
     const headers = await this.getHeaders();
-    const response = await fetch(`${this.getBaseUrl()}/accounts`, { headers });
-    if (!response.ok) throw new Error('Failed to fetch IG accounts');
+    const response = await fetch(`${this.getBaseUrl()}/accounts`, { 
+      headers: { ...headers, 'VERSION': '1' } 
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`Failed to fetch IG accounts: ${response.status} ${err}`);
+      throw new Error('Failed to fetch IG accounts');
+    }
     const data = await response.json();
     return data.accounts;
   }
@@ -172,11 +206,89 @@ export class IgMarketsAPI {
     return response2.json();
   }
 
-  async createOrder(epic: string, direction: 'BUY' | 'SELL', size: number, stopDistance?: number, limitDistance?: number) {
+  getSymbolFromEpic(epic: string): string {
+    const clean = epic.toUpperCase();
+    if (clean.includes('EURUSD')) return 'EURUSD';
+    if (clean.includes('GBPUSD')) return 'GBPUSD';
+    const match = clean.match(/([A-Z]{3})([A-Z]{3})/);
+    if (match) return match[0];
+    return 'EURUSD';
+  }
+
+  async searchMarket(searchTerm: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await fetch(`${this.getBaseUrl()}/markets?searchTerm=${encodeURIComponent(searchTerm)}`, {
+        headers: { ...headers, 'VERSION': '1' }
+      });
+      if (!response.ok) {
+        console.error(`[IG API] Search market failed with status ${response.status}`);
+        return null;
+      }
+      const data = await response.json();
+      return data.markets || [];
+    } catch (e) {
+      console.error('[IG API] Error searching market:', e);
+      return [];
+    }
+  }
+
+  async getWorkingEpicForInstrument(instrumentName: string, defaultEpic: string): Promise<string> {
+    const cleanSearchTerm = instrumentName.replace('_', ''); // E.g., EURUSD
+    console.log(`[IG API] Searching tradeable markets for: ${cleanSearchTerm}`);
+    const markets = await this.searchMarket(cleanSearchTerm);
+    if (markets && markets.length > 0) {
+      // Filter markets that are tradeable or OTC tradeable
+      const tradeableMarkets = markets.filter((m: any) => m.marketStatus === 'TRADEABLE' || m.otcTradeable);
+      if (tradeableMarkets.length > 0) {
+        const cleanSymbol = cleanSearchTerm.toUpperCase();
+        const base = cleanSymbol.substring(0, 3);
+        const quote = cleanSymbol.substring(3, 6);
+        
+        // Find best match matching the base and quote pair in instrument name
+        const bestMatch = tradeableMarkets.find((m: any) => {
+          const name = m.instrumentName.toUpperCase();
+          return name.includes(base) && name.includes(quote);
+        });
+
+        if (bestMatch) {
+          console.log(`[IG API] Resolved tradeable Epic for ${instrumentName}: ${bestMatch.epic} (${bestMatch.instrumentName})`);
+          return bestMatch.epic;
+        }
+        
+        console.log(`[IG API] Using first available tradeable Epic: ${tradeableMarkets[0].epic} (${tradeableMarkets[0].instrumentName})`);
+        return tradeableMarkets[0].epic;
+      }
+    }
+    console.log(`[IG API] No alternative active epic found via search for ${instrumentName}. Falling back to default: ${defaultEpic}`);
+    return defaultEpic;
+  }
+
+  async executeOrderRequest(epic: string, direction: 'BUY' | 'SELL', size: number, stopDistance?: number, limitDistance?: number) {
     const headers = await this.getHeaders();
+    
+    // Dynamically fetch the correct expiry for the epic
+    let expiry = '-';
+    try {
+      const marketInfo = await this.getMarket(epic);
+      if (marketInfo && marketInfo.instrument && marketInfo.instrument.expiry) {
+        expiry = marketInfo.instrument.expiry;
+      } else {
+        // Fallbacks if getMarket fails or doesn't have expiry
+        if (epic.toLowerCase().includes('daily') || epic.toLowerCase().includes('dfb')) {
+          expiry = 'DFB';
+        }
+      }
+    } catch (e) {
+      console.warn(`[IG API] Could not fetch market info for expiry resolution of ${epic}. Defaulting to '-' or 'DFB'`);
+      if (epic.toLowerCase().includes('daily') || epic.toLowerCase().includes('dfb')) {
+        expiry = 'DFB';
+      }
+    }
+
     const body: any = {
       epic,
-      expiry: '-',
+      expiry,
       direction,
       size,
       orderType: 'MARKET',
@@ -193,11 +305,74 @@ export class IgMarketsAPI {
       headers: headers,
       body: JSON.stringify(body)
     });
+
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(`Failed to create IG order: ${JSON.stringify(err)}`);
+      throw new Error(JSON.stringify(err));
     }
+
     return response.json();
+  }
+
+  async createOrder(epic: string, direction: 'BUY' | 'SELL', size: number, stopDistance?: number, limitDistance?: number) {
+    const actType = await this.getActiveAccountType().catch(() => 'CFD');
+    const symbol = this.getSymbolFromEpic(epic); // e.g. EURUSD
+    
+    let epicsToTry: string[] = [];
+
+    if (actType === 'SPREADBET') {
+      const sbEpics = SPREAD_BET_EPICS[symbol] || SPREAD_BET_EPICS[epic] || [];
+      epicsToTry = [...sbEpics, epic];
+    } else {
+      const cfdEpics = CFD_EPICS[symbol] || CFD_EPICS[epic] || [];
+      epicsToTry = [...cfdEpics, epic];
+    }
+
+    // De-duplicate the array of epics to try
+    epicsToTry = Array.from(new Set(epicsToTry));
+
+    console.log(`[IG API] Resolved order execution path for ${symbol} on ${actType} account:`, epicsToTry);
+
+    let lastError: any = null;
+    for (const currentEpic of epicsToTry) {
+      try {
+        console.log(`[IG API] Placing order for ${symbol} using Epic: ${currentEpic}`);
+        const result = await this.executeOrderRequest(currentEpic, direction, size, stopDistance, limitDistance);
+        console.log(`[IG API] Order placement SUCCESS for Epic: ${currentEpic}`);
+        return result;
+      } catch (e: any) {
+        lastError = e;
+        const errMsg = (e.message || '').toLowerCase();
+        console.warn(`[IG API] Order placement failed for Epic ${currentEpic}: ${errMsg}`);
+        
+        // If it's a critical error like "insufficient funds", don't continue to other epics
+        const isAccessOrEpicError = errMsg.includes('unauthorised') || 
+                                    errMsg.includes('no access') || 
+                                    errMsg.includes('access.to.equity') || 
+                                    errMsg.includes('exchange') || 
+                                    errMsg.includes('invalid epic') || 
+                                    errMsg.includes('instrument.invalid') ||
+                                    errMsg.includes('epic not found');
+                                    
+        if (!isAccessOrEpicError) {
+          throw e;
+        }
+      }
+    }
+
+    // If we've exhausted all options, let's try a dynamic lookup as a last resort
+    console.warn(`[IG API] All pre-mapped epics failed. Attempting dynamic lookup for ${symbol}...`);
+    try {
+      const resolvedEpic = await this.getWorkingEpicForInstrument(symbol, epic);
+      if (resolvedEpic && !epicsToTry.includes(resolvedEpic)) {
+        console.log(`[IG API] Dynamic lookup resolved alternative tradeable Epic: ${resolvedEpic}. Trying final placement...`);
+        return await this.executeOrderRequest(resolvedEpic, direction, size, stopDistance, limitDistance);
+      }
+    } catch (e: any) {
+      console.error(`[IG API] Dynamic lookup placement failed: ${e.message || e}`);
+    }
+
+    throw lastError || new Error(`Failed to place order on any tried epics for ${symbol}`);
   }
 
   async getMarket(epic: string) {

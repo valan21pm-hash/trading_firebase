@@ -73,7 +73,7 @@ export default function TradingModule() {
   const [closingInstruments, setClosingInstruments] = useState<string[]>([]);
   const [confirmCloseInstrument, setConfirmCloseInstrument] = useState<string | null>(null);
   const [testingConn, setTestingConn] = useState<boolean>(false);
-  const [connTestResult, setConnTestResult] = useState<{ success: boolean; message: string; error?: string } | null>(null);
+  const [connTestResult, setConnTestResult] = useState<any | null>(null);
   const [loadingAutoStatus, setLoadingAutoStatus] = useState<boolean>(false);
   const [submittingAutoToggle, setSubmittingAutoToggle] = useState<boolean>(false);
   const [triggeringCycle, setTriggeringCycle] = useState<boolean>(false);
@@ -83,6 +83,8 @@ export default function TradingModule() {
   const [draftTP, setDraftTP] = useState<string>('0.10');
   const [draftSL, setDraftSL] = useState<string>('-1.00');
   const [draftRisk, setDraftRisk] = useState<string>('2');
+  const [draftTimeframe, setDraftTimeframe] = useState<string>('15');
+  const [draftTrailingStop, setDraftTrailingStop] = useState<string>('0');
   const [savingSettings, setSavingSettings] = useState(false);
   
   
@@ -95,8 +97,10 @@ export default function TradingModule() {
       setDraftTP(String(currentAutoStatus.defaultTP ?? (0.10)));
       setDraftSL(String(currentAutoStatus.defaultSL ?? (-1.00)));
       setDraftRisk(String(currentAutoStatus.riskPercentage ?? (2)));
+      setDraftTimeframe(String(currentAutoStatus.timeframe ?? (15)));
+      setDraftTrailingStop(String(currentAutoStatus.trailingStop ?? (0)));
     }
-  }, [currentAutoStatus?.defaultTP, currentAutoStatus?.defaultSL, currentAutoStatus?.riskPercentage, activeBroker]);
+  }, [currentAutoStatus?.defaultTP, currentAutoStatus?.defaultSL, currentAutoStatus?.riskPercentage, currentAutoStatus?.timeframe, currentAutoStatus?.trailingStop, activeBroker]);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem('ig_wrapLogs');
@@ -336,9 +340,11 @@ export default function TradingModule() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          defaultTP: parseFloat(draftTP) || (0.10),
-          defaultSL: parseFloat(draftSL) || (-1.00),
-          riskPercentage: parseFloat(draftRisk) || (2)
+          defaultTP: parseFloat(draftTP) || 0.10,
+          defaultSL: parseFloat(draftSL) || -1.00,
+          riskPercentage: parseFloat(draftRisk) || 2,
+          timeframe: parseInt(draftTimeframe) || 15,
+          trailingStop: parseFloat(draftTrailingStop) || 0
         })
       });
       if (res.ok) {
@@ -361,14 +367,23 @@ export default function TradingModule() {
     setTestingConn(true);
     setConnTestResult(null);
     try {
+      const mode = showCredForm?.env || 'demo';
       const res = await fetch('/api/trading/ig-test-connection', {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          credentials: tempCreds,
+          mode: mode
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setConnTestResult({
           success: true,
-          message: data.message
+          message: data.message,
+          geminiStatus: data.geminiStatus
         });
       } else {
         throw new Error(data.error || 'Errore sconosciuto');
@@ -662,9 +677,38 @@ export default function TradingModule() {
                           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-emerald-500 outline-none"
                         />
                       </div>
-                      <div className="flex gap-2 pt-2">
-                        <button onClick={() => saveCredentials(activeBroker, 'real')} className="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-emerald-700 transition cursor-pointer border-none">SALVA</button>
-                        <button onClick={() => setShowCredForm(null)} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                      {connTestResult && (
+                        <div className={`p-3 rounded-lg text-xs font-sans space-y-2 ${connTestResult.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
+                          <div className="flex items-start gap-2">
+                            {connTestResult.success ? <CheckCircle2 size={14} className="mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 text-rose-400 shrink-0" />}
+                            <div>
+                              <p className="font-semibold">{connTestResult.success ? 'Connessione Broker OK' : 'Connessione Fallita'}</p>
+                              <p className="opacity-90 leading-relaxed text-[11px]">{connTestResult.message}</p>
+                            </div>
+                          </div>
+                          {connTestResult.geminiStatus && (
+                            <div className={`p-2 rounded border text-[11px] leading-relaxed ${connTestResult.geminiStatus.success ? 'bg-indigo-950/20 border-indigo-800/40 text-indigo-300' : 'bg-amber-950/30 border-amber-800/40 text-amber-300'}`}>
+                              <div className="flex items-start gap-1.5">
+                                <Sparkles size={12} className={`mt-0.5 shrink-0 ${connTestResult.geminiStatus.success ? 'text-indigo-400' : 'text-amber-400'}`} />
+                                <p className="opacity-90">{connTestResult.geminiStatus.message}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-2 pt-2">
+                        <button 
+                          onClick={handleTestConnection} 
+                          disabled={testingConn || !tempCreds.username || !tempCreds.password} 
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold py-2 rounded-lg text-xs transition cursor-pointer border-none flex items-center justify-center gap-1.5"
+                        >
+                          {testingConn ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                          {testingConn ? 'TEST IN CORSO...' : 'TESTA CONNESSIONE'}
+                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={() => saveCredentials(activeBroker, 'real')} className="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-emerald-700 transition cursor-pointer border-none">SALVA</button>
+                          <button onClick={() => { setShowCredForm(null); setConnTestResult(null); }} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -833,9 +877,38 @@ export default function TradingModule() {
                           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-amber-500 outline-none"
                         />
                       </div>
-                      <div className="flex gap-2 pt-2">
-                        <button onClick={() => saveCredentials(activeBroker, 'demo')} className="flex-1 bg-amber-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-amber-700 transition cursor-pointer border-none">SALVA</button>
-                        <button onClick={() => setShowCredForm(null)} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                      {connTestResult && (
+                        <div className={`p-3 rounded-lg text-xs font-sans space-y-2 ${connTestResult.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
+                          <div className="flex items-start gap-2">
+                            {connTestResult.success ? <CheckCircle2 size={14} className="mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 text-rose-400 shrink-0" />}
+                            <div>
+                              <p className="font-semibold">{connTestResult.success ? 'Connessione Broker OK' : 'Connessione Fallita'}</p>
+                              <p className="opacity-90 leading-relaxed text-[11px]">{connTestResult.message}</p>
+                            </div>
+                          </div>
+                          {connTestResult.geminiStatus && (
+                            <div className={`p-2 rounded border text-[11px] leading-relaxed ${connTestResult.geminiStatus.success ? 'bg-indigo-950/20 border-indigo-800/40 text-indigo-300' : 'bg-amber-950/30 border-amber-800/40 text-amber-300'}`}>
+                              <div className="flex items-start gap-1.5">
+                                <Sparkles size={12} className={`mt-0.5 shrink-0 ${connTestResult.geminiStatus.success ? 'text-indigo-400' : 'text-amber-400'}`} />
+                                <p className="opacity-90">{connTestResult.geminiStatus.message}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-2 pt-2">
+                        <button 
+                          onClick={handleTestConnection} 
+                          disabled={testingConn || !tempCreds.username || !tempCreds.password} 
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold py-2 rounded-lg text-xs transition cursor-pointer border-none flex items-center justify-center gap-1.5"
+                        >
+                          {testingConn ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                          {testingConn ? 'TEST IN CORSO...' : 'TESTA CONNESSIONE'}
+                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={() => saveCredentials(activeBroker, 'demo')} className="flex-1 bg-amber-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-amber-700 transition cursor-pointer border-none">SALVA</button>
+                          <button onClick={() => { setShowCredForm(null); setConnTestResult(null); }} className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none">ANNULLA</button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -847,7 +920,12 @@ export default function TradingModule() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-between">
                     <div>
-                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3">Automazione Demo</h4>
+                      <div className="flex justify-between items-center mb-3">
+                        <h4 className="text-[10px] font-bold text-slate-400 uppercase">Automazione Demo</h4>
+                        <button onClick={() => setEditingSettings(!editingSettings)} className="text-[10px] text-indigo-600 font-bold uppercase hover:underline border-none bg-transparent cursor-pointer">
+                          Impostazioni
+                        </button>
+                      </div>
                       <div className="flex items-center gap-3 mb-4">
                         <div className={`w-3 h-3 rounded-full ${currentAutoStatus?.active ? 'bg-amber-500 animate-pulse' : 'bg-slate-300'}`}></div>
                         <span className="text-xs font-bold text-slate-700">{currentAutoStatus?.active ? 'BOT ATTIVO' : 'BOT DISATTIVATO'}</span>
@@ -869,6 +947,61 @@ export default function TradingModule() {
                         title="Esegui ciclo ora"
                       >
                         <RefreshCw className={`w-4 h-4 ${triggeringCycle ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 md:col-span-2 shadow-sm">
+                    <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-700 uppercase flex items-center gap-2">
+                          <Bot className="w-4 h-4 text-indigo-600" />
+                          Parametri Operativi Auto-Trading
+                        </h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Definisci le soglie di rischio e temporali per la chiusura automatica delle posizioni</p>
+                      </div>
+                      <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+                        Attivi su {activeBroker.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Timeframe (Minuti)</label>
+                        <select value={draftTimeframe} onChange={e => setDraftTimeframe(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500">
+                          <option value="5">5 Minuti</option>
+                          <option value="10">10 Minuti</option>
+                          <option value="15">15 Minuti</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Take Profit (€)</label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1.5 text-xs text-slate-400 font-bold">€</span>
+                          <input type="number" step="0.01" value={draftTP} onChange={e => setDraftTP(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg pl-6 pr-2 py-1 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Stop Loss (€)</label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1.5 text-xs text-slate-400 font-bold">€</span>
+                          <input type="number" step="0.01" value={draftSL} onChange={e => setDraftSL(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg pl-6 pr-2 py-1 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Trailing Stop (€)</label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1.5 text-xs text-slate-400 font-bold">€</span>
+                          <input type="number" step="0.01" value={draftTrailingStop} onChange={e => setDraftTrailingStop(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg pl-6 pr-2 py-1 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500" placeholder="0 = Off" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Rischio % per Operazione</label>
+                        <input type="number" step="0.1" value={draftRisk} onChange={e => setDraftRisk(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500" />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={handleSaveSettings} disabled={savingSettings} className="px-4 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition border-none cursor-pointer disabled:opacity-50 shadow-sm flex items-center gap-1.5">
+                        {savingSettings ? 'Salvataggio...' : 'Salva Parametri'}
                       </button>
                     </div>
                   </div>

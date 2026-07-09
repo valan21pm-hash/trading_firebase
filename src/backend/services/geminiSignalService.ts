@@ -71,7 +71,7 @@ Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
       };
 
       const response = await this.ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.5-flash',
         contents: prompt,
         config: {
           temperature: 0.2, // Bassa temperatura per maggiore determinismo
