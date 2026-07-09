@@ -4,13 +4,40 @@ import 'dotenv/config';
 const originalConsoleError = console.error;
 console.error = function(...args: any[]) {
   const isQuotaError = args.some(arg => {
-    if (typeof arg === 'string' && arg.includes('RESOURCE_EXHAUSTED')) return true;
-    if (arg && typeof arg === 'object' && arg.message && typeof arg.message === 'string' && arg.message.includes('RESOURCE_EXHAUSTED')) return true;
+    if (typeof arg === 'string' && (arg.includes('RESOURCE_EXHAUSTED') || arg.includes('Quota exceeded'))) return true;
+    if (arg && typeof arg === 'object' && arg.message && typeof arg.message === 'string' && (arg.message.includes('RESOURCE_EXHAUSTED') || arg.message.includes('Quota exceeded'))) return true;
     return false;
   });
   if (isQuotaError) return;
   originalConsoleError.apply(console, args);
 };
+
+const originalConsoleWarn = console.warn;
+console.warn = function(...args: any[]) {
+  const isQuotaError = args.some(arg => {
+    if (typeof arg === 'string' && (arg.includes('RESOURCE_EXHAUSTED') || arg.includes('Quota exceeded'))) return true;
+    if (arg && typeof arg === 'object' && arg.message && typeof arg.message === 'string' && (arg.message.includes('RESOURCE_EXHAUSTED') || arg.message.includes('Quota exceeded'))) return true;
+    return false;
+  });
+  if (isQuotaError) return;
+  originalConsoleWarn.apply(console, args);
+};
+
+function runWithTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeoutId = setTimeout(() => {
+      resolve(fallbackValue);
+    }, ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timeoutId);
+      return res;
+    }),
+    timeoutPromise
+  ]);
+}
 import express from 'express';
 import path from 'path';
 process.on('unhandledRejection', (reason: any, promise) => {
@@ -97,35 +124,77 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // --- TRADING CREDENTIALS ENDPOINTS ---
-app.get('/api/trading/credentials', async (req, res) => {
-  if (!db) return res.status(500).json({ success: false, error: 'Database non inizializzato' });
+let localCredentialsFallback: any = {};
+const credsFilePath = path.join(process.cwd(), 'credentials_fallback.json');
+try {
+  if (fs.existsSync(credsFilePath)) {
+    localCredentialsFallback = JSON.parse(fs.readFileSync(credsFilePath, 'utf8'));
+  }
+} catch (e) {
+  console.error('[Fallback] Error reading credentials_fallback.json:', e);
+}
+
+function saveLocalCredentialsFallback(data: any) {
   try {
-    const doc = await db.collection('broker_credentials').doc('config').get();
-    res.json({ success: true, config: doc.exists ? doc.data() : {} });
+    fs.writeFileSync(credsFilePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[Fallback] Error writing credentials_fallback.json:', e);
+  }
+}
+
+app.get('/api/trading/credentials', async (req, res) => {
+  if (!db) {
+    return res.json({ success: true, config: localCredentialsFallback });
+  }
+  try {
+    const doc = await runWithTimeout(
+      db.collection('broker_credentials').doc('config').get(),
+      800,
+      { exists: false, data: () => null }
+    );
+    res.json({ success: true, config: doc.exists ? doc.data() : localCredentialsFallback });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.warn('[Firebase] Failed to fetch credentials, using fallback:', error.message);
+    res.json({ success: true, config: localCredentialsFallback });
   }
 });
 
 app.post('/api/trading/credentials', async (req, res) => {
-  if (!db) return res.status(500).json({ success: false, error: 'Database non inizializzato' });
   const { broker, env, credentials } = req.body;
   if (!broker || !env || !credentials) {
     return res.status(400).json({ success: false, error: 'Parametri mancanti' });
   }
 
+  // Update fallback first
+  if (!localCredentialsFallback[broker]) localCredentialsFallback[broker] = {};
+  localCredentialsFallback[broker][env] = credentials;
+  saveLocalCredentialsFallback(localCredentialsFallback);
+
+  if (!db) {
+    return res.json({ success: true });
+  }
+
   try {
     const docRef = db.collection('broker_credentials').doc('config');
-    const doc = await docRef.get();
+    const doc = await runWithTimeout(
+      docRef.get(),
+      800,
+      { exists: false, data: () => null }
+    );
     let currentData = doc.exists ? doc.data() : {};
     
     if (!currentData[broker]) currentData[broker] = {};
     currentData[broker][env] = credentials;
 
-    await docRef.set(currentData);
+    await runWithTimeout(
+      docRef.set(currentData),
+      800,
+      null
+    );
     res.json({ success: true });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.warn('[Firebase] Failed to save credentials to db, saved locally:', error.message);
+    res.json({ success: true }); // Return success since we saved it locally!
   }
 });
 // -------------------------------------
@@ -3953,10 +4022,22 @@ app.get("/api/trading/xtb-account", async (req, res) => {
     // Carica credenziali da Firestore
     let credentials: any = {};
     if (db) {
-      const doc = await db.collection('broker_credentials').doc('config').get();
-      if (doc.exists) {
-        credentials = doc.data()?.xtb || {};
+      try {
+        const doc = await runWithTimeout(
+          db.collection('broker_credentials').doc('config').get(),
+          800,
+          { exists: false, data: () => null }
+        );
+        if (doc.exists) {
+          credentials = doc.data()?.xtb || {};
+        }
+      } catch (err: any) {
+        console.warn('[Firestore] Errore caricamento xtb account, uso fallback:', err.message);
       }
+    }
+    
+    if (!credentials.real && !credentials.demo) {
+      credentials = localCredentialsFallback.xtb || {};
     }
 
     const env = (process.env.XTB_MODE || 'demo').toLowerCase();
@@ -4049,17 +4130,23 @@ let igDemoPositions = {};
 
 // Helper per caricare credenziali e inizializzare API
 async function getBrokerCredentials(broker: string, env: string) {
-  if (!db) return null;
-  try {
-    const doc = await db.collection('broker_credentials').doc('config').get();
-    if (doc.exists) {
-      const allCreds = doc.data();
-      return allCreds[broker]?.[env] || null;
+  let dbCreds = null;
+  if (db) {
+    try {
+      const doc = await runWithTimeout(
+        db.collection('broker_credentials').doc('config').get(),
+        800,
+        { exists: false, data: () => null }
+      );
+      if (doc.exists) {
+        const allCreds = doc.data();
+        dbCreds = allCreds[broker]?.[env] || null;
+      }
+    } catch (err: any) {
+      console.warn(`[Firestore] Errore nel caricamento credenziali per ${broker} ${env}, uso fallback locale:`, err.message);
     }
-  } catch (err) {
-    console.error(`[Firestore] Errore nel caricamento credenziali per ${broker} ${env}:`, err);
   }
-  return null;
+  return dbCreds || localCredentialsFallback[broker]?.[env] || null;
 }
 
 async function initIgApi(modeOverride?: string) {
@@ -4159,6 +4246,16 @@ app.get("/api/trading/ig-status", async (req, res) => {
   }
 });
 
+app.post("/api/trading/ig-status", async (req, res) => {
+  const { active } = req.body;
+  console.log(`[IG Status Toggle] Requested active state: ${active}`);
+  if (active !== undefined) {
+    igBotStatus.active = active;
+  }
+  console.log(`[IG Status Toggle] New active state: ${igBotStatus.active}`);
+  res.json({ success: true, active: igBotStatus.active });
+});
+
 app.post("/api/trading/ig-order", async (req, res) => {
   const { instrument, units, side } = req.body;
   try {
@@ -4211,8 +4308,13 @@ app.get("/api/trading/ig-analysis/:instrument", async (req, res) => {
 });
 
 async function executeIGTradingCycle() {
+  console.log(`[IG Loop] Checking bot status... (Active: ${igBotStatus.active})`);
   if (!igBotStatus.active) return;
+  console.log(`[IG Loop] Running trading cycle...`);
   try {
+    // Ensure API is initialized with current credentials/mode
+    await initIgApi();
+    
     const tradingBot = TradingBotService.getInstance();
     const result = await tradingBot.runTradingCycle('CS.D.EURUSD.CFD.IP', 'EUR_USD', 1.0850, [], "Mercato stabile con trend positivo.");
     if (result.success) {
@@ -4226,7 +4328,7 @@ async function executeIGTradingCycle() {
 // Start IG Loop
 setInterval(() => {
   executeIGTradingCycle().catch(err => console.error('[IG Background Cycle Error]', err));
-}, 300000);
+}, 60000);
 
 
   if (process.env.NODE_ENV !== 'production') {

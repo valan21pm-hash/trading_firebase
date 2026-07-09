@@ -1,14 +1,14 @@
 import { GeminiSignalService } from './geminiSignalService.js';
-import { IgOrderExecutionService } from './igOrderExecutionService.js';
+import { IgMarketsAPI } from './IgMarketsAPI.js';
 
 export class TradingBotService {
   private static instance: TradingBotService;
   private signalService: GeminiSignalService;
-  private executionService: IgOrderExecutionService;
+  private igApi: IgMarketsAPI;
 
   private constructor() {
     this.signalService = GeminiSignalService.getInstance();
-    this.executionService = IgOrderExecutionService.getInstance();
+    this.igApi = IgMarketsAPI.getInstance();
   }
 
   static getInstance(): TradingBotService {
@@ -47,12 +47,12 @@ export class TradingBotService {
         const tpDistance = signal.suggestedTakeProfit ? Math.abs(currentPrice - signal.suggestedTakeProfit) : 100;
 
         // 5. Esecuzione su IG Markets
-        const result = await this.executionService.executeMarketOrder(
+        const result = await this.igApi.createOrder(
           epic,
           signal.action as 'BUY' | 'SELL',
           size,
-          slDistance, // espresso in punti
-          tpDistance  // espresso in punti
+          slDistance,
+          tpDistance
         );
 
         console.log(`[Trading Bot] Operazione conclusa con successo. DealRef: ${result.dealReference}`);

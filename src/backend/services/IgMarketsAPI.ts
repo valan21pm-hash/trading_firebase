@@ -172,21 +172,26 @@ export class IgMarketsAPI {
     return response2.json();
   }
 
-  async createOrder(epic: string, direction: 'BUY' | 'SELL', size: number) {
+  async createOrder(epic: string, direction: 'BUY' | 'SELL', size: number, stopDistance?: number, limitDistance?: number) {
     const headers = await this.getHeaders();
+    const body: any = {
+      epic,
+      expiry: '-',
+      direction,
+      size,
+      orderType: 'MARKET',
+      guaranteedStop: false,
+      forceOpen: true,
+      currencyCode: 'EUR'
+    };
+
+    if (stopDistance) body.stopDistance = stopDistance;
+    if (limitDistance) body.limitDistance = limitDistance;
+
     const response = await fetch(`${this.getBaseUrl()}/positions/otc`, {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({
-        epic,
-        expiry: '-',
-        direction,
-        size,
-        orderType: 'MARKET',
-        guaranteedStop: false,
-        forceOpen: true,
-        currencyCode: 'EUR'
-      })
+      body: JSON.stringify(body)
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
