@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence } from 'motion/react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
-import TradingModule from './components/TradingModule';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 
@@ -1317,7 +1316,6 @@ export default function App() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'paper' | 'live'>('paper');
-  const [mainView, setMainView] = useState<'alpaca' | 'xtb'>('alpaca');
 
   const [closingSymbols, setClosingSymbols] = useState<string[]>([]);
   const [confirmCloseSymbol, setConfirmCloseSymbol] = useState<{ symbol: string; type: 'paper' | 'live' } | null>(null);
@@ -1830,37 +1828,7 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 text-gray-900 p-4 sm:p-8 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Navigazione Globale Piattaforma */}
-        <div className="flex gap-4 border-b border-gray-200 pb-2">
-          <button
-            onClick={() => setMainView('alpaca')}
-            className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-all cursor-pointer bg-transparent px-1 border-none ${
-              mainView === 'alpaca'
-                ? 'border-solid border-indigo-600 text-indigo-600 font-bold'
-                : 'border-solid border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Alpaca AI Trading Bot
-          </button>
-          <button
-            onClick={() => setMainView('xtb')}
-            className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-all cursor-pointer bg-transparent px-1 border-none ${
-              mainView === 'xtb'
-                ? 'border-solid border-indigo-600 text-indigo-600 font-bold'
-                : 'border-solid border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            IG Markets AI Trade
-          </button>
-        </div>
-
-        {mainView === 'xtb' ? (
-          <TradingModule />
-        ) : (
-          <>
-            {/* Header */}
+        {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex-1">
             <h1 className="text-2xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
@@ -3065,9 +3033,6 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
-
-          </>
         )}
 
         {/* Sistema Notifiche Toast in Tempo Reale */}
