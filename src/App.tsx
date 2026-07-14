@@ -731,6 +731,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 function AccountPanel({ 
+  status,
   account, 
   title, 
   isActive, 
@@ -742,6 +743,7 @@ function AccountPanel({
   setConfirmCloseSymbol,
   fetchStatus
 }: { 
+  status: BotStatus | null;
   account: AccountData; 
   title: string; 
   isActive: boolean; 
@@ -774,8 +776,32 @@ function AccountPanel({
   const [savingAlpacaCreds, setSavingAlpacaCreds] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Stati per le nuove impostazioni di rischio e bot
+  const [showSettingsForm, setShowSettingsForm] = useState(false);
+  const [maxPos, setMaxPos] = useState<number>(10);
+  const [tp, setTp] = useState<number>(2.0);
+  const [sl, setSl] = useState<number>(-0.5);
+  const [ts, setTs] = useState<number>(1.0);
+  const [tf, setTf] = useState<number>(15);
+  const [risk, setRisk] = useState<number>(10);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Sincronizza i parametri correnti recuperati dal server
+  useEffect(() => {
+    if (status) {
+      setMaxPos(status.maxConcurrentPositions ?? 10);
+      setTp(status.defaultTP ?? 2.0);
+      setSl(status.defaultSL ?? -0.5);
+      setTs(status.trailingStop ?? 1.0);
+      setTf(status.timeframe ?? 15);
+      setRisk(status.riskPercentage ?? 10);
+    }
+  }, [status]);
+
   const handleOpenCredsForm = async () => {
     setShowAlpacaCredsForm(!showAlpacaCredsForm);
+    setShowSettingsForm(false);
     setSaveStatus(null);
     try {
       const res = await fetch('/api/trading/credentials');
@@ -788,6 +814,12 @@ function AccountPanel({
     } catch (e) {
       console.error('Errore durante il recupero delle credenziali:', e);
     }
+  };
+
+  const handleOpenSettingsForm = () => {
+    setShowSettingsForm(!showSettingsForm);
+    setShowAlpacaCredsForm(false);
+    setSettingsStatus(null);
   };
 
   const handleSaveAlpacaCreds = async () => {
@@ -819,6 +851,39 @@ function AccountPanel({
       setSaveStatus({ success: false, message: e.message || 'Errore di rete.' });
     } finally {
       setSavingAlpacaCreds(false);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setSettingsStatus(null);
+    try {
+      const res = await fetch('/api/trading/alpaca-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maxConcurrentPositions: Number(maxPos),
+          defaultTP: Number(tp),
+          defaultSL: Number(sl),
+          trailingStop: Number(ts),
+          timeframe: Number(tf),
+          riskPercentage: Number(risk)
+        })
+      });
+      if (res.ok) {
+        setSettingsStatus({ success: true, message: 'Parametri del bot e del rischio salvati con successo!' });
+        if (fetchStatus) {
+          await fetchStatus();
+        }
+        setTimeout(() => setShowSettingsForm(false), 1500);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSettingsStatus({ success: false, message: data.message || 'Errore nel salvataggio dei parametri.' });
+      }
+    } catch (e: any) {
+      setSettingsStatus({ success: false, message: e.message || 'Errore di rete.' });
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -874,12 +939,21 @@ function AccountPanel({
             <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
               {account.modeLabel}
             </div>
-            <button
-              onClick={handleOpenCredsForm}
-              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer mt-0.5 p-0"
-            >
-              [Configura Chiavi]
-            </button>
+            <div className="flex gap-2 justify-end mt-1">
+              <button
+                onClick={handleOpenCredsForm}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer p-0"
+              >
+                [Configura Chiavi]
+              </button>
+              <span className="text-gray-300">|</span>
+              <button
+                onClick={handleOpenSettingsForm}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer p-0"
+              >
+                [Parametri Bot & Rischio]
+              </button>
+            </div>
           </div>
         </div>
 
@@ -934,6 +1008,121 @@ function AccountPanel({
                   CHIUDI
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {showSettingsForm && (
+          <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-4 mt-2 animate-in fade-in duration-200">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+              <h4 className="text-xs font-bold text-indigo-400 uppercase">Parametri di Rischio & Gestione Operazioni</h4>
+              <span className="text-[10px] text-slate-400">Salvate nel Cloud</span>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-left">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Max Operazioni Contemporanee</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={maxPos}
+                  onChange={(e) => setMaxPos(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+                <span className="text-[9px] text-slate-500 mt-0.5 block">N. massimo di posizioni aperte in parallelo.</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Trailing Stop (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="10"
+                  value={ts}
+                  onChange={(e) => setTs(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Innesco inseguimento profitto dal picco massimo.</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Stop Loss Personalizzato (€)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  max="0"
+                  value={sl}
+                  onChange={(e) => setSl(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Es. -0.50€. Stop Loss fisso per singola posizione.</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Take Profit Personalizzato (€)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  value={tp}
+                  onChange={(e) => setTp(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Es. 2.00€. Profit Target fisso per singola posizione.</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Timeframe di Ciclo (Minuti)</label>
+                <select
+                  value={tf}
+                  onChange={(e) => setTf(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                >
+                  <option value={5}>5 Minuti</option>
+                  <option value={15}>15 Minuti</option>
+                  <option value={30}>30 Minuti</option>
+                  <option value={60}>60 Minuti (1 Ora)</option>
+                </select>
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Intervallo per il ricalcolo del sentiment via LLM.</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Rischio per Operazione (%)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={risk}
+                  onChange={(e) => setRisk(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                />
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Quota allocabile dell'equity per singolo trade.</span>
+              </div>
+            </div>
+
+            {settingsStatus && (
+              <div className={`p-2.5 rounded-lg text-xs font-sans ${settingsStatus.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
+                {settingsStatus.message}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2 border-t border-slate-800">
+              <button
+                onClick={handleSaveSettings}
+                disabled={savingSettings}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold py-2 rounded-lg text-xs transition cursor-pointer border-none"
+              >
+                {savingSettings ? 'Salvataggio...' : 'SALVA IMPOSTAZIONI'}
+              </button>
+              <button
+                onClick={() => setShowSettingsForm(false)}
+                disabled={savingSettings}
+                className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none"
+              >
+                CHIUDI
+              </button>
             </div>
           </div>
         )}
@@ -1902,6 +2091,7 @@ export default function App() {
         <div>
           {selectedTab === 'paper' && status?.paper && (
             <AccountPanel 
+              status={status}
               account={status.paper} 
               title="Conto Simulazione (Paper)" 
               isActive={!!status.paperActive} 
@@ -1916,6 +2106,7 @@ export default function App() {
           )}
           {selectedTab === 'live' && status?.live && (
             <AccountPanel 
+              status={status}
               account={status.live} 
               title="Conto Reale (Live)" 
               isActive={!!status.liveActive} 

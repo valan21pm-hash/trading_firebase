@@ -454,6 +454,7 @@ let botStatus: {
   trailingStop?: number;
   timeframe?: number;
   riskPercentage?: number;
+  maxConcurrentPositions?: number;
 } = {
   active: false,
   paperActive: false,
@@ -470,7 +471,13 @@ let botStatus: {
   userFeedbackRules: [],
   monitoredSymbols: [],
   historicalProfits: 2.50,
-  y: 1
+  y: 1,
+  defaultTP: 2.00,
+  defaultSL: -0.50,
+  trailingStop: 1.0,
+  timeframe: 15,
+  riskPercentage: 10,
+  maxConcurrentPositions: 10
 };
 let tradeLogs: string[] = [];
 
@@ -540,7 +547,14 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     equity: botData[mode].balance,
     logs: botData[mode].logs,
     logicLogs: botData[mode].dailyLogicLogs,
-    dailyPnL: botData[mode].dailyPnL
+    dailyPnL: botData[mode].dailyPnL,
+    tradingMode: botStatus.tradingMode,
+    defaultTP: botStatus.defaultTP ?? 2.00,
+    defaultSL: botStatus.defaultSL ?? -0.50,
+    trailingStop: botStatus.trailingStop ?? 1.0,
+    timeframe: botStatus.timeframe ?? 15,
+    riskPercentage: botStatus.riskPercentage ?? 10,
+    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10
   };
 
   res.json({ status, positions: mappedPositions, isDemo: mode === 'paper' });
@@ -562,14 +576,25 @@ app.post("/api/trading/alpaca-reset-balance", async (req, res) => {
 });
 
 app.post("/api/trading/alpaca-settings", async (req, res) => {
-  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage } = req.body;
-  // Store Alpaca settings (assuming botStatus or botData is used)
-  botStatus.defaultTP = defaultTP;
-  botStatus.defaultSL = defaultSL;
-  botStatus.trailingStop = trailingStop;
-  botStatus.timeframe = timeframe;
-  botStatus.riskPercentage = riskPercentage;
-  res.json({ success: true });
+  const { defaultTP, defaultSL, trailingStop, timeframe, riskPercentage, maxConcurrentPositions } = req.body;
+  
+  if (typeof defaultTP === 'number') botStatus.defaultTP = defaultTP;
+  if (typeof defaultSL === 'number') botStatus.defaultSL = defaultSL;
+  if (typeof trailingStop === 'number') botStatus.trailingStop = trailingStop;
+  if (typeof timeframe === 'number') botStatus.timeframe = timeframe;
+  if (typeof riskPercentage === 'number') botStatus.riskPercentage = riskPercentage;
+  if (typeof maxConcurrentPositions === 'number') botStatus.maxConcurrentPositions = maxConcurrentPositions;
+  
+  await saveBotStatus();
+  res.json({ 
+    success: true, 
+    defaultTP: botStatus.defaultTP, 
+    defaultSL: botStatus.defaultSL, 
+    trailingStop: botStatus.trailingStop, 
+    timeframe: botStatus.timeframe, 
+    riskPercentage: botStatus.riskPercentage,
+    maxConcurrentPositions: botStatus.maxConcurrentPositions
+  });
 });
 
 app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
@@ -688,7 +713,13 @@ async function saveBotStatus() {
       y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport || null,
       latestDailyDebrief: botStatus.latestDailyDebrief || null,
-      lastCheck: botStatus.lastCheck || null
+      lastCheck: botStatus.lastCheck || null,
+      defaultTP: botStatus.defaultTP ?? 2.00,
+      defaultSL: botStatus.defaultSL ?? -0.50,
+      trailingStop: botStatus.trailingStop ?? 1.0,
+      timeframe: botStatus.timeframe ?? 15,
+      riskPercentage: botStatus.riskPercentage ?? 10,
+      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10
     }, { merge: true });
   } catch (err: any) {
     console.error('[Firebase] Error saving bot status:', err);
@@ -755,6 +786,12 @@ async function loadStateFromFirestore() {
       botStatus.latestDailyReport = data.latestDailyReport ?? botStatus.latestDailyReport;
       botStatus.latestDailyDebrief = data.latestDailyDebrief ?? botStatus.latestDailyDebrief;
       botStatus.lastCheck = data.lastCheck ?? botStatus.lastCheck;
+      botStatus.defaultTP = data.defaultTP ?? botStatus.defaultTP;
+      botStatus.defaultSL = data.defaultSL ?? botStatus.defaultSL;
+      botStatus.trailingStop = data.trailingStop ?? botStatus.trailingStop;
+      botStatus.timeframe = data.timeframe ?? botStatus.timeframe;
+      botStatus.riskPercentage = data.riskPercentage ?? botStatus.riskPercentage;
+      botStatus.maxConcurrentPositions = data.maxConcurrentPositions ?? botStatus.maxConcurrentPositions;
       console.log('[Firebase] Loaded botStatus successfully.');
     }
 
@@ -1362,93 +1399,126 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     if (isPreCloseWindow) {
       addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
     } else {
-      for (const symbol of ALL_TRADED_SYMBOLS) {
-        // Evitiamo di acquistare se abbiamo già una posizione aperta su questo asset e non è stata appena chiusa
-        const hasOpenPosition = openSymbols.includes(symbol) && !closedSymbolsThisCycle.has(symbol);
-        if (hasOpenPosition) {
-          continue;
+      // 1. Filtra tutti i simboli con sentiment positivo (> 0.2)
+      const positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
+        const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
+        return { symbol, score, reasoning };
+      }).filter(item => item.score > 0.2);
+
+      // 2. Calcola quanti slot totali vogliamo occupare
+      const maxPositions = botStatus.maxConcurrentPositions ?? 10;
+      const currentSlotsFilled = openPositions.length;
+      const availableSlots = maxPositions - currentSlotsFilled;
+
+      if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0) {
+        // Calcoliamo l'importo fisso per ogni singola operazione (frazionaria)
+        // Dividiamo l'equity corrente per maxPositions per suddividere perfettamente il capitale
+        // Es: con 53$ e max 10 posizioni, ogni operazione sarà di ~5.30$ (minimo 1.0$ o 2$ su reale, 10$ su paper per sicurezza)
+        let singlePositionSize = 5.0;
+        if (mode === 'live') {
+          const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
+          // Garantiamo almeno 1.00$ o 2.00$ per consentire l'ordine frazionario su Alpaca
+          singlePositionSize = Math.max(2.0, Math.min(10.0, calculatedSize));
+        } else {
+          const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
+          singlePositionSize = Math.max(10.0, calculatedSize);
         }
 
-        // Check sentiment before buying from the pre-fetched bulk object
-        const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' }; 
-        if (sentimentScore > 0.2) {
-            // Calcolo dinamico dell'importo da investire in base alla forza del sentiment (fino a un massimo di 5$ su conto reale)
-            let amountToBuy = 5;
+        addLog(mode as 'paper' | 'live', `[Allocazione Alpaca] Capitale: $${botData[mode].balance.toFixed(2)}. Allocazione per singola operazione: $${singlePositionSize.toFixed(2)}. Slot disponibili: ${availableSlots} su ${maxPositions}.`);
+
+        // Distribuiamo gli availableSlots tra i simboli positivi
+        const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
+        let slotsAllocated = 0;
+        
+        // Eseguiamo un round-robin per distribuire gli ordini fino a esaurimento slot disponibili
+        while (slotsAllocated < availableSlots && positiveSymbolsWithSentiment.length > 0) {
+          let allocatedInThisRound = 0;
+          for (const item of positiveSymbolsWithSentiment) {
+            if (slotsAllocated >= availableSlots) break;
+            
+            // Calcoliamo la dimensione dell'ordine specifica in base al sentiment
+            let amountToBuy = singlePositionSize;
             if (mode === 'live') {
-              if (sentimentScore > 0.6) {
-                amountToBuy = 5.0;
-              } else if (sentimentScore > 0.4) {
-                amountToBuy = 3.5;
+              if (item.score > 0.6) {
+                amountToBuy = singlePositionSize;
+              } else if (item.score > 0.4) {
+                amountToBuy = Math.max(2.0, singlePositionSize * 0.75);
               } else {
-                amountToBuy = 2.0;
+                amountToBuy = Math.max(2.0, singlePositionSize * 0.5);
               }
             } else {
-              if (sentimentScore > 0.6) {
-                amountToBuy = 1000;
-              } else if (sentimentScore > 0.4) {
-                amountToBuy = 700;
+              if (item.score > 0.6) {
+                amountToBuy = singlePositionSize;
+              } else if (item.score > 0.4) {
+                amountToBuy = Math.max(10.0, singlePositionSize * 0.75);
               } else {
-                amountToBuy = 400;
+                amountToBuy = Math.max(10.0, singlePositionSize * 0.5);
               }
             }
 
-            if (currentBuyingPower < amountToBuy) {
-                addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${symbol}, ma potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${amountToBuy.toFixed(2)}).`);
-                addLogicLog(mode, {
-                    timestamp: new Date().toISOString(),
-                    symbol,
-                    action: 'SKIP',
-                    reasoning: `Potere d'acquisto insufficiente (richiesti $${amountToBuy.toFixed(2)})`
-                });
-                continue;
-            }
+            ordersToSubmit.push({
+              symbol: item.symbol,
+              sentimentScore: item.score,
+              reasoning: item.reasoning,
+              amount: amountToBuy
+            });
 
-            addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${symbol}: ${sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${amountToBuy.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
-            addLogicLog(mode, {
-                timestamp: new Date().toISOString(),
-                symbol,
-                action: 'BUY',
-                reasoning: sentimentReasoning
-            });
-            
-            // Esecuzione dell'ordine frazionario (notional) su Alpaca
-            try {
-              const orderResponse = await fetch(`${baseUrl}/orders`, {
-                method: 'POST',
-                headers: {
-                  'APCA-API-KEY-ID': apiKey,
-                  'APCA-API-SECRET-KEY': secretKey,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  symbol,
-                  notional: amountToBuy.toString(),
-                  side: 'buy',
-                  type: 'market',
-                  time_in_force: 'day'
-                })
-              });
-              
-              if (orderResponse.ok) {
-                const orderData = await orderResponse.json();
-                addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${symbol}! ID: ${orderData.id}`);
-                currentBuyingPower -= amountToBuy;
-              } else {
-                const errorData = await orderResponse.json();
-                addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${symbol}: ${errorData.message}`);
-              }
-            } catch (err: any) {
-              addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete durante l'acquisto di ${symbol}: ${err.message}`);
-            }
-            
-        } else {
-            addLogicLog(mode, {
-                timestamp: new Date().toISOString(),
-                symbol,
-                action: 'HOLD',
-                reasoning: sentimentReasoning
-            });
+            slotsAllocated++;
+            allocatedInThisRound++;
+          }
+          if (allocatedInThisRound === 0) break;
         }
+
+        addLog(mode as 'paper' | 'live', `[Allocazione] Pianificato l'invio simultaneo di ${ordersToSubmit.length} ordini frazionari.`);
+
+        // 3. Esecuzione degli ordini pianificati
+        for (const order of ordersToSubmit) {
+          if (currentBuyingPower < order.amount) {
+            addLog(mode as 'paper' | 'live', `[Mercato] Salto acquisto per ${order.symbol}: potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${order.amount.toFixed(2)}).`);
+            continue;
+          }
+
+          addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${order.symbol}: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
+          addLogicLog(mode, {
+            timestamp: new Date().toISOString(),
+            symbol: order.symbol,
+            action: 'BUY',
+            reasoning: `Ordine frazionario simultaneo ($${order.amount.toFixed(2)}) - Sentiment: ${order.sentimentScore.toFixed(2)}: ${order.reasoning}`
+          });
+
+          try {
+            const orderResponse = await fetch(`${baseUrl}/orders`, {
+              method: 'POST',
+              headers: {
+                'APCA-API-KEY-ID': apiKey,
+                'APCA-API-SECRET-KEY': secretKey,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                symbol: order.symbol,
+                notional: order.amount.toFixed(2), // Frazionario con notional
+                side: 'buy',
+                type: 'market',
+                time_in_force: 'day'
+              })
+            });
+
+            if (orderResponse.ok) {
+              const orderData = await orderResponse.json();
+              addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${order.symbol}! ID: ${orderData.id}`);
+              currentBuyingPower -= order.amount;
+            } else {
+              const errorData = await orderResponse.json();
+              addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${order.symbol}: ${errorData.message}`);
+            }
+          } catch (err: any) {
+            addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete durante l'acquisto di ${order.symbol}: ${err.message}`);
+          }
+        }
+      } else if (availableSlots <= 0) {
+        addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`);
+      } else {
+        addLog(mode as 'paper' | 'live', `[Mercato] Nessun asset con sentiment positivo (> 0.2) identificato in questo ciclo.`);
       }
     }
   } catch (error: any) {
@@ -2183,6 +2253,12 @@ app.get('/api/status', async (req, res) => {
       y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport,
       latestDailyDebrief: botStatus.latestDailyDebrief,
+      defaultTP: botStatus.defaultTP ?? 2.00,
+      defaultSL: botStatus.defaultSL ?? -0.50,
+      trailingStop: botStatus.trailingStop ?? 1.0,
+      timeframe: botStatus.timeframe ?? 15,
+      riskPercentage: botStatus.riskPercentage ?? 10,
+      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
       paper: paperData,
       live: liveData
     }
@@ -3295,27 +3371,45 @@ async function executeAlpacaRealtimeCheck() {
     }
 
     const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
-    const config = { y: botStatus.y || 1 };
+    const config = { 
+      y: botStatus.y || 1,
+      defaultSL: botStatus.defaultSL,
+      defaultTP: botStatus.defaultTP,
+      trailingStop: botStatus.trailingStop
+    };
 
     for (const pos of positions) {
       const symbol = pos.symbol;
       const qty = parseFloat(pos.qty || '0');
       const currentValue = parseFloat(pos.market_value || '0');
       const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+      const currentPrice = parseFloat(pos.current_price || '0');
+      const avgEntryPrice = parseFloat(pos.avg_entry_price || '0');
 
-      // Sincronizza lo stato corrente su Firestore
+      // Recuperiamo/Aggiorniamo il massimo prezzo raggiunto (High Water Mark) per il trailing stop
+      let highestPrice = currentPrice;
       if (db) {
         try {
-          await db.collection('alpaca_positions').doc(symbol).set({
+          const docRef = db.collection('alpaca_positions').doc(symbol);
+          const docSnap = await docRef.get();
+          if (docSnap.exists) {
+            const data = docSnap.data();
+            if (data && data.highestPrice && data.highestPrice > currentPrice) {
+              highestPrice = data.highestPrice;
+            }
+          }
+          // Sincronizza lo stato corrente su Firestore incluso il massimo prezzo storico di picco
+          await docRef.set({
             symbol,
             currentValue,
             unrealizedPL,
             quantity: qty,
+            highestPrice,
             updatedAt: new Date().toISOString(),
             status: 'ACTIVE'
           }, { merge: true });
         } catch (e) {
-          
+          // Silenzioso
         }
       }
 
@@ -3324,9 +3418,10 @@ async function executeAlpacaRealtimeCheck() {
         id: symbol,
         asset: symbol,
         currentValue,
-        openPrice: parseFloat(pos.avg_entry_price || '0'),
-        currentPrice: parseFloat(pos.current_price || '0'),
-        unrealizedProfit: unrealizedPL
+        openPrice: avgEntryPrice,
+        currentPrice: currentPrice,
+        unrealizedProfit: unrealizedPL,
+        highestPrice: highestPrice
       };
 
       const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, config);

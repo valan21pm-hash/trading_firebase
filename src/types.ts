@@ -50,6 +50,12 @@ export interface BotStatus {
     suggestedRule: string;
     timestamp: string;
   };
+  defaultTP?: number;
+  defaultSL?: number;
+  trailingStop?: number;
+  timeframe?: number;
+  riskPercentage?: number;
+  maxConcurrentPositions?: number;
   
   paper: AccountData;
   live: AccountData;
