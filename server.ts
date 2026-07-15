@@ -479,6 +479,41 @@ let botStatus: {
   riskPercentage: 10,
   maxConcurrentPositions: 10
 };
+
+let positionStrategies: {
+  paper: Record<string, 'Prudente' | 'Conservativa' | 'Aggressiva'>;
+  live: Record<string, 'Prudente' | 'Conservativa' | 'Aggressiva'>;
+} = {
+  paper: {},
+  live: {}
+};
+
+function getDefaultStrategy(symbol: string): 'Prudente' | 'Conservativa' | 'Aggressiva' {
+  const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
+  const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
+  if (INDICES.includes(symbol)) return 'Conservativa';
+  if (COMMODITIES.includes(symbol)) return 'Prudente';
+  return 'Aggressiva';
+}
+
+const STRATEGY_PARAMS = {
+  Prudente: {
+    tpPct: 0.80,     // +0.80%
+    slPct: -0.40,    // -0.40%
+    tsPct: 0.30      // Trailing Stop at 0.30%
+  },
+  Conservativa: {
+    tpPct: 1.50,     // +1.50%
+    slPct: -0.75,    // -0.75%
+    tsPct: 1.00      // Trailing Stop at 1.00%
+  },
+  Aggressiva: {
+    tpPct: 2.50,     // +2.50%
+    slPct: -1.00,    // -1.00%
+    tsPct: 0.50      // Trailing Stop at 0.50%
+  }
+};
+
 let tradeLogs: string[] = [];
 
 // --- XTB Auto-Trading State and Variables ---
@@ -595,6 +630,30 @@ app.post("/api/trading/alpaca-settings", async (req, res) => {
     riskPercentage: botStatus.riskPercentage,
     maxConcurrentPositions: botStatus.maxConcurrentPositions
   });
+});
+
+app.post("/api/trading/position-strategy", async (req, res) => {
+  const { mode, symbol, strategy } = req.body;
+  if (!mode || !symbol || !strategy) {
+    return res.status(400).json({ error: "Parametri mancanti: mode, symbol o strategy." });
+  }
+  if (!['paper', 'live'].includes(mode)) {
+    return res.status(400).json({ error: "Modalità non valida." });
+  }
+  if (!['Prudente', 'Conservativa', 'Aggressiva'].includes(strategy)) {
+    return res.status(400).json({ error: "Strategia non valida." });
+  }
+
+  if (!positionStrategies[mode]) {
+    positionStrategies[mode] = {};
+  }
+  positionStrategies[mode][symbol] = strategy;
+  
+  await saveBotStatus();
+  
+  addLog(mode as 'paper' | 'live', `[Strategia Utente] Aggiornata strategia per ${symbol} a ${strategy}.`);
+  
+  res.json({ success: true, mode, symbol, strategy });
 });
 
 app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
@@ -719,7 +778,8 @@ async function saveBotStatus() {
       trailingStop: botStatus.trailingStop ?? 1.0,
       timeframe: botStatus.timeframe ?? 15,
       riskPercentage: botStatus.riskPercentage ?? 10,
-      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10
+      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+      positionStrategies: positionStrategies
     }, { merge: true });
   } catch (err: any) {
     console.error('[Firebase] Error saving bot status:', err);
@@ -792,6 +852,12 @@ async function loadStateFromFirestore() {
       botStatus.timeframe = data.timeframe ?? botStatus.timeframe;
       botStatus.riskPercentage = data.riskPercentage ?? botStatus.riskPercentage;
       botStatus.maxConcurrentPositions = data.maxConcurrentPositions ?? botStatus.maxConcurrentPositions;
+      if (data.positionStrategies) {
+        positionStrategies = {
+          paper: data.positionStrategies.paper || {},
+          live: data.positionStrategies.live || {}
+        };
+      }
       console.log('[Firebase] Loaded botStatus successfully.');
     }
 
@@ -1375,7 +1441,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       addLog(mode as 'paper' | 'live', `  - ${sym}: ${statusLabel} | ${actionLabel}\n    └─ Motivazione: ${reasoning}`);
     }
 
-    // 1. Fase di Vendita (Sell/Close phase): Gestione Sentiment, Take Profit (0.25%) e Chiusura EOD
+    // 1. Fase di Vendita (Sell/Close phase): Gestione Sentiment, Take Profit basato sulla Strategia selezionata e Chiusura EOD
     const closedSymbolsThisCycle = new Set<string>();
     for (const pos of openPositions) {
       const symbol = pos.symbol;
@@ -1384,15 +1450,27 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const profitPct = parseFloat(pos.unrealized_intraday_plpc || pos.unrealized_plpc || '0');
       const profitAmt = parseFloat(pos.unrealized_pl || '0');
 
+      // Ottieni la strategia attiva per questa posizione o assegna default ottimizzato IA
+      if (!positionStrategies[mode]) {
+        positionStrategies[mode] = {};
+      }
+      if (!positionStrategies[mode][symbol]) {
+        positionStrategies[mode][symbol] = getDefaultStrategy(symbol);
+        saveBotStatus();
+      }
+      const activeStrategy = positionStrategies[mode][symbol];
+      const params = STRATEGY_PARAMS[activeStrategy];
+      const targetTpPct = params.tpPct / 100;
+
       let shouldClose = false;
       let closeReason = '';
 
       if (sentimentScore <= 0) {
         shouldClose = true;
         closeReason = `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
-      } else if (profitPct >= 0.0025) {
+      } else if (profitPct >= targetTpPct) {
         shouldClose = true;
-        closeReason = `Take Profit 0.25% raggiunto (+${(profitPct * 100).toFixed(2)}%).`;
+        closeReason = `Take Profit Strategia ${activeStrategy} (${(targetTpPct * 100).toFixed(2)}%) raggiunto (+${(profitPct * 100).toFixed(2)}%).`;
       } else if (isPreCloseWindow && profitAmt > 0) {
         shouldClose = true;
         closeReason = `Chiusura EOD (15 min alla fine): Profitto di $${profitAmt.toFixed(2)} garantito.`;
@@ -2194,7 +2272,30 @@ app.get('/api/status', async (req, res) => {
           }
         });
         if (posResponse.ok) {
-          positions = await posResponse.json();
+          const rawPositions = await posResponse.json();
+          positions = rawPositions.map((pos: any) => {
+            const sym = pos.symbol;
+            const qty = parseFloat(pos.qty || '0');
+            const currentValue = parseFloat(pos.market_value || '0');
+            const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+            const costBasis = currentValue - unrealizedPL;
+
+            if (!positionStrategies[mode]) {
+              positionStrategies[mode] = {};
+            }
+            if (!positionStrategies[mode][sym]) {
+              positionStrategies[mode][sym] = getDefaultStrategy(sym);
+              saveBotStatus();
+            }
+            const activeStrategy = positionStrategies[mode][sym];
+
+            return {
+              ...pos,
+              activeStrategy,
+              nominalInvestment: costBasis,
+              currentValue
+            };
+          });
         }
         
         const accResponse = await fetch(`${conf.baseUrl}/account`, {
@@ -3431,12 +3532,6 @@ async function executeAlpacaRealtimeCheck() {
     }
 
     const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
-    const config = { 
-      y: botStatus.y || 1,
-      defaultSL: botStatus.defaultSL,
-      defaultTP: botStatus.defaultTP,
-      trailingStop: botStatus.trailingStop
-    };
 
     for (const pos of positions) {
       const symbol = pos.symbol;
@@ -3445,6 +3540,30 @@ async function executeAlpacaRealtimeCheck() {
       const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
       const currentPrice = parseFloat(pos.current_price || '0');
       const avgEntryPrice = parseFloat(pos.avg_entry_price || '0');
+
+      // Recuperiamo la strategia attiva o ne assegniamo una di default ottimizzata via IA
+      if (!positionStrategies[mode]) {
+        positionStrategies[mode] = {};
+      }
+      if (!positionStrategies[mode][symbol]) {
+        positionStrategies[mode][symbol] = getDefaultStrategy(symbol);
+        saveBotStatus();
+      }
+      const activeStrategy = positionStrategies[mode][symbol];
+      const params = STRATEGY_PARAMS[activeStrategy];
+
+      // Calcoliamo i limiti assoluti (TP/SL) in base alla percentuale della strategia applicata al capitale nominale
+      const costBasis = currentValue - unrealizedPL;
+      const slDollar = costBasis * (params.slPct / 100);
+      const tpDollar = costBasis * (params.tpPct / 100);
+      const trailingStopPercent = params.tsPct;
+
+      const positionConfig = {
+        y: botStatus.y || 1,
+        defaultSL: slDollar,
+        defaultTP: tpDollar,
+        trailingStop: trailingStopPercent
+      };
 
       // Recuperiamo/Aggiorniamo il massimo prezzo raggiunto (High Water Mark) per il trailing stop
       let highestPrice = currentPrice;
@@ -3458,13 +3577,14 @@ async function executeAlpacaRealtimeCheck() {
               highestPrice = data.highestPrice;
             }
           }
-          // Sincronizza lo stato corrente su Firestore incluso il massimo prezzo storico di picco
+          // Sincronizza lo stato corrente su Firestore incluso il massimo prezzo storico di picco e la strategia attiva
           await docRef.set({
             symbol,
             currentValue,
             unrealizedPL,
             quantity: qty,
             highestPrice,
+            activeStrategy,
             updatedAt: new Date().toISOString(),
             status: 'ACTIVE'
           }, { merge: true });
@@ -3473,7 +3593,7 @@ async function executeAlpacaRealtimeCheck() {
         }
       }
 
-      // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio
+      // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
       const positionObj = {
         id: symbol,
         asset: symbol,
@@ -3484,7 +3604,7 @@ async function executeAlpacaRealtimeCheck() {
         highestPrice: highestPrice
       };
 
-      const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, config);
+      const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, positionConfig);
 
       if (decision && decision.action === 'CLOSE') {
         addLog(mode as 'paper' | 'live', `[Rischio Alpaca] Chiusura posizione per ${symbol}. Motivo: ${decision.reason}`);

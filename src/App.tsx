@@ -799,6 +799,21 @@ function AccountPanel({
     }
   }, [status]);
 
+  const handleUpdateStrategy = async (symbol: string, strategy: 'Prudente' | 'Conservativa' | 'Aggressiva') => {
+    try {
+      const response = await fetch('/api/trading/position-strategy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: type, symbol, strategy })
+      });
+      if (response.ok) {
+        await fetchStatus();
+      }
+    } catch (err) {
+      console.error('Error updating strategy:', err);
+    }
+  };
+
   const handleOpenCredsForm = async () => {
     setShowAlpacaCredsForm(!showAlpacaCredsForm);
     setShowSettingsForm(false);
@@ -1313,62 +1328,96 @@ function AccountPanel({
                 const avgPrice = parseFloat(pos.avg_entry_price || '0');
                 const currPrice = parseFloat(pos.current_price || '0');
                 return (
-                  <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-sm bg-gray-50 p-3 rounded-lg border border-gray-100 gap-2 sm:gap-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                      <div>
-                        <span className="font-bold text-gray-900 text-base">{pos.symbol}</span>
-                        <span className="text-gray-500 text-xs block sm:inline sm:ml-2">({formattedQty} quote)</span>
-                      </div>
-                      <div className="flex gap-4 text-xs text-gray-600 mt-1 sm:mt-0">
+                  <div key={i} className="flex flex-col bg-slate-50 p-3 rounded-lg border border-slate-100 gap-2.5">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center text-sm gap-2 sm:gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                         <div>
-                          <span className="text-gray-400 block sm:inline">Prezzo acq: </span>
-                          <span className="font-mono font-medium text-gray-800">${avgPrice.toFixed(2)}</span>
+                          <span className="font-bold text-gray-900 text-base">{pos.symbol}</span>
+                          <span className="text-gray-500 text-xs block sm:inline sm:ml-2">({formattedQty} quote)</span>
                         </div>
-                        <div>
-                          <span className="text-gray-400 block sm:inline">Quot. attuale: </span>
-                          <span className="font-mono font-medium text-gray-800">${currPrice.toFixed(2)}</span>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                          <div>
+                            <span className="text-gray-400">Prezzo acq: </span>
+                            <span className="font-mono font-medium text-gray-800">${avgPrice.toFixed(2)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Quot. attuale: </span>
+                            <span className="font-mono font-medium text-gray-800">${currPrice.toFixed(2)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Investimento nominale: </span>
+                            <span className="font-mono font-bold text-slate-800">${(pos.nominalInvestment || (avgPrice * qtyNum)).toFixed(2)}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3 self-end sm:self-auto">
-                      <div className={`font-semibold flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
-                        {pos.unrealized_plpc !== undefined && (
-                          <span className="text-xs font-semibold opacity-95 px-1.5 py-0.5 rounded bg-current/10">
-                            ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
-                          </span>
+                      <div className="flex items-center gap-3 self-end sm:self-auto">
+                        <div className={`font-semibold flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
+                          {pos.unrealized_plpc !== undefined && (
+                            <span className="text-xs font-semibold opacity-95 px-1.5 py-0.5 rounded bg-current/10">
+                              ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
+                            </span>
+                          )}
+                        </div>
+
+                        {confirmCloseSymbol?.symbol === pos.symbol && confirmCloseSymbol?.type === type ? (
+                          <div className="flex items-center gap-1.5 ml-2 bg-red-50 p-1 rounded-md border border-red-200">
+                            <button
+                              onClick={() => onClosePosition(pos.symbol, type)}
+                              disabled={closingSymbols.includes(pos.symbol)}
+                              className="px-2 py-0.5 text-xs font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {closingSymbols.includes(pos.symbol) ? '...' : 'Chiudi'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmCloseSymbol(null)}
+                              disabled={closingSymbols.includes(pos.symbol)}
+                              className="p-0.5 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Annulla"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmCloseSymbol({ symbol: pos.symbol, type })}
+                            disabled={closingSymbols.includes(pos.symbol)}
+                            className="ml-2 p-1 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                            title="Chiudi Posizione"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Chiudi</span>
+                          </button>
                         )}
                       </div>
+                    </div>
 
-                      {confirmCloseSymbol?.symbol === pos.symbol && confirmCloseSymbol?.type === type ? (
-                        <div className="flex items-center gap-1.5 ml-2 bg-red-50 p-1 rounded-md border border-red-200">
-                          <button
-                            onClick={() => onClosePosition(pos.symbol, type)}
-                            disabled={closingSymbols.includes(pos.symbol)}
-                            className="px-2 py-0.5 text-xs font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
-                          >
-                            {closingSymbols.includes(pos.symbol) ? '...' : 'Chiudi'}
-                          </button>
-                          <button
-                            onClick={() => setConfirmCloseSymbol(null)}
-                            disabled={closingSymbols.includes(pos.symbol)}
-                            className="p-0.5 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors cursor-pointer disabled:opacity-50"
-                            title="Annulla"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setConfirmCloseSymbol({ symbol: pos.symbol, type })}
-                          disabled={closingSymbols.includes(pos.symbol)}
-                          className="ml-2 p-1 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
-                          title="Chiudi Posizione"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Chiudi</span>
-                        </button>
-                      )}
+                    {/* Selector per le 3 Strategie consigliate ed editabili in real-time */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mr-1">Strategia di Gestione:</span>
+                        {(['Prudente', 'Conservativa', 'Aggressiva'] as const).map((strat) => {
+                          const isSelected = pos.activeStrategy === strat;
+                          return (
+                            <button
+                              key={strat}
+                              onClick={() => handleUpdateStrategy(pos.symbol, strat)}
+                              className={`px-2.5 py-1 text-xs font-semibold rounded transition duration-200 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow-sm font-bold scale-[1.02]'
+                                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200 hover:text-gray-900'
+                              }`}
+                            >
+                              {strat === 'Prudente' ? '🛡️ Prudente' : strat === 'Conservativa' ? '⚖️ Conservativa' : '🚀 Aggressiva'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-mono italic">
+                        {pos.activeStrategy === 'Prudente' && 'Stop Loss: -0.40% | Take Profit: +0.80% | Trailing: 0.30%'}
+                        {pos.activeStrategy === 'Conservativa' && 'Stop Loss: -0.75% | Take Profit: +1.50% | Trailing: 1.00%'}
+                        {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Take Profit: +2.50% | Trailing: 0.50%'}
+                      </div>
                     </div>
                   </div>
                 );

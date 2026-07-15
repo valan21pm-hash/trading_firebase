@@ -15,6 +15,8 @@ export interface Position {
   current_price: string;
   lastday_price: string;
   change_today: string;
+  nominalInvestment?: number;
+  activeStrategy?: 'Prudente' | 'Conservativa' | 'Aggressiva';
 }
 
 export interface AccountData {
