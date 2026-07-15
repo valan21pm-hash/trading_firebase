@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
+import { LLMSettings } from './components/LLMSettings';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -778,10 +779,8 @@ function AccountPanel({
 
   // Stati per le nuove impostazioni di rischio e bot
   const [showSettingsForm, setShowSettingsForm] = useState(false);
+  const [showLlmSettings, setShowLlmSettings] = useState(false);
   const [maxPos, setMaxPos] = useState<number>(10);
-  const [tp, setTp] = useState<number>(2.0);
-  const [sl, setSl] = useState<number>(-0.5);
-  const [ts, setTs] = useState<number>(1.0);
   const [tf, setTf] = useState<number>(15);
   const [risk, setRisk] = useState<number>(10);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -791,9 +790,6 @@ function AccountPanel({
   useEffect(() => {
     if (status) {
       setMaxPos(status.maxConcurrentPositions ?? 10);
-      setTp(status.defaultTP ?? 2.0);
-      setSl(status.defaultSL ?? -0.5);
-      setTs(status.trailingStop ?? 1.0);
       setTf(status.timeframe ?? 15);
       setRisk(status.riskPercentage ?? 10);
     }
@@ -817,6 +813,7 @@ function AccountPanel({
   const handleOpenCredsForm = async () => {
     setShowAlpacaCredsForm(!showAlpacaCredsForm);
     setShowSettingsForm(false);
+    setShowLlmSettings(false);
     setSaveStatus(null);
     try {
       const res = await fetch('/api/trading/credentials');
@@ -834,6 +831,7 @@ function AccountPanel({
   const handleOpenSettingsForm = () => {
     setShowSettingsForm(!showSettingsForm);
     setShowAlpacaCredsForm(false);
+    setShowLlmSettings(false);
     setSettingsStatus(null);
   };
 
@@ -878,9 +876,6 @@ function AccountPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           maxConcurrentPositions: Number(maxPos),
-          defaultTP: Number(tp),
-          defaultSL: Number(sl),
-          trailingStop: Number(ts),
           timeframe: Number(tf),
           riskPercentage: Number(risk)
         })
@@ -968,6 +963,17 @@ function AccountPanel({
               >
                 [Parametri Bot & Rischio]
               </button>
+              <span className="text-gray-300">|</span>
+              <button
+                onClick={() => {
+                  setShowLlmSettings(!showLlmSettings);
+                  setShowAlpacaCredsForm(false);
+                  setShowSettingsForm(false);
+                }}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer p-0"
+              >
+                [Impostazioni LLM]
+              </button>
             </div>
           </div>
         </div>
@@ -1049,46 +1055,6 @@ function AccountPanel({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Trailing Stop (%)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  max="10"
-                  value={ts}
-                  onChange={(e) => setTs(Number(e.target.value))}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
-                />
-                <span className="text-[9px] text-slate-500 mt-0.5 block">Innesco inseguimento profitto dal picco massimo.</span>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Stop Loss Personalizzato (€)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  max="0"
-                  value={sl}
-                  onChange={(e) => setSl(Number(e.target.value))}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
-                />
-                <span className="text-[9px] text-slate-500 mt-0.5 block">Es. -0.50€. Stop Loss fisso per singola posizione.</span>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Take Profit Personalizzato (€)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0"
-                  value={tp}
-                  onChange={(e) => setTp(Number(e.target.value))}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
-                />
-                <span className="text-[9px] text-slate-500 mt-0.5 block">Es. 2.00€. Profit Target fisso per singola posizione.</span>
-              </div>
-
-              <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Timeframe di Ciclo (Minuti)</label>
                 <select
                   value={tf}
@@ -1141,6 +1107,8 @@ function AccountPanel({
             </div>
           </div>
         )}
+
+        {showLlmSettings && <LLMSettings />}
 
         {/* Grafico P&L Realizzato e Non Realizzato */}
         <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">

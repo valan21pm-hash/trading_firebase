@@ -59,6 +59,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
+import { LLMProviderService } from "./src/backend/services/LLMProviderService";
 
 let db: any = null;
 let firebaseApp: any = null;
@@ -237,6 +238,88 @@ app.post('/api/trading/credentials', async (req, res) => {
     res.json({ success: true }); // Return success since we saved it locally!
   }
 });
+
+// --- MULTI-LLM MANAGEMENT ENDPOINTS ---
+app.get('/api/llm/configs', (req, res) => {
+  const service = LLMProviderService.getInstance();
+  const configs = service.getConfigs();
+  const sanitizedConfigs: Record<string, any> = {};
+  
+  for (const provider of Object.keys(configs) as LLMProvider[]) {
+    const conf = configs[provider];
+    sanitizedConfigs[provider] = {
+      provider: conf.provider,
+      model: conf.model,
+      hasKey: !!(conf.apiKey && conf.apiKey.trim() !== ''),
+      maskedKey: conf.apiKey && conf.apiKey.length > 8 
+        ? `${conf.apiKey.substring(0, 4)}...${conf.apiKey.substring(conf.apiKey.length - 4)}`
+        : conf.apiKey ? '••••••••' : ''
+    };
+  }
+
+  res.json({
+    success: true,
+    configs: sanitizedConfigs,
+    preferredProvider: botStatus.llmPreferredProvider || 'gemini',
+    failoverEnabled: botStatus.llmFailoverEnabled ?? true,
+    providerOrder: service.getProviderOrder()
+  });
+});
+
+app.post('/api/llm/configs', async (req, res) => {
+  const { provider, apiKey, model } = req.body;
+  if (!provider) {
+    return res.status(400).json({ success: false, error: 'Provider mancante' });
+  }
+
+  const service = LLMProviderService.getInstance();
+  const updateData: any = {};
+  if (typeof model === 'string') updateData.model = model;
+  
+  if (typeof apiKey === 'string' && apiKey.trim() !== '' && !apiKey.includes('...') && !apiKey.includes('•••')) {
+    updateData.apiKey = apiKey.trim();
+  }
+
+  service.updateConfig(provider, updateData);
+
+  if (db) {
+    try {
+      const docRef = db.collection('settings').doc('llm');
+      const doc = await docRef.get();
+      const currentData = doc.exists ? doc.data() : {};
+      
+      currentData[provider] = {
+        ...currentData[provider],
+        ...updateData
+      };
+      
+      await docRef.set(currentData, { merge: true });
+    } catch (e: any) {
+      console.error('[Firebase] Errore salvataggio configurazioni LLM:', e.message);
+    }
+  }
+
+  res.json({ success: true });
+});
+
+app.post('/api/llm/preference', async (req, res) => {
+  const { preferredProvider, failoverEnabled, providerOrder } = req.body;
+  
+  if (preferredProvider) {
+    botStatus.llmPreferredProvider = preferredProvider;
+  }
+  if (typeof failoverEnabled === 'boolean') {
+    botStatus.llmFailoverEnabled = failoverEnabled;
+    LLMProviderService.getInstance().setFailoverEnabled(failoverEnabled);
+  }
+  if (Array.isArray(providerOrder)) {
+    LLMProviderService.getInstance().setProviderOrder(providerOrder);
+  }
+
+  await saveBotStatus();
+  res.json({ success: true, botStatus });
+});
+// -------------------------------------
 // -------------------------------------
 
 const resolvedCredentials = {
@@ -531,6 +614,8 @@ let botStatus: {
   timeframe?: number;
   riskPercentage?: number;
   maxConcurrentPositions?: number;
+  llmPreferredProvider?: 'gemini' | 'openai' | 'deepseek' | 'groq' | 'anthropic';
+  llmFailoverEnabled?: boolean;
 } = {
   active: false,
   paperActive: false,
@@ -553,7 +638,9 @@ let botStatus: {
   trailingStop: 1.0,
   timeframe: 15,
   riskPercentage: 10,
-  maxConcurrentPositions: 10
+  maxConcurrentPositions: 10,
+  llmPreferredProvider: 'gemini',
+  llmFailoverEnabled: true
 };
 
 let positionStrategies: {
@@ -872,6 +959,8 @@ async function saveBotStatus() {
       timeframe: botStatus.timeframe ?? 15,
       riskPercentage: botStatus.riskPercentage ?? 10,
       maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+      llmPreferredProvider: botStatus.llmPreferredProvider ?? 'gemini',
+      llmFailoverEnabled: botStatus.llmFailoverEnabled ?? true,
       positionStrategies: positionStrategies
     }, { merge: true });
   } catch (err: any) {
@@ -945,6 +1034,29 @@ async function loadStateFromFirestore() {
       botStatus.timeframe = data.timeframe ?? botStatus.timeframe;
       botStatus.riskPercentage = data.riskPercentage ?? botStatus.riskPercentage;
       botStatus.maxConcurrentPositions = data.maxConcurrentPositions ?? botStatus.maxConcurrentPositions;
+      botStatus.llmPreferredProvider = data.llmPreferredProvider ?? botStatus.llmPreferredProvider ?? 'gemini';
+      botStatus.llmFailoverEnabled = data.llmFailoverEnabled ?? botStatus.llmFailoverEnabled ?? true;
+
+      if (botStatus.llmPreferredProvider) {
+        LLMProviderService.getInstance().setFailoverEnabled(!!botStatus.llmFailoverEnabled);
+      }
+
+      // Carichiamo anche i dettagli di configurazione di ciascun LLM se presenti nel db in settings/llm
+      try {
+        const llmConfigsDoc = await db.collection('settings').doc('llm').get();
+        if (llmConfigsDoc.exists) {
+          const configsData = llmConfigsDoc.data() || {};
+          const llmService = LLMProviderService.getInstance();
+          for (const provider of ['gemini', 'openai', 'deepseek', 'groq', 'anthropic'] as const) {
+            if (configsData[provider]) {
+              llmService.updateConfig(provider, configsData[provider]);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn('[Firebase] Non-fatal: Error loading LLM specific configs:', e.message);
+      }
+
       if (data.positionStrategies) {
         positionStrategies = {
           paper: data.positionStrategies.paper || {},
@@ -1150,18 +1262,22 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       ? `Analizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "In crescita grazie a notizie positive"}\n}`
       : `Analizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo"}\n}`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
 
     let parsed: Record<string, any> = {};
-    try {
-       const cleanedText = (response.text || '{}').replace(/```json|```/g, '').trim();
-       parsed = JSON.parse(cleanedText);
-     } catch(e) {
-       console.error("Failed to parse Gemini bulk JSON output:", response.text);
-     }
+    if (response.success && response.text) {
+      try {
+        const cleanedText = response.text.replace(/```json|```/g, '').trim();
+        parsed = JSON.parse(cleanedText);
+      } catch(e) {
+        console.error(`Failed to parse ${response.provider} bulk JSON output:`, response.text);
+      }
+    } else {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
 
     for (const sym of missingSymbols) {
       const entry = parsed[sym] || {};
@@ -1258,28 +1374,30 @@ async function getDynamicTrendingStocks(): Promise<string[]> {
 Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in maiuscolo. Esempio di output:
 ["NVDA", "AAPL", "MSFT", "TSLA", "META"]`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
 
-    const cleanedText = (response.text || '[]').replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleanedText);
-    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
-      const symbols = parsed.map(s => s.trim().toUpperCase());
-      const filteredSymbols = symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
-      if (filteredSymbols.length > 0) {
-        trendingStocksCache = { date: today, symbols: filteredSymbols };
-        
-        // Save to Firestore
-        if (db) {
-          db.collection('trending_stocks').doc(`daily_${today}`).set({
-            symbols: filteredSymbols,
-            timestamp: new Date().toISOString()
-          }).catch(() => {});
-        }
+    if (response.success && response.text) {
+      const cleanedText = response.text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleanedText);
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+        const symbols = parsed.map(s => s.trim().toUpperCase());
+        const filteredSymbols = symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
+        if (filteredSymbols.length > 0) {
+          trendingStocksCache = { date: today, symbols: filteredSymbols };
+          
+          // Save to Firestore
+          if (db) {
+            db.collection('trending_stocks').doc(`daily_${today}`).set({
+              symbols: filteredSymbols,
+              timestamp: new Date().toISOString()
+            }).catch(() => {});
+          }
 
-        return filteredSymbols;
+          return filteredSymbols;
+        }
       }
     }
   } catch (error: any) {
@@ -1854,11 +1972,10 @@ ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')
 `;
 
       try {
-        const response = await getAi().models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents: prompt,
+        const response = await LLMProviderService.getInstance().generateContent(prompt, {
+          preferredProvider: botStatus.llmPreferredProvider || 'gemini'
         });
-        reportText = response.text || 'Nessun report generato.';
+        reportText = response.success && response.text ? response.text : 'Nessun report generato.';
       } catch (error: any) {
         const message = error.message || String(error);
         if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
@@ -2006,27 +2123,14 @@ ISTRUZIONI DI ANALISI:
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            analysis: {
-              type: Type.STRING,
-              description: "Resoconto di analisi approfondita strutturato in Markdown con sezioni 'Riesame Decisionale', 'Correlazioni Latenti' e 'Scenari Alternativi'."
-            },
-            suggestedRule: {
-              type: Type.STRING,
-              description: "Una singola regola di trading suggerita, chiara, precisa, in italiano, pronta da copiare e incollare (massimo 150 caratteri)."
-            }
-          },
-          required: ["analysis", "suggestedRule"]
-        }
-      }
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
+
+    if (!response.success || !response.text) {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
 
     const text = response.text;
     if (!text) {
@@ -2143,27 +2247,14 @@ ISTRUZIONI DI ANALISI:
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            analysis: {
-              type: Type.STRING,
-              description: "Resoconto di analisi approfondita del periodo strutturato in Markdown."
-            },
-            suggestedRule: {
-              type: Type.STRING,
-              description: "Una singola regola di trading suggerita basata sul periodo analizzato, chiara, precisa, in italiano, pronta da copiare e incollare (massimo 150 caratteri)."
-            }
-          },
-          required: ["analysis", "suggestedRule"]
-        }
-      }
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
+
+    if (!response.success || !response.text) {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
 
     const text = response.text;
     if (!text) {
@@ -2515,30 +2606,14 @@ Rispondi RIGIDAMENTE in formato JSON con la seguente struttura:
   }
 ]`;
 
-    const ai = getAi();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              symbol: { type: Type.STRING },
-              name: { type: Type.STRING },
-              momentumScore: { type: Type.INTEGER },
-              recentPerformance: { type: Type.STRING },
-              reasoning: { type: Type.STRING },
-              catalyst: { type: Type.STRING }
-            },
-            required: ["symbol", "name", "momentumScore", "recentPerformance", "reasoning", "catalyst"]
-          }
-        }
-      }
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
+
+    if (!response.success || !response.text) {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
 
     const text = response.text || "[]";
     const parsed = JSON.parse(text.trim());
@@ -3053,15 +3128,16 @@ Rispondi esclusivamente nel seguente formato JSON:
   "improvementPrompt": "Testo del prompt da inviare all'AI per migliorare il codice..."
 }`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      }
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
     
-    let result = JSON.parse(response.text || '{}');
+    if (!response.success || !response.text) {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
+    
+    let result = JSON.parse(response.text);
     res.json(result);
   } catch (error: any) {
     const message = error.message || String(error);
@@ -3106,15 +3182,16 @@ Rispondi esclusivamente nel seguente formato JSON:
   "analysis": "Testo dettagliato del confronto, evidenziando gli errori e le differenze tra reale e simulato..."
 }`;
 
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      }
+    const response = await LLMProviderService.getInstance().generateContent(prompt, {
+      responseJson: true,
+      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
     });
     
-    let result = JSON.parse(response.text || '{}');
+    if (!response.success || !response.text) {
+      throw new Error(response.error || "Errore nella generazione con LLM");
+    }
+    
+    let result = JSON.parse(response.text);
     res.json(result);
   } catch (error: any) {
     const message = error.message || String(error);

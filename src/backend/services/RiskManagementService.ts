@@ -39,7 +39,49 @@ export class RiskManagementService {
     const roundedProfit = Math.round(unrealizedProfit * 100) / 100;
     const roundedValue = Math.round(currentValue * 100) / 100;
 
-    // --- 1. RIGIDE REGOLE DI GESTIONE DEL RISCHIO ---
+    // --- 1. CONFIGURAZIONI AGGIUNTIVE DI GESTIONE PERSONALIZZATA DELLA POSIZIONE ---
+
+    // Stop Loss (dalla strategia della singola posizione)
+    if (config.defaultSL !== undefined && config.defaultSL !== 0) {
+      const slLimit = config.defaultSL < 0 ? config.defaultSL : -config.defaultSL;
+      if (unrealizedProfit <= slLimit) {
+        return { 
+          action: 'CLOSE', 
+          reason: `Stop Loss Raggiunto ($${unrealizedProfit.toFixed(2)} <= $${slLimit.toFixed(2)})` 
+        };
+      }
+    }
+
+    // Take Profit (dalla strategia della singola posizione)
+    if (config.defaultTP !== undefined && config.defaultTP !== 0) {
+      if (unrealizedProfit >= config.defaultTP) {
+        return { 
+          action: 'CLOSE', 
+          reason: `Take Profit Raggiunto ($${unrealizedProfit.toFixed(2)} >= $${config.defaultTP.toFixed(2)})` 
+        };
+      }
+    }
+
+    // Trailing Stop Loss (dalla strategia della singola posizione)
+    if (config.trailingStop !== undefined && config.trailingStop > 0 && highestPrice && highestPrice > 0) {
+      const tsPercent = config.trailingStop;
+      const trailingStopPrice = highestPrice * (1 - tsPercent / 100);
+      if (currentPrice <= trailingStopPrice && currentPrice < highestPrice) {
+        return {
+          action: 'CLOSE',
+          reason: `Trailing Stop Loss di ${tsPercent}% Raggiunto (Picco massimo: $${highestPrice.toFixed(2)}, Prezzo Limite: $${trailingStopPrice.toFixed(2)}, Prezzo Attuale: $${currentPrice.toFixed(2)})`
+        };
+      }
+    }
+
+    // Se la posizione ha TP/SL specifici (che ora hanno tutte grazie alla strategia), 
+    // ignoriamo le rigide regole globali che andrebbero a chiudere la posizione prematuramente,
+    // garantendo che i limiti della singola posizione vengano rispettati.
+    if (config.defaultTP !== undefined || config.defaultSL !== undefined) {
+      return null;
+    }
+
+    // --- 2. RIGIDE REGOLE DI GESTIONE DEL RISCHIO (Fallback) ---
 
     // A. Regola y = 1: Chiusura a profitti storici pari a 2Y fino a un massimo di 3€
     if (Y === 1) {
@@ -69,41 +111,6 @@ export class RiskManagementService {
         return {
           action: 'CLOSE',
           reason: `Break-even violato: Perdita di ${roundedProfit}€ su posizione di valore >= 2€`
-        };
-      }
-    }
-
-    // --- 2. CONFIGURAZIONI AGGIUNTIVE DI GESTIONE PERSONALIZZATA (UTENTE) ---
-
-    // Stop Loss Personalizzato
-    if (config.defaultSL !== undefined && config.defaultSL !== 0) {
-      const slLimit = config.defaultSL < 0 ? config.defaultSL : -config.defaultSL;
-      if (unrealizedProfit <= slLimit) {
-        return { 
-          action: 'CLOSE', 
-          reason: `Stop Loss Personalizzato Raggiunto ($${unrealizedProfit.toFixed(2)} <= $${slLimit.toFixed(2)})` 
-        };
-      }
-    }
-
-    // Take Profit Personalizzato
-    if (config.defaultTP !== undefined && config.defaultTP !== 0) {
-      if (unrealizedProfit >= config.defaultTP) {
-        return { 
-          action: 'CLOSE', 
-          reason: `Take Profit Personalizzato Raggiunto ($${unrealizedProfit.toFixed(2)} >= $${config.defaultTP.toFixed(2)})` 
-        };
-      }
-    }
-
-    // Trailing Stop Loss Personalizzato
-    if (config.trailingStop !== undefined && config.trailingStop > 0 && highestPrice && highestPrice > 0) {
-      const tsPercent = config.trailingStop;
-      const trailingStopPrice = highestPrice * (1 - tsPercent / 100);
-      if (currentPrice <= trailingStopPrice && currentPrice < highestPrice) {
-        return {
-          action: 'CLOSE',
-          reason: `Trailing Stop Loss di ${tsPercent}% Raggiunto (Picco massimo: $${highestPrice.toFixed(2)}, Prezzo Limite: $${trailingStopPrice.toFixed(2)}, Prezzo Attuale: $${currentPrice.toFixed(2)})`
         };
       }
     }
