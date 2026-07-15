@@ -62,6 +62,32 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 
 let db: any = null;
+try {
+  let projectId = 'project-88b687bc-f709-4722-bc0';
+  let databaseId = 'ai-studio-remixuntitled-28355229-654c-4c49-94c7-18d05071ecc6';
+
+  if (fs.existsSync('firebase-applet-config.json')) {
+    const config = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+    if (config.projectId) projectId = config.projectId;
+    if (config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
+  }
+
+  const firebaseApp = initFirebaseApp({
+    projectId: projectId,
+  });
+  db = getFirestore(firebaseApp, databaseId);
+  console.log(`[Firebase Admin] Inizializzato con successo. Database: ${databaseId}`);
+} catch (error: any) {
+  console.warn('[Firebase Admin Error] Errore di inizializzazione:', error.message);
+  try {
+    const firebaseApp = initFirebaseApp();
+    db = getFirestore(firebaseApp);
+    console.log('[Firebase Admin] Inizializzato con configurazione di default.');
+  } catch (err2: any) {
+    console.error('[Firebase Admin Critical Error] Impossibile inizializzare Firebase Admin:', err2.message);
+  }
+}
+
 async function getBrokerCredentials(broker: string, env: string) {
   let dbCreds = null;
   if (db) {
@@ -102,7 +128,14 @@ function saveLocalCredentialsFallback(creds: any) {
 let aiClient: any = null;
 function getAi() {
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    aiClient = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
   }
   return aiClient;
 }
@@ -1100,7 +1133,7 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       : `Analizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo"}\n}`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
 
@@ -1108,9 +1141,9 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
     try {
        const cleanedText = (response.text || '{}').replace(/```json|```/g, '').trim();
        parsed = JSON.parse(cleanedText);
-    } catch(e) {
+     } catch(e) {
        console.error("Failed to parse Gemini bulk JSON output:", response.text);
-    }
+     }
 
     for (const sym of missingSymbols) {
       const entry = parsed[sym] || {};
@@ -1160,7 +1193,15 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
   return results[symbol] || { score: 0, reasoning: 'Errore recupero sentiment' };
 }
 
+let trendingStocksCache: { date: string; symbols: string[] } | null = null;
+
 async function getDynamicTrendingStocks(): Promise<string[]> {
+  const today = new Date().toISOString().split('T')[0];
+  if (trendingStocksCache && trendingStocksCache.date === today) {
+    console.log(`[Dynamic Discovery] Restituisco i ticker dalla cache giornaliera: ${trendingStocksCache.symbols.join(', ')}`);
+    return trendingStocksCache.symbols;
+  }
+
   if (checkQuotaExceeded()) {
     console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback immediatamente.');
     return ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'AMD', 'GOOGL', 'AMZN'];
@@ -1171,7 +1212,7 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
 ["NVDA", "AAPL", "MSFT", "TSLA", "META"]`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
 
@@ -1179,7 +1220,11 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
     const parsed = JSON.parse(cleanedText);
     if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
       const symbols = parsed.map(s => s.trim().toUpperCase());
-      return symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
+      const filteredSymbols = symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
+      if (filteredSymbols.length > 0) {
+        trendingStocksCache = { date: today, symbols: filteredSymbols };
+        return filteredSymbols;
+      }
     }
   } catch (error: any) {
     const message = error.message || String(error);
@@ -1509,7 +1554,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete nella chiusura di ${symbol}: ${err.message}`);
         }
       } else {
-        addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment positivo: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche basate sul sentiment.`);
+        if (isSentimentError) {
+          addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Analisi sentiment temporaneamente non disponibile: ${sentimentReasoning}). Il bot continua a monitorare l'asset tramite i restanti parametri di rischio (SL/TP/Trailing).`);
+        } else {
+          addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment favorevole: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche.`);
+        }
       }
     }
 
@@ -1766,7 +1815,7 @@ ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')
 
       try {
         const response = await getAi().models.generateContent({
-          model: "gemini-3.1-flash-lite",
+          model: "gemini-3.5-flash",
           contents: prompt,
         });
         reportText = response.text || 'Nessun report generato.';
@@ -3048,7 +3097,7 @@ Rispondi esclusivamente nel seguente formato JSON:
 }`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -3101,7 +3150,7 @@ Rispondi esclusivamente nel seguente formato JSON:
 }`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
