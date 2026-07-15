@@ -13,6 +13,7 @@ export interface RiskConfig {
   defaultSL?: number; // Stop Loss personalizzato (assoluto o percentuale)
   defaultTP?: number; // Take Profit personalizzato
   trailingStop?: number; // Trailing Stop personalizzato (percentuale, es: 1 = 1%)
+  isAlpaca?: boolean; // Se vero, esclude le regole micro-forex (regola 1, 2, 3) pensate per XTB
 }
 
 /**
@@ -71,6 +72,11 @@ export class RiskManagementService {
     }
 
     // --- 2. REGOLE STORICHE MANDATORIE DELL'UTENTE ---
+
+    // Se stiamo operando su Alpaca, non applichiamo le regole micro-forex pensate in euro per XTB (regole 1, 2, 3)
+    if (config.isAlpaca) {
+      return null;
+    }
 
     // VINCOLO: L'Oro (GLD) è esplicitamente abilitato. Non viene mai scartato o bloccato a priori.
 

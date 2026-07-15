@@ -1465,7 +1465,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       let shouldClose = false;
       let closeReason = '';
 
-      if (sentimentScore <= 0) {
+      // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment (manterremo basato su SL/TP/Trailing)
+      const isSentimentError = sentimentReasoning.includes('Errore') || 
+                               sentimentReasoning.includes('Quota') || 
+                               sentimentReasoning.includes('Nessun sentiment');
+
+      if (!isSentimentError && sentimentScore <= 0) {
         shouldClose = true;
         closeReason = `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
       } else if (profitPct >= targetTpPct) {
@@ -3562,7 +3567,8 @@ async function executeAlpacaRealtimeCheck() {
         y: botStatus.y || 1,
         defaultSL: slDollar,
         defaultTP: tpDollar,
-        trailingStop: trailingStopPercent
+        trailingStop: trailingStopPercent,
+        isAlpaca: true
       };
 
       // Recuperiamo/Aggiorniamo il massimo prezzo raggiunto (High Water Mark) per il trailing stop
