@@ -3253,7 +3253,7 @@ export default function App() {
                   />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Il report includerà tutti i log operativi e decisionali (Alpaca e XTB) nel periodo selezionato.
+                  Il report includerà tutti i log operativi e decisionali (Alpaca) nel periodo selezionato.
                 </p>
               </div>
 

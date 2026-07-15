@@ -54,7 +54,6 @@ process.on('uncaughtException', (err: any) => {
   console.error('Uncaught Exception:', err);
 });
 import fs from 'fs';
-import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
 import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
@@ -62,29 +61,73 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 
 let db: any = null;
-try {
-  let projectId = 'project-88b687bc-f709-4722-bc0';
-  let databaseId = 'ai-studio-remixuntitled-28355229-654c-4c49-94c7-18d05071ecc6';
+let firebaseApp: any = null;
 
-  if (fs.existsSync('firebase-applet-config.json')) {
-    const config = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
-    if (config.projectId) projectId = config.projectId;
-    if (config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
-  }
-
-  const firebaseApp = initFirebaseApp({
-    projectId: projectId,
-  });
-  db = getFirestore(firebaseApp, databaseId);
-  console.log(`[Firebase Admin] Inizializzato con successo. Database: ${databaseId}`);
-} catch (error: any) {
-  console.warn('[Firebase Admin Error] Errore di inizializzazione:', error.message);
+async function initializeAndTestFirestore() {
   try {
-    const firebaseApp = initFirebaseApp();
-    db = getFirestore(firebaseApp);
-    console.log('[Firebase Admin] Inizializzato con configurazione di default.');
-  } catch (err2: any) {
-    console.error('[Firebase Admin Critical Error] Impossibile inizializzare Firebase Admin:', err2.message);
+    let projectId = 'project-88b687bc-f709-4722-bc0';
+    let databaseId = 'ai-studio-remixuntitled-28355229-654c-4c49-94c7-18d05071ecc6';
+
+    if (fs.existsSync('firebase-applet-config.json')) {
+      const config = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+      if (config.projectId) projectId = config.projectId;
+      if (config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
+    }
+
+    const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+
+    if (serviceAccountKey) {
+      const serviceAccount = JSON.parse(serviceAccountKey);
+      if (serviceAccount.project_id !== projectId) {
+        console.log(`[Firebase Admin] Il progetto del Service Account (${serviceAccount.project_id}) differisce da quello in configurazione locale (${projectId}).`);
+        databaseId = '(default)';
+        console.log(`[Firebase Admin] Reimpostato databaseId a: ${databaseId}`);
+      }
+      projectId = serviceAccount.project_id;
+      firebaseApp = initFirebaseApp({
+        credential: cert(serviceAccount),
+        projectId: projectId,
+      });
+      console.log(`[Firebase Admin] Inizializzato con Service Account Key. Progetto: ${projectId}`);
+    } else {
+      firebaseApp = initFirebaseApp({
+        projectId: projectId,
+      });
+      console.log(`[Firebase Admin] Inizializzato con applicationDefault. Progetto: ${projectId}`);
+    }
+
+    db = getFirestore(firebaseApp, databaseId);
+    console.log(`[Firebase Admin] Database Firestore impostato: ${databaseId}`);
+
+    // Testiamo la connessione con un timeout di 1.5s per evitare blocchi
+    try {
+      await Promise.race([
+        db.collection('_test_conn_').limit(1).get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 1500))
+      ]);
+      console.log(`[Firebase Admin] Test di connessione riuscito con successo sul database '${databaseId}'.`);
+    } catch (testErr: any) {
+      console.warn(`[Firebase Admin Warning] Errore o timeout nel test di connessione sul database '${databaseId}':`, testErr.message);
+      if (testErr.message && (testErr.message.includes('NOT_FOUND') || testErr.message.includes('5') || testErr.message.includes('TIMEOUT'))) {
+        console.warn(`[Firebase Admin Warning] Il database '${databaseId}' non esiste o non è raggiungibile. Ripiego sul database di default '(default)'.`);
+        db = getFirestore(firebaseApp, '(default)');
+        try {
+          await db.collection('_test_conn_').limit(1).get();
+          console.log(`[Firebase Admin] Test di connessione riuscito con successo sul database di default '(default)'.`);
+        } catch (defaultErr: any) {
+          console.error(`[Firebase Admin Error] Anche il database '(default)' ha fallito:`, defaultErr.message);
+        }
+      }
+    }
+  } catch (error: any) {
+    console.warn('[Firebase Admin Error] Errore di inizializzazione:', error.message);
+    try {
+      firebaseApp = initFirebaseApp();
+      db = getFirestore(firebaseApp);
+      console.log('[Firebase Admin] Inizializzato con configurazione di default.');
+    } catch (err2: any) {
+      console.error('[Firebase Admin Critical Error] Impossibile inizializzare Firebase Admin:', err2.message);
+    }
   }
 }
 
@@ -549,23 +592,6 @@ const STRATEGY_PARAMS = {
 
 let tradeLogs: string[] = [];
 
-// --- XTB Auto-Trading State and Variables ---
-let xtbBotStatus = {
-  active: false,
-  lastCheck: null as string | null,
-  monitoredInstruments: ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'EUR_GBP', 'USD_CHF', 'USD_CAD', 'NZD_USD', 'EUR_JPY', 'GBP_JPY', 'EUR_CHF'],
-  logs: [] as string[],
-  logicLogs: [] as { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }[],
-  balance: 50.00,
-  dailyPnL: [] as { date: string; realized: number; unrealized: number }[],
-  defaultTP: 0.10,
-  defaultSL: -1.00,
-  trailingStop: 0,
-  timeframe: 15,
-  riskPercentage: 2
-};
-let xtbDemoPositions: Record<string, { units: number; avgPrice: number; side: 'buy' | 'sell'; trailingStopBase?: number }> = {};
-
 // --- Alpaca Bridge Endpoints for TradingModule ---
 app.get("/api/trading/alpaca-account", async (req, res) => {
   const mode = botStatus.tradingMode;
@@ -691,11 +717,109 @@ app.post("/api/trading/position-strategy", async (req, res) => {
 
 app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
   const { instrument } = req.params;
-  const { score, reasoning } = await getMarketSentiment(instrument);
+  const mode = botStatus.tradingMode || 'paper';
+  const { isConfigured, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
+
+  let currentPrice = 100.0;
+  if (isConfigured) {
+    currentPrice = await getLatestPrice(instrument, apiKey, secretKey);
+  }
+
+  // Recupera posizione
+  let posData: any = null;
+  let unrealizedPL = 0;
+  let currentValue = 0;
+  if (isConfigured) {
+    try {
+      const posResponse = await fetch(`${baseUrl}/positions/${instrument}`, {
+        headers: {
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
+        }
+      });
+      if (posResponse.ok) {
+        posData = await posResponse.json();
+        currentValue = parseFloat(posData.market_value || '0');
+        unrealizedPL = parseFloat(posData.unrealized_pl || '0');
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Recupera sentiment
+  let sentimentScore: number | null = null;
+  let sentimentReasoning = '';
+  let isSentimentError = false;
+  try {
+    const sentiment = await getMarketSentiment(instrument);
+    sentimentScore = sentiment.score;
+    sentimentReasoning = sentiment.reasoning;
+  } catch (err: any) {
+    isSentimentError = true;
+    sentimentReasoning = err.message || 'Errore di rete nell\'analisi del sentiment';
+  }
+
+  // Calcola stop loss
+  const activeStrategy = (positionStrategies[mode] && positionStrategies[mode][instrument]) || getDefaultStrategy(instrument);
+  const params = STRATEGY_PARAMS[activeStrategy];
+  let stopLossThreshold = -0.50;
+  if (posData) {
+    const costBasis = currentValue - unrealizedPL;
+    stopLossThreshold = -Math.abs(costBasis * (params.slPct / 100));
+  }
+
+  // Conta posizioni correnti
+  let currentPositionsCount = 0;
+  if (isConfigured) {
+    try {
+      const positionsResponse = await fetch(`${baseUrl}/positions`, {
+        headers: {
+          'APCA-API-KEY-ID': apiKey,
+          'APCA-API-SECRET-KEY': secretKey
+        }
+      });
+      if (positionsResponse.ok) {
+        const positions = await positionsResponse.json();
+        currentPositionsCount = Array.isArray(positions) ? positions.length : 0;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Esegui la decisione tramite il motore ultra-conservativo
+  const signalService = GeminiSignalService.getInstance();
+  const decisionResult = signalService.evaluateTradingDecision({
+    ticker: instrument,
+    currentPrice,
+    unrealizedPL,
+    currentValue,
+    stopLossThreshold,
+    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+    currentPositionsCount,
+    sentimentScore,
+    sentimentReasoning,
+    isSentimentError
+  });
+
+  // Mappa il sentiment score per la risposta JSON richiesta (da 0.01 a 1.00 o "ERROR")
+  let displayScore: number | 'ERROR' = 'ERROR';
+  if (!isSentimentError && sentimentScore !== null) {
+    displayScore = Math.max(0.01, Math.min(1.00, 0.5 * (sentimentScore + 1) * 0.99 + 0.01));
+    displayScore = Math.round(displayScore * 100) / 100;
+  }
+
   res.json({ 
-    analysis: `### Analisi Alpaca per ${instrument}\n\n**Sentiment Score:** ${score}\n\n${reasoning}`,
+    stato: decisionResult.stato,
+    azione: decisionResult.azione,
+    ticker: decisionResult.ticker,
+    sentiment_score: displayScore,
+    stop_loss_triggered: decisionResult.stop_loss_triggered,
+    motivazione: decisionResult.motivazione,
+    analysis: `### Analisi Alpaca per ${instrument}\n\n**Stato Bot:** ${decisionResult.stato}\n**Azione Consigliata:** ${decisionResult.azione}\n**Sentiment Score (Standard):** ${sentimentScore !== null ? sentimentScore.toFixed(2) : 'ERROR'}\n\n**Motivazione:** ${decisionResult.motivazione}\n\n*Ragionamento IA:* ${sentimentReasoning}`,
     candles: [],
-    isDemo: botStatus.tradingMode === 'paper'
+    isDemo: mode === 'paper'
   });
 });
 
@@ -706,70 +830,6 @@ app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
 
 
 
-
-
-function addXtbLog(message: string) {
-  const timestamp = new Date().toISOString();
-  const logMsg = `[${timestamp}] ${message}`;
-  xtbBotStatus.logs.unshift(logMsg);
-  if (xtbBotStatus.logs.length > 1000) {
-    xtbBotStatus.logs = xtbBotStatus.logs.slice(0, 1000);
-  }
-  
-  if (db) {
-    db.collection('xtb_operational_logs').add({
-      message: message,
-      timestamp: timestamp
-    }).catch((err: any) => console.error('[Firebase] Error saving XTB operational log:', err));
-  }
-
-  console.log(logMsg);
-  saveXtbBotStatus().catch(err => console.error('[Firebase Error] Error saving XTB logs:', err));
-}
-
-function addXtbLogicLog(log: { timestamp: string; instrument: string; action: string; reasoning: string; price?: number }) {
-  xtbBotStatus.logicLogs.unshift(log);
-  if (xtbBotStatus.logicLogs.length > 100) {
-    xtbBotStatus.logicLogs = xtbBotStatus.logicLogs.slice(0, 100);
-  }
-  saveXtbLogicLogs().catch(err => console.error('[Firebase Error] Error saving XTB logic logs:', err));
-  
-  if (db) {
-    db.collection('xtb_logic_logs').add(log)
-      .catch((err: any) => console.error('[Firebase] Error saving XTB logic log to collection:', err));
-  }
-}
-
-async function saveXtbBotStatus() {
-  if (!db) return;
-  try {
-    await db.collection('settings').doc('xtb_bot').set({
-      active: xtbBotStatus.active,
-      lastCheck: xtbBotStatus.lastCheck || null,
-      monitoredInstruments: xtbBotStatus.monitoredInstruments,
-      logs: xtbBotStatus.logs || [],
-      demoPositions: xtbDemoPositions,
-      balance: xtbBotStatus.balance,
-      dailyPnL: xtbBotStatus.dailyPnL || [],
-      defaultTP: xtbBotStatus.defaultTP,
-      defaultSL: xtbBotStatus.defaultSL,
-      riskPercentage: xtbBotStatus.riskPercentage
-    }, { merge: true });
-  } catch (err: any) {
-    console.error('[Firebase] Error saving XTB bot status:', err);
-  }
-}
-
-async function saveXtbLogicLogs() {
-  if (!db) return;
-  try {
-    await db.collection('settings').doc('xtb_logic_logs').set({
-      logicLogs: xtbBotStatus.logicLogs || []
-    });
-  } catch (err: any) {
-    console.error('[Firebase] Error saving XTB logic logs:', err);
-  }
-}
 
 
 const botData = {
@@ -892,75 +952,6 @@ async function loadStateFromFirestore() {
         };
       }
       console.log('[Firebase] Loaded botStatus successfully.');
-    }
-
-    // Caricamento dello stato di XTB Auto-Trading da Firestore
-    try {
-      const xtbDoc = await db.collection('settings').doc('xtb_bot').get();
-      if (xtbDoc.exists) {
-        const xtbData = xtbDoc.data();
-        xtbBotStatus.active = xtbData.active ?? xtbBotStatus.active;
-        xtbBotStatus.lastCheck = xtbData.lastCheck ?? xtbBotStatus.lastCheck;
-        xtbBotStatus.monitoredInstruments = xtbData.monitoredInstruments ?? xtbBotStatus.monitoredInstruments;
-        xtbDemoPositions = xtbData.demoPositions ?? xtbDemoPositions;
-        xtbBotStatus.balance = xtbData.balance ?? xtbBotStatus.balance;
-        xtbBotStatus.dailyPnL = xtbData.dailyPnL ?? xtbBotStatus.dailyPnL;
-        xtbBotStatus.defaultTP = xtbData.defaultTP ?? xtbBotStatus.defaultTP;
-        xtbBotStatus.defaultSL = xtbData.defaultSL ?? xtbBotStatus.defaultSL;
-        xtbBotStatus.riskPercentage = xtbData.riskPercentage ?? xtbBotStatus.riskPercentage;
-
-        // Load XTB logs from Firestore
-        try {
-          const logsSnap = await db.collection('xtb_operational_logs')
-            .orderBy('timestamp', 'desc')
-            .limit(1000)
-            .get();
-            
-          if (!logsSnap.empty) {
-            const fetchedLogs: string[] = [];
-            logsSnap.forEach((doc: any) => {
-              const data = doc.data();
-              fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
-            });
-            xtbBotStatus.logs = fetchedLogs;
-          } else {
-            xtbBotStatus.logs = xtbData.logs ?? xtbBotStatus.logs;
-          }
-        } catch (err) {
-          console.error('[Firebase] Error loading XTB operational logs:', err);
-          xtbBotStatus.logs = xtbData.logs ?? xtbBotStatus.logs;
-        }
-
-        console.log('[Firebase] Loaded XTB bot status, balance, dailyPnL and demo positions successfully.');
-      }
-
-      try {
-        const xtbLogicLogsSnap = await db.collection('xtb_logic_logs')
-          .orderBy('timestamp', 'desc')
-          .limit(100)
-          .get();
-        
-        if (!xtbLogicLogsSnap.empty) {
-          const loadedXtbLogicLogs: any[] = [];
-          xtbLogicLogsSnap.forEach((doc: any) => {
-            loadedXtbLogicLogs.push(doc.data());
-          });
-          xtbBotStatus.logicLogs = loadedXtbLogicLogs;
-          console.log(`[Firebase] Loaded ${loadedXtbLogicLogs.length} XTB logic logs successfully.`);
-        } else {
-          // Fallback al doc per retrocompatibilità
-          const xtbLogicLogsDoc = await db.collection('settings').doc('xtb_logic_logs').get();
-          if (xtbLogicLogsDoc.exists) {
-            const xtbLogicLogsData = xtbLogicLogsDoc.data();
-            xtbBotStatus.logicLogs = xtbLogicLogsData.logicLogs ?? xtbBotStatus.logicLogs;
-            console.log('[Firebase] Loaded XTB logic logs from settings successfully.');
-          }
-        }
-      } catch (err: any) {
-        console.error('[Firebase] Error loading XTB logic logs from Firestore:', err);
-      }
-    } catch (err: any) {
-      console.error('[Firebase] Error loading XTB state from Firestore:', err);
     }
 
     for (const mode of ['paper', 'live'] as const) {
@@ -1099,15 +1090,42 @@ function checkQuotaExceeded(): boolean {
 // Bulk market sentiment to execute multiple analyses in a single API request and avoid rate limit issues
 async function getBulkMarketSentiment(symbols: string[], context?: string): Promise<Record<string, {score: number, reasoning: string}>> {
   const today = new Date().toISOString().split('T')[0];
+  const hour = new Date().getUTCHours();
   const results: Record<string, {score: number, reasoning: string}> = {};
   
   const missingSymbols: string[] = [];
   for (const sym of symbols) {
-    const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}`;
+    const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}:${context ? '' : hour}`;
     if (sentimentCache.has(cacheKey)) {
       results[sym] = sentimentCache.get(cacheKey)!;
     } else {
       missingSymbols.push(sym);
+    }
+  }
+
+  // Check Firestore for missing symbols before calling Gemini
+  if (missingSymbols.length > 0 && db) {
+    try {
+      const remainingSymbols: string[] = [];
+      for (const sym of missingSymbols) {
+        const firestoreKey = `${sym}_${context || 'default'}_${context ? '' : today}_${context ? '' : hour}`.replace(/[^a-zA-Z0-9_]/g, '_');
+        const cacheDoc = await db.collection('sentiment_cache').doc(firestoreKey).get();
+        if (cacheDoc.exists) {
+          const data = cacheDoc.data();
+          const result = { score: data.score, reasoning: data.reasoning };
+          const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}:${context ? '' : hour}`;
+          sentimentCache.set(cacheKey, result);
+          results[sym] = result;
+        } else {
+          remainingSymbols.push(sym);
+        }
+      }
+      
+      // Update missingSymbols with only those not found in Firestore
+      missingSymbols.length = 0;
+      missingSymbols.push(...remainingSymbols);
+    } catch (e) {
+      console.warn('[Firestore Cache] Error checking sentiment cache:', e);
     }
   }
 
@@ -1133,7 +1151,7 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       : `Analizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo"}\n}`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
     });
 
@@ -1152,12 +1170,16 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       const resultReasoning = entry.reasoning || 'Nessuna spiegazione dettagliata disponibile';
       
       const result = { score: resultScore, reasoning: resultReasoning };
-      const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}`;
+      const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}:${context ? '' : hour}`;
       sentimentCache.set(cacheKey, result);
       results[sym] = result;
-      // Sync to Firestore for real-time frontend monitoring
+
+      // Sync to Firestore for real-time frontend monitoring AND long-term cache
       if (db) {
         try {
+          const firestoreKey = `${sym}_${context || 'default'}_${context ? '' : today}_${context ? '' : hour}`.replace(/[^a-zA-Z0-9_]/g, '_');
+          
+          // Current signal
           db.collection('gemini_signals').doc(sym).set({
             asset: sym,
             score: resultScore,
@@ -1166,6 +1188,14 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
             reasoning: resultReasoning,
             timestamp: new Date().toISOString()
           }, { merge: true }).catch(() => {});
+
+          // Hourly cache
+          db.collection('sentiment_cache').doc(firestoreKey).set({
+            score: resultScore,
+            reasoning: resultReasoning,
+            timestamp: new Date().toISOString()
+          }).catch(() => {});
+
         } catch(e) {}
       }
     }
@@ -1202,6 +1232,23 @@ async function getDynamicTrendingStocks(): Promise<string[]> {
     return trendingStocksCache.symbols;
   }
 
+  // Check Firestore for today's trending stocks
+  if (db) {
+    try {
+      const cacheDoc = await db.collection('trending_stocks').doc(`daily_${today}`).get();
+      if (cacheDoc.exists) {
+        const data = cacheDoc.data();
+        if (data.symbols && Array.isArray(data.symbols)) {
+          console.log(`[Dynamic Discovery] Restituisco i ticker dalla cache Firestore: ${data.symbols.join(', ')}`);
+          trendingStocksCache = { date: today, symbols: data.symbols };
+          return data.symbols;
+        }
+      }
+    } catch (e) {
+      console.warn('[Firestore Cache] Error checking trending stocks cache:', e);
+    }
+  }
+
   if (checkQuotaExceeded()) {
     console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback immediatamente.');
     return ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'AMD', 'GOOGL', 'AMZN'];
@@ -1212,7 +1259,7 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
 ["NVDA", "AAPL", "MSFT", "TSLA", "META"]`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
     });
 
@@ -1223,6 +1270,15 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
       const filteredSymbols = symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
       if (filteredSymbols.length > 0) {
         trendingStocksCache = { date: today, symbols: filteredSymbols };
+        
+        // Save to Firestore
+        if (db) {
+          db.collection('trending_stocks').doc(`daily_${today}`).set({
+            symbols: filteredSymbols,
+            timestamp: new Date().toISOString()
+          }).catch(() => {});
+        }
+
         return filteredSymbols;
       }
     }
@@ -1694,10 +1750,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 }
 
 let lastAlpacaRunTime = 0;
-let lastXtbRunTime = 0;
 
 async function executeTradingCycle(force: boolean = false) {
-  const anyActive = botStatus.active || xtbBotStatus.active;
+  const anyActive = botStatus.active;
   if (!anyActive && !force) {
     addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
     return;
@@ -1746,24 +1801,9 @@ async function executeTradingCycle(force: boolean = false) {
       addLog('system', `[Alpaca] Stato: In attesa della prossima finestra di calcolo. Prossima valutazione automatica degli acquisti tra ${minLeft} min e ${secLeft} sec. ${marketStateMsg} Ultimo ciclo eseguito alle: ${lastCheckTimeStr} (Timeframe impostato: ${botStatus.timeframe || 15} min).`);
     }
   }
-
-  if (xtbBotStatus.active || force) {
-    const xtbTimeframeMs = (xtbBotStatus.timeframe || 15) * 60 * 1000;
-    if (force || lastXtbRunTime === 0 || (now - lastXtbRunTime >= xtbTimeframeMs)) {
-      lastXtbRunTime = now;
-      await executeXtbTradingCycle(force);
-    } else {
-      const nextRunTime = lastXtbRunTime + xtbTimeframeMs;
-      const msLeft = nextRunTime - now;
-      const minLeft = Math.floor(msLeft / 60000);
-      const secLeft = Math.floor((msLeft % 60000) / 1000);
-      const lastCheckTimeStr = new Date(lastXtbRunTime).toLocaleTimeString('it-IT');
-      addXtbLog(`[XTB] Stato: In attesa del prossimo ciclo. Prossimo ricalcolo automatico tra ${minLeft} min e ${secLeft} sec. Ultimo ciclo eseguito alle: ${lastCheckTimeStr} (Timeframe impostato: ${xtbBotStatus.timeframe || 15} min).`);
-    }
-  }
 }
 
-async function generateAndSendDailyReport() {
+async function generateDailyReport() {
   const todayStr = new Date().toISOString().split('T')[0];
   try {
     addLog('system', '[Report Giornaliero] Inizio generazione report...');
@@ -1789,7 +1829,7 @@ Il sistema è operativo. Le API dell'IA sono momentaneamente sature (quota super
       // Limit logs per non sforare context window
       const recentLogs = botData.paper.logs.slice(0, 50).join('\n') + '\n\n' + botData.live.logs.slice(0, 50).join('\n');
       
-      const prompt = `Sei l'analista esperto del bot di trading. La giornata di mercato si è conclusa (o sta per concludersi).
+      const prompt = `Sei l'analista esperto del bot di trading. La giornata di mercato si è conclusa (o sta per conclusersi).
 Genera un report motivazionale in cui descrivi in dettaglio le motivazioni delle scelte fatte dal bot durante le ultime sessioni di trading.
 I tuoi obiettivi:
 1. Analizzare i log e l'andamento recente del portafoglio (se ci sono state perdite, perché lo stop loss è scattato, etc.).
@@ -1815,7 +1855,7 @@ ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')
 
       try {
         const response = await getAi().models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-3.1-flash-lite",
           contents: prompt,
         });
         reportText = response.text || 'Nessun report generato.';
@@ -1843,41 +1883,7 @@ Il sistema è operativo. Le API dell'IA sono momentaneamente sature (quota super
     botStatus.latestDailyReport = reportText;
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on report update:', err));
     
-    // Invia email
-    let transporter;
-    
-    if (process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_HOST) {
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '465'),
-        secure: true,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      });
-    } else {
-      addLog('system', '[Report Giornaliero] Credenziali SMTP assenti. Uso Ethereal per test (non arriverà alla tua mail reale).');
-      const testAccount = await nodemailer.createTestAccount();
-      transporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-    }
-
-    const info = await transporter.sendMail({
-      from: '"AI Trading Bot" <bot@trading-ai.com>',
-      to: 'palmasmnl@gmail.com',
-      subject: `Report Trading Giornaliero - ${todayStr}`,
-      text: reportText,
-    });
-
-    addLog('system', `[Report Giornaliero] Email inviata: ${nodemailer.getTestMessageUrl(info) || 'Successo'}`);
+    addLog('system', `[Report Giornaliero] Generazione completata con successo.`);
   } catch (error: any) {
     addLog('system', `[Report Giornaliero Errore] ${error.message}`);
     console.error(error);
@@ -1888,7 +1894,7 @@ Il sistema è operativo. Le API dell'IA sono momentaneamente sature (quota super
 app.all(['/run-daily-report', '/api/trigger-daily-report'], async (req, res) => {
   addLog('system', '[Trigger Report] Ricevuta richiesta di generazione report da Cloud Scheduler o manuale...');
   try {
-    await generateAndSendDailyReport();
+    await generateDailyReport();
     addLog('system', '[Trigger Report] Generazione report completata. Rispondo OK.');
     res.status(200).send('OK');
   } catch (error: any) {
@@ -1937,11 +1943,9 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
     
     const paperLogs = botData.paper.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
     const liveLogs = botData.live.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
-    const xtbLogsStr = xtbBotStatus.logs.slice(0, 40).join('\n') || 'Nessun log XTB registrato.';
     
     let paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
     let liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
-    let xtbLogicLogsStr = JSON.stringify(xtbBotStatus.logicLogs?.slice(0, 20) || []);
     
     if (db) {
       try {
@@ -1964,16 +1968,6 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
         });
         if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
         if (liveLogsArr.length > 0) liveLogicLogs = JSON.stringify(liveLogsArr);
-
-        // XTB logic logs completi per oggi
-        const xtbLogsSnap = await db.collection('xtb_logic_logs')
-          .where('timestamp', '>=', startOfDay)
-          .where('timestamp', '<=', endOfDay)
-          .orderBy('timestamp', 'asc')
-          .get();
-        const xtbLogsArr: any[] = [];
-        xtbLogsSnap.forEach((doc: any) => xtbLogsArr.push(doc.data()));
-        if (xtbLogsArr.length > 0) xtbLogicLogsStr = JSON.stringify(xtbLogsArr);
       } catch (err) {
         console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero:', err);
       }
@@ -1989,7 +1983,6 @@ Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di tradi
 DATI DI OGGI (${todayStr}):
 - PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
 - PNL/Bilancio Reale (Live): ${JSON.stringify(todaysPnLLive)}
-- PNL/Bilancio XTB: ${JSON.stringify(xtbBotStatus.dailyPnL?.find(d => d.date === todayStr) || { balance: xtbBotStatus.balance })}
 - Regole personalizzate attualmente in vigore:
 ${currentRules}
 
@@ -1999,17 +1992,11 @@ ${paperLogicLogs}
 LOG LOGICA DECISIONALE (Azioni - Live):
 ${liveLogicLogs}
 
-LOG LOGICA DECISIONALE (Forex XTB):
-${xtbLogicLogsStr}
-
 ULTIMI LOG OPERATIVI (Azioni - Paper):
 ${paperLogs}
 
 ULTIMI LOG OPERATIVI (Azioni - Live):
 ${liveLogs}
-
-ULTIMI LOG OPERATIVI (Forex XTB):
-${xtbLogsStr}
 
 ISTRUZIONI DI ANALISI:
 1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mankate prese di profitto, o vendite affrettate).
@@ -2020,7 +2007,7 @@ ISTRUZIONI DI ANALISI:
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -2080,7 +2067,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 app.post('/api/generate-range-debrief', async (req, res) => {
   const { startDate, endDate, mode } = req.body;
   if (!startDate || !endDate || !mode) {
-    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live'|'xtb') richiesti." });
+    return res.status(400).json({ success: false, error: "Parametri startDate, endDate e mode ('paper'|'live') richiesti." });
   }
 
   addLog('system', `[Debriefing Periodico AI] Inizio generazione analisi per periodo da ${startDate} a ${endDate} (Conto: ${mode})...`);
@@ -2124,20 +2111,10 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
         querySnap.forEach((doc: any) => {
           rangeLogicLogs.push(doc.data());
         });
-      } else if (mode === 'xtb') {
-        const querySnap = await db.collection('xtb_logic_logs')
-          .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
-          .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
-          .orderBy('timestamp', 'asc')
-          .get();
-        
-        querySnap.forEach((doc: any) => {
-          rangeLogicLogs.push(doc.data());
-        });
-      }
+    }
     } else {
       // Fallback in-memory
-      const sourceLogs = mode === 'xtb' ? (xtbBotStatus.logicLogs || []) : (botData[mode as 'paper' | 'live']?.dailyLogicLogs || []);
+      const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];
       rangeLogicLogs = sourceLogs.filter(l => {
         return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
       });
@@ -2167,7 +2144,7 @@ ISTRUZIONI DI ANALISI:
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -2259,7 +2236,7 @@ app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
       console.error('[Firebase Error] Errore nel caricamento dello stato in trigger:', err);
     });
 
-    if (!botStatus.active && !xtbBotStatus.active) {
+    if (!botStatus.active) {
       addLog('system', '[Trigger Strategy] Ciclo di trading ignorato: nessun bot è attivo.');
       res.status(200).send('BOTS_INACTIVE');
       return;
@@ -2540,7 +2517,7 @@ Rispondi RIGIDAMENTE in formato JSON con la seguente struttura:
 
     const ai = getAi();
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -2798,8 +2775,6 @@ app.get('/api/report/download', async (req, res) => {
 
     let opLogs: any[] = [];
     let logicLogs: any[] = [];
-    let xtbOpLogs: any[] = [];
-    let xtbLogicLogs: any[] = [];
 
     if (db) {
       const fetchLogs = async (collection: string, timeField: string = 'timestamp') => {
@@ -2815,8 +2790,6 @@ app.get('/api/report/download', async (req, res) => {
 
       opLogs = await fetchLogs('operational_logs');
       logicLogs = await fetchLogs('logic_logs');
-      xtbOpLogs = await fetchLogs('xtb_operational_logs');
-      xtbLogicLogs = await fetchLogs('xtb_logic_logs');
     } else {
       // Fallback a dati in memoria se non c'è DB
       const filterByDate = (logTimestamp: string) => logTimestamp >= startTimestamp && logTimestamp <= endTimestampStr;
@@ -2836,12 +2809,6 @@ app.get('/api/report/download', async (req, res) => {
       const paperLogic = (botData.paper.dailyLogicLogs || []).map(l => ({...l, mode: 'paper'}));
       const liveLogic = (botData.live.dailyLogicLogs || []).map(l => ({...l, mode: 'live'}));
       logicLogs = [...paperLogic, ...liveLogic].filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-      const parsedXtbOp = (xtbBotStatus.logs || []).map(l => parseLogString(l, 'xtb'));
-      xtbOpLogs = parsedXtbOp.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-      const xtbLogic = (xtbBotStatus.logicLogs || []).map(l => ({...l, mode: 'xtb'}));
-      xtbLogicLogs = xtbLogic.filter(l => filterByDate(l.timestamp)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     }
 
     let reportText = `Report Trading dal ${startDateStr} al ${endDateStr}\n`;
@@ -2856,16 +2823,6 @@ app.get('/api/report/download', async (req, res) => {
     reportText += `\n--- LOG LOGICA ALPACA ---\n`;
     logicLogs.forEach(log => {
       reportText += `[${log.timestamp}] [${log.mode}] ${log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
-    });
-
-    reportText += `\n--- LOG OPERATIVI XTB ---\n`;
-    xtbOpLogs.forEach(log => {
-      reportText += `[${log.timestamp}] ${log.message}\n`;
-    });
-
-    reportText += `\n--- LOG LOGICA XTB ---\n`;
-    xtbLogicLogs.forEach(log => {
-      reportText += `[${log.timestamp}] ${log.instrument || log.symbol} | ${log.action} | Price: ${log.price} | Reasoning: ${log.reasoning}\n`;
     });
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -3097,7 +3054,7 @@ Rispondi esclusivamente nel seguente formato JSON:
 }`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -3150,7 +3107,7 @@ Rispondi esclusivamente nel seguente formato JSON:
 }`;
 
     const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -3172,382 +3129,14 @@ Rispondi esclusivamente nel seguente formato JSON:
   }
 });
 
-// --- XTB AUTO-TRADING LOGIC & FUNCTIONS ---
 
-async function fetchFreeForexRates(): Promise<Record<string, number>> {
-  try {
-    const response = await fetch("https://open.er-api.com/v6/latest/USD");
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.rates) {
-        return data.rates;
-      }
-    }
-  } catch (err) {
-    console.error("Errore nel recupero dei tassi gratuiti:", err);
-  }
-  return {
-    USD: 1,
-    EUR: 0.924,
-    JPY: 160.85,
-    GBP: 0.788,
-    AUD: 1.498
-  };
-}
 
-function getInstrumentBasePrice(instrument: string, rates: Record<string, number>): number {
-  const [base, quote] = instrument.split('_');
-  const rateBase = rates[base] || 1;
-  const rateQuote = rates[quote] || 1;
-  return rateQuote / rateBase;
-}
 
-async function getXtbCandles(instrument: string): Promise<any[]> {
-  const XTB_USER_ID = process.env.XTB_USER_ID;
-  const XTB_PASSWORD = process.env.XTB_PASSWORD;
-  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
 
-  if (true) {
-    const rates = await fetchFreeForexRates();
-    const basePrice = getInstrumentBasePrice(instrument, rates);
-    
-    // Generate realistic historical candle data around the current real-time price
-    return Array.from({ length: 50 }, (_, i) => {
-      const multiplier = instrument.includes('JPY') ? 0.15 : 0.0005;
-      
-      // Calculate realistic time-based curve
-      const candleTime = Date.now() - (50 - i) * 60 * 60 * 1000;
-      const t1 = candleTime / (2 * 60 * 60 * 1000); // 2 hour cycle
-      const t2 = candleTime / (15 * 60 * 1000);     // 15 min cycle
-      const t3 = candleTime / (60 * 1000);          // 1 min cycle
-      
-      // Smooth sum of sines to simulate realistic market movements without instant profit spikes
-      const curve = Math.sin(t1) + 0.5 * Math.sin(t2) + 0.25 * Math.sin(t3);
-      const base = basePrice + curve * (multiplier * 4);
-      
-      return {
-        time: new Date(candleTime).toISOString(),
-        mid: {
-          o: String(base),
-          h: String(base + multiplier * 0.5),
-          l: String(base - multiplier * 0.5),
-          c: String(base + (Math.random() - 0.5) * multiplier * 0.1) // minimal noise on close
-        },
-        volume: Math.floor(Math.random() * 500 + 50)
-      };
-    });
-  }
 
-  try {
-    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
-      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`XTB error status ${response.status}`);
-    }
 
-    const data = await response.json();
-    return data.candles || [];
-  } catch (error) {
-    console.error(`Error fetching candles for ${instrument}:`, error);
-    const rates = { USD: 1, EUR: 0.924, JPY: 160.85, GBP: 0.788, AUD: 1.498 };
-    const basePrice = getInstrumentBasePrice(instrument, rates);
-    const multiplier = instrument.includes('JPY') ? 0.15 : 0.0005;
-    return Array.from({ length: 50 }, (_, i) => {
-      const candleTime = Date.now() - (50 - i) * 60 * 60 * 1000;
-      const t1 = candleTime / (2 * 60 * 60 * 1000);
-      const t2 = candleTime / (15 * 60 * 1000);
-      const t3 = candleTime / (60 * 1000);
-      const curve = Math.sin(t1) + 0.5 * Math.sin(t2) + 0.25 * Math.sin(t3);
-      const base = basePrice + curve * (multiplier * 4);
-      return {
-        time: new Date(candleTime).toISOString(),
-        mid: {
-          o: String(base),
-          h: String(base + multiplier * 0.5),
-          l: String(base - multiplier * 0.5),
-          c: String(base + (Math.random() - 0.5) * multiplier * 0.1)
-        },
-        volume: Math.floor(Math.random() * 500 + 50)
-      };
-    });
-  }
-}
-     function calculateLocalTechnicalSentiment(candles: any[]): { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string } {
-  if (!candles || candles.length < 20) {
-    return { sentiment: 'HOLD', reasoning: "Dati storici insufficienti per l'analisi tecnica di fallback." };
-  }
-  
-  const closePrices = candles.map(c => parseFloat(c.mid?.c || c.c || "0"));
-  const lastPrice = closePrices[closePrices.length - 1];
-  
-  // Calcolo SMA 5 e SMA 20
-  const shortPeriod = 5;
-  const longPeriod = 20;
-  
-  const shortSum = closePrices.slice(-shortPeriod).reduce((a, b) => a + b, 0);
-  const smaShort = shortSum / shortPeriod;
-  
-  const longSum = closePrices.slice(-longPeriod).reduce((a, b) => a + b, 0);
-  const smaLong = longSum / longPeriod;
-  
-  // Calcolo RSI a 14 periodi per precisione
-  let rsi = 50;
-  if (closePrices.length >= 15) {
-    let gains = 0;
-    let losses = 0;
-    for (let i = closePrices.length - 14; i < closePrices.length; i++) {
-      const diff = closePrices[i] - closePrices[i - 1];
-      if (diff > 0) gains += diff;
-      else losses -= diff;
-    }
-    const rs = losses === 0 ? 100 : gains / losses;
-    rsi = 100 - (100 / (1 + rs));
-  }
 
-  // Soglia minima di movimento per evitare falsi segnali in mercati piatti
-  const threshold = 0; // Rimuoviamo la soglia per generare più segnali nel test
-  
-  if (smaShort > (smaLong + threshold)) {
-    return {
-      sentiment: 'BUY',
-      reasoning: `Incrocio rialzista SMA 5 (${smaShort.toFixed(5)}) sopra SMA 20 (${smaLong.toFixed(5)}). L'oscillatore RSI a ${rsi.toFixed(1)} mostra forza rialzista.`
-    };
-  } else if (smaShort < (smaLong - threshold)) {
-    return {
-      sentiment: 'SELL',
-      reasoning: `Incrocio ribassista SMA 5 (${smaShort.toFixed(5)}) sotto SMA 20 (${smaLong.toFixed(5)}). L'oscillatore RSI a ${rsi.toFixed(1)} conferma il trend ribassista.`
-    };
-  } else {
-    return {
-      sentiment: 'HOLD',
-      reasoning: `Mercato in consolidamento laterale. Prezzo attuale (${lastPrice.toFixed(5)}) allineato alla media SMA 20 (${smaLong.toFixed(5)}). RSI neutrale a ${rsi.toFixed(1)}.`
-    };
-  }
-}
 
-async function getXtbBulkSentiment(instruments: string[]): Promise<Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }>> {
-  const result: Record<string, { sentiment: 'BUY' | 'SELL' | 'HOLD'; reasoning: string }> = {};
-  
-  // Raggruppiamo i dati delle candele per tutti gli strumenti
-  const instrumentsCandles: Record<string, any[]> = {};
-  for (const inst of instruments) {
-    instrumentsCandles[inst] = await getXtbCandles(inst);
-  }
-
-  if (checkQuotaExceeded()) {
-    addXtbLog(`[AI Cooldown] Gemini in cooldown temporaneo. Attivazione dell'analisi tecnica quantitativa (SMA/RSI) locale.`);
-    for (const inst of instruments) {
-      result[inst] = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
-    }
-    return result;
-  }
-
-  try {
-    // Calcoliamo indicatori tecnici per ciascun strumento per fornire a Gemini dati più precisi
-    const enrichedData: Record<string, { lastPrices: number[], sma5: number, sma20: number, rsi: number }> = {};
-    for (const inst of instruments) {
-      const candles = instrumentsCandles[inst];
-      const closePrices = candles.map((c: any) => parseFloat(c.mid.c));
-      const last10 = closePrices.slice(-10);
-      
-      const shortPeriod = 5;
-      const longPeriod = 20;
-      let sma5 = 0, sma20 = 0, rsi = 50;
-      
-      if (closePrices.length >= longPeriod) {
-        sma5 = closePrices.slice(-shortPeriod).reduce((a: number, b: number) => a + b, 0) / shortPeriod;
-        sma20 = closePrices.slice(-longPeriod).reduce((a: number, b: number) => a + b, 0) / longPeriod;
-      }
-      
-      if (closePrices.length >= 15) {
-        let gains = 0;
-        let losses = 0;
-        for (let i = closePrices.length - 14; i < closePrices.length; i++) {
-          const diff = closePrices[i] - closePrices[i - 1];
-          if (diff > 0) gains += diff;
-          else losses -= diff;
-        }
-        const rs = losses === 0 ? 100 : gains / losses;
-        rsi = 100 - (100 / (1 + rs));
-      }
-      
-      enrichedData[inst] = { lastPrices: last10, sma5, sma20, rsi };
-    }
-
-    const feedbackRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
-      ? `\n\nREGOLE E CORREZIONI IMPERATIVE DA SEGUIRE FORNITE DALL'UTENTE:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
-      : '';
-
-    const prompt = `Sei un esperto trader di Forex quantitativo. Analizza i dati tecnici per questi cambi Forex:
-${JSON.stringify(enrichedData, null, 2)}
-
-SPECIFICHE TECNICHE FORNITE:
-- Analizza l'RSI (sopra 70 ipercomprato -> possibile SELL, sotto 30 ipervenduto -> possibile BUY).
-- Considera l'incrocio delle medie mobili SMA5 e SMA20 per identificare la direzione del trend.
-- Verifica i prezzi storici recenti ("lastPrices").
-- NON lavorare a caso, applica logiche di trading rigorose e attente.
-
-${feedbackRules}
-
-Determina il sentiment operativo (BUY, SELL, HOLD) per ciascun cambio basandoti sui dati sopra elencati e su un'analisi di mercato rigorosa.
-
-Rispondi esplicitamente in formato JSON valido, senza blocchi di codice markdown o spiegazioni extra prima o dopo il JSON, come nel seguente esempio:
-{
-  "EUR_USD": { "sentiment": "BUY", "reasoning": "Incrocio SMA rialzista e RSI a 45 in recupero dall'ipervenduto." }
-}`;
-
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-    });
-
-    const responseText = response.text || "";
-    // Puliamo eventuale markdown del JSON
-    const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-    
-    try {
-      const parsed = JSON.parse(cleanJson);
-      for (const inst of instruments) {
-        if (parsed[inst] && (parsed[inst].sentiment === 'BUY' || parsed[inst].sentiment === 'SELL' || parsed[inst].sentiment === 'HOLD')) {
-          result[inst] = {
-            sentiment: parsed[inst].sentiment,
-            reasoning: parsed[inst].reasoning || "Analisi effettuata con successo."
-          };
-        } else {
-          result[inst] = { sentiment: 'HOLD', reasoning: 'Analisi non chiara, impostato HOLD di default.' };
-        }
-      }
-    } catch (e) {
-      console.error("[JSON Parse Error] Impossibile parsare la risposta di Gemini per il Forex:", responseText);
-      // Fallback
-      for (const inst of instruments) {
-        result[inst] = { sentiment: 'HOLD', reasoning: 'Errore nel parsing della decisione AI. HOLD cautelativo.' };
-      }
-    }
-  } catch (error: any) {
-    const message = error.message || String(error);
-    const isQuotaError = message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID');
-    const isApiKeyError = message.includes('API key not valid') || message.includes('API_KEY_INVALID');
-    
-    if (isQuotaError) {
-      isQuotaExceeded = true;
-      quotaExceededTime = Date.now();
-      addXtbLog(`[AI Quota Exceeded] Limite di quota di Gemini raggiunto. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
-    } else if (isApiKeyError) {
-      isQuotaExceeded = true;
-      quotaExceededTime = Date.now();
-      addXtbLog(`[AI Setup Error] Chiave API Gemini non valida o mancante. Fallback immediato sull'analisi tecnica quantitativa (SMA/RSI) locale.`);
-    } else {
-      console.error("[Gemini Error XTB]", error);
-    }
-    
-    for (const inst of instruments) {
-      if (isQuotaError || isApiKeyError) {
-        const technicalResult = calculateLocalTechnicalSentiment(instrumentsCandles[inst]);
-        result[inst] = {
-          sentiment: technicalResult.sentiment,
-          reasoning: `[${isApiKeyError ? 'API Key Mancante' : 'Quota IA Superata'}] Fallback Tecnico Quantitativo: ${technicalResult.reasoning}`
-        };
-      } else {
-        result[inst] = { sentiment: 'HOLD', reasoning: `Errore IA: Connessione fallita. HOLD di sicurezza.` };
-      }
-    }
-  }
-
-  return result;
-}
-
-function calculateDemoPnLInEur(instrument: string, side: 'buy' | 'sell', entryPrice: number, currentPrice: number, units: number, eurUsdPrice: number): number {
-  const diff = side === 'buy' ? (currentPrice - entryPrice) : (entryPrice - currentPrice);
-  const pnlInQuote = diff * units;
-  
-  const base = instrument.substring(0, 3);
-  const quote = instrument.substring(4, 7);
-
-  if (quote === 'EUR') {
-    return pnlInQuote;
-  }
-  
-  if (quote === 'USD') {
-    return pnlInQuote / eurUsdPrice;
-  }
-  
-  if (base === 'EUR') {
-    // If quote is something else and base is EUR, currentPrice is Quote/EUR
-    return pnlInQuote / currentPrice;
-  }
-
-  // JPY pairs where base is not EUR (e.g. GBP_JPY, USD_JPY)
-  if (quote === 'JPY') {
-    // We need EUR_JPY rate. We don't have it explicitly, but we have eurUsdPrice.
-    // If it's USD_JPY, currentPrice is JPY/USD.
-    if (base === 'USD') {
-       const pnlInUsd = pnlInQuote / currentPrice;
-       return pnlInUsd / eurUsdPrice;
-    }
-    
-    // For GBP_JPY, we would ideally need EUR_JPY or GBP_USD. 
-    // It's just a rough approximation without the exact cross rate, so we approximate
-    // 1 EUR = ~160 JPY for fallback, or better:
-    // Let's assume standard JPY cross rate ~ 160 to avoid needing another API call.
-    return pnlInQuote / 160.0;
-  }
-
-  if (quote === 'CHF') {
-      return pnlInQuote / 0.95; // approx EUR/CHF
-  }
-
-  if (quote === 'CAD') {
-      return pnlInQuote / 1.45; // approx EUR/CAD
-  }
-
-  // Fallback for others
-  return pnlInQuote / eurUsdPrice; 
-}
-
-function initializeXtbPnLHistory() {
-  if (!xtbBotStatus.dailyPnL || xtbBotStatus.dailyPnL.length === 0) {
-    const dates = [];
-    const now = new Date();
-    for (let i = 4; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      dates.push(d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }));
-    }
-    
-    xtbBotStatus.dailyPnL = [
-      { date: dates[0], realized: -1.80, unrealized: 0 },
-      { date: dates[1], realized: -0.50, unrealized: 0 },
-      { date: dates[2], realized: 1.20, unrealized: 0 },
-      { date: dates[3], realized: 0.80, unrealized: 0 },
-      { date: dates[4], realized: 0.00, unrealized: 0 }
-    ];
-  }
-}
-
-function updateXtbPnLHistory(pnlChange: number) {
-  const today = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
-  if (!xtbBotStatus.dailyPnL) {
-    xtbBotStatus.dailyPnL = [];
-  }
-  
-  let todayEntry = xtbBotStatus.dailyPnL.find(p => p.date === today);
-  if (todayEntry) {
-    todayEntry.realized += pnlChange;
-  } else {
-    const lastRealized = xtbBotStatus.dailyPnL.length > 0 ? xtbBotStatus.dailyPnL[xtbBotStatus.dailyPnL.length - 1].realized : 0;
-    xtbBotStatus.dailyPnL.push({
-      date: today,
-      realized: lastRealized + pnlChange,
-      unrealized: 0
-    });
-  }
-  
-  if (xtbBotStatus.dailyPnL.length > 15) {
-    xtbBotStatus.dailyPnL = xtbBotStatus.dailyPnL.slice(-15);
-  }
-}
 
 async function executeAlpacaRealtimeCheck() {
   const mode = botStatus.tradingMode || 'paper';
@@ -3693,807 +3282,7 @@ async function executeAlpacaRealtimeCheck() {
   }
 }
 
-
-
-async function executeXtbRealtimeCheck() {
-  if (!xtbBotStatus.active) return;
-  
-  const XTB_USER_ID = process.env.XTB_USER_ID;
-  const XTB_PASSWORD = process.env.XTB_PASSWORD;
-  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
-  
-  const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number; avgPrice?: number }> = {};
-  
-  try {
-    if (isRealAccount) {
-      const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
-        headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        for (const pos of (data.positions || [])) {
-          const inst = pos.instrument;
-          if (parseFloat(pos.long?.units || '0') > 0) {
-            openPositionsMap[inst] = { units: parseFloat(pos.long.units), side: 'buy', unrealizedPL: parseFloat(pos.long?.unrealizedPL || pos.unrealizedPL || '0') };
-          } else if (parseFloat(pos.short?.units || '0') > 0) {
-            openPositionsMap[inst] = { units: parseFloat(pos.short.units), side: 'sell', unrealizedPL: parseFloat(pos.short?.unrealizedPL || pos.unrealizedPL || '0') };
-          }
-        }
-      }
-    } else {
-      for (const inst in xtbDemoPositions) {
-        openPositionsMap[inst] = { ...xtbDemoPositions[inst] };
-      }
-    }
-
-    const openInstruments = Object.keys(openPositionsMap);
-    if (openInstruments.length === 0) return;
-
-    // Fetch EUR_USD price for demo conversion if needed
-    let eurUsdPrice = 1.0800;
-    if (!isRealAccount) {
-      const eurUsdCandles = await getXtbCandles('EUR_USD');
-      eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
-    }
-
-    for (const inst of openInstruments) {
-      const currentPos = openPositionsMap[inst];
-      const candles = await getXtbCandles(inst);
-      if (candles.length === 0) continue;
-      const currentPrice = parseFloat(candles[candles.length - 1].mid.c);
-      
-      let stopLossHit = false;
-      let takeProfitHit = false;
-      
-      let unrealizedPL = currentPos.unrealizedPL || 0;
-      
-      if (!isRealAccount) {
-        const pos = xtbDemoPositions[inst];
-        if(!pos) continue;
-        unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-      }
-      
-      if (unrealizedPL >= xtbBotStatus.defaultTP) {
-        takeProfitHit = true;
-        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${xtbBotStatus.defaultTP.toFixed(2)} €)`);
-      } else if (unrealizedPL <= xtbBotStatus.defaultSL) {
-        stopLossHit = true;
-        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] FAST CHECK: Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${xtbBotStatus.defaultSL.toFixed(2)} €)`);
-      }
-
-      if (stopLossHit || takeProfitHit) {
-        const reason = stopLossHit ? `Stop Loss (${xtbBotStatus.defaultSL.toFixed(2)}€)` : `Take Profit (+${xtbBotStatus.defaultTP.toFixed(2)}€)`;
-        addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
-        
-        if (isRealAccount) {
-          try {
-            const closeBody: any = {};
-            if (currentPos.side === 'buy') closeBody.longUnits = "ALL";
-            else closeBody.shortUnits = "ALL";
-
-            await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${inst}/close`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${XTB_USER_ID}` },
-              body: JSON.stringify(closeBody)
-            });
-            addXtbLog(`[XTB LIVE] Posizione reale su ${inst} chiusa con successo per ${reason}.`);
-          } catch (err: any) {
-            console.error(`Errore chiusura realtime ${inst}: ${err.message}`);
-          }
-        } else {
-          const pnlInEur = calculateDemoPnLInEur(inst, currentPos.side, currentPos.avgPrice!, currentPrice, currentPos.units, eurUsdPrice);
-          xtbBotStatus.balance += pnlInEur;
-          updateXtbPnLHistory(pnlInEur);
-          delete xtbDemoPositions[inst];
-          addXtbLog(`[DEMO XTB] Posizione simulata su ${inst} chiusa con successo per ${reason}! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
-          await saveXtbBotStatus();
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Errore nel realtime check XTB:", err);
-  }
-}
-
-async function executeXtbTradingCycle(force: boolean = false) {
-  if (!xtbBotStatus.active && !force) {
-    return;
-  }
-
-  xtbBotStatus.lastCheck = new Date().toISOString();
-  addXtbLog(`[Auto-Trading] Avvio ciclo di trading automatico Forex per XTB...`);
-
-  const XTB_USER_ID = process.env.XTB_USER_ID;
-  const XTB_PASSWORD = process.env.XTB_PASSWORD;
-  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
-
-  try {
-    // 1. Recupero delle posizioni aperte correnti
-    const openPositionsMap: Record<string, { units: number; side: 'buy' | 'sell'; unrealizedPL?: number }> = {};
-
-    if (isRealAccount) {
-      try {
-        const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
-          headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          const positions = data.positions || [];
-          for (const pos of positions) {
-            const inst = pos.instrument;
-            const longUnits = parseFloat(pos.long?.units || '0');
-            const shortUnits = parseFloat(pos.short?.units || '0');
-            if (longUnits > 0) {
-              openPositionsMap[inst] = { 
-                units: longUnits, 
-                side: 'buy', 
-                unrealizedPL: parseFloat(pos.long?.unrealizedPL || pos.unrealizedPL || '0') 
-              };
-            } else if (shortUnits > 0) {
-              openPositionsMap[inst] = { 
-                units: shortUnits, 
-                side: 'sell', 
-                unrealizedPL: parseFloat(pos.short?.unrealizedPL || pos.unrealizedPL || '0') 
-              };
-            }
-          }
-        } else {
-          addXtbLog(`[XTB Errore] Impossibile recuperare le posizioni aperte reali: status ${response.status}`);
-        }
-      } catch (err: any) {
-        addXtbLog(`[XTB Errore Network] Impossibile connettersi a XTB per le posizioni: ${err.message}`);
-      }
-    } else {
-      // Usiamo le posizioni demo memorizzate
-      for (const inst in xtbDemoPositions) {
-        openPositionsMap[inst] = { units: xtbDemoPositions[inst].units, side: xtbDemoPositions[inst].side };
-      }
-    }
-
-    // 2. Otteniamo il sentiment bulk di tutti i mercati Forex monitorati
-    const bulkSentiment = await getXtbBulkSentiment(xtbBotStatus.monitoredInstruments);
-
-    // 3. Elaborazione delle decisioni per ciascun cambio
-    for (const inst of xtbBotStatus.monitoredInstruments) {
-      const sentimentData = bulkSentiment[inst] || { sentiment: 'HOLD', reasoning: 'Nessun sentiment' };
-      const currentPos = openPositionsMap[inst];
-      const candles = await getXtbCandles(inst);
-      const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
-
-      addXtbLog(`[Analisi ${inst.replace('_', '/')}] Sentiment: ${sentimentData.sentiment}. IA dice: ${sentimentData.reasoning}`);
-
-      // Se abbiamo una posizione aperta
-      if (currentPos) {
-        let stopLossHit = false;
-        let takeProfitHit = false;
-
-        // Calcolo unrealizedPL per XTB (live o demo)
-        let unrealizedPL = currentPos.unrealizedPL || 0;
-        
-        if (!isRealAccount && xtbDemoPositions[inst]) {
-          const pos = xtbDemoPositions[inst];
-          // Recuperiamo EUR_USD per convertire il PnL demo in EUR
-          const eurUsdCandles = await getXtbCandles('EUR_USD');
-          const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
-          unrealizedPL = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-        }
-        
-        if (unrealizedPL >= xtbBotStatus.defaultTP) {
-          takeProfitHit = true;
-          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Take Profit raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Target: +${xtbBotStatus.defaultTP.toFixed(2)} €)`);
-        } else if (unrealizedPL <= xtbBotStatus.defaultSL) {
-          stopLossHit = true;
-          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Stop Loss raggiunto! P&L latente: ${unrealizedPL.toFixed(2)} € (Limite: ${xtbBotStatus.defaultSL.toFixed(2)} €)`);
-        }
-
-        const needsClosure = stopLossHit || takeProfitHit ||
-          (currentPos.side === 'buy' && sentimentData.sentiment === 'SELL') ||
-          (currentPos.side === 'sell' && sentimentData.sentiment === 'BUY');
-
-        if (needsClosure) {
-          const reason = stopLossHit ? `Stop Loss (${xtbBotStatus.defaultSL.toFixed(2)}€)` : takeProfitHit ? `Take Profit (+${xtbBotStatus.defaultTP.toFixed(2)}€)` : "variazione sentiment in negativo";
-          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Chiudo posizione ${currentPos.side.toUpperCase()} di ${currentPos.units} unità per ${reason}.`);
-          
-          if (isRealAccount) {
-            try {
-              const closeBody: any = {};
-              if (currentPos.side === 'buy') {
-                closeBody.longUnits = "ALL";
-              } else {
-                closeBody.shortUnits = "ALL";
-              }
-
-              const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${inst}/close`, {
-                method: "PUT",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${XTB_USER_ID}`
-                },
-                body: JSON.stringify(closeBody)
-              });
-
-              if (response.ok) {
-                addXtbLog(`[XTB] Posizione su ${inst} chiusa con successo sul mercato reale!`);
-                addXtbLogicLog({
-                  timestamp: new Date().toISOString(),
-                  instrument: inst,
-                  action: 'CHIUSURA_POSITIVA',
-                  reasoning: `Chiusura posizione ${currentPos.side.toUpperCase()} a causa del sentiment ${sentimentData.sentiment}: ${sentimentData.reasoning}`,
-                  price: currentPrice
-                });
-              } else {
-                const errText = await response.text();
-                addXtbLog(`[XTB Errore] Errore chiusura posizione su ${inst}: ${errText}`);
-              }
-            } catch (err: any) {
-              addXtbLog(`[XTB Errore Network] Errore durante la chiusura di ${inst}: ${err.message}`);
-            }
-          } else {
-            // Demo closure
-            const entryPrice = xtbDemoPositions[inst].avgPrice;
-            const side = xtbDemoPositions[inst].side;
-            const units = xtbDemoPositions[inst].units;
-
-            const eurUsdCandles = await getXtbCandles('EUR_USD');
-            const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
-
-            const pnlInEur = calculateDemoPnLInEur(inst, side, entryPrice, currentPrice, units, eurUsdPrice);
-            xtbBotStatus.balance += pnlInEur;
-            updateXtbPnLHistory(pnlInEur);
-
-            delete xtbDemoPositions[inst];
-            addXtbLog(`[DEMO XTB] Posizione simulata su ${inst} chiusa con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
-            addXtbLogicLog({
-              timestamp: new Date().toISOString(),
-              instrument: inst,
-              action: 'CHIUSURA_SIMULATA',
-              reasoning: `Chiusura simulata posizione ${side.toUpperCase()} per sentiment ${sentimentData.sentiment} (P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €): ${sentimentData.reasoning}`,
-              price: currentPrice
-            });
-            await saveXtbBotStatus();
-          }
-        } else {
-          addXtbLog(`[Portafoglio ${inst.replace('_', '/')}] Mantengo la posizione ${currentPos.side.toUpperCase()} aperta (Sentiment concorda: ${sentimentData.sentiment}).`);
-        }
-      } 
-      // Se non abbiamo posizioni aperte e il sentiment è attivo (BUY o SELL)
-      else if (sentimentData.sentiment === 'BUY' || sentimentData.sentiment === 'SELL') {
-        // Money Management: Calcolo dinamico della dimensione in base al rischio (default 2%)
-        // Assumiamo una distanza di Stop Loss virtuale di circa 20 pips per il dimensionamento
-        const riskAmount = xtbBotStatus.balance * (xtbBotStatus.riskPercentage / 100);
-        // units = risk / (pipValue * pips). Per EURUSD 1000 units = $0.10/pip.
-        // Con 500 units, 20 pips = $1.00 (circa 0.92€).
-        const unitsToTrade = Math.max(10, Math.floor(riskAmount * 500)); 
-
-        addXtbLog(`[Mercato ${inst.replace('_', '/')}] Rilevato sentiment operativo ${sentimentData.sentiment}. Eseguo ordine automatico di ${unitsToTrade} unità (Rischio: ${xtbBotStatus.riskPercentage}% del saldo).`);
-
-        if (isRealAccount) {
-          try {
-            const orderBody = {
-              order: {
-                units: sentimentData.sentiment === "BUY" ? String(unitsToTrade) : `-${unitsToTrade}`,
-                instrument: inst,
-                timeInForce: "FOK",
-                type: "MARKET",
-                positionFill: "DEFAULT"
-              }
-            };
-
-            const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/orders`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${XTB_USER_ID}`
-              },
-              body: JSON.stringify(orderBody)
-            });
-
-            if (response.ok) {
-              const orderData = await response.json();
-              addXtbLog(`[XTB] Ordine reale ${sentimentData.sentiment} eseguito per ${inst}! ID: ${orderData.orderFillTransaction?.id || 'N/A'}`);
-              addXtbLogicLog({
-                timestamp: new Date().toISOString(),
-                instrument: inst,
-                action: sentimentData.sentiment,
-                reasoning: sentimentData.reasoning,
-                price: parseFloat(orderData.orderFillTransaction?.price || String(currentPrice))
-              });
-            } else {
-              const errText = await response.text();
-              addXtbLog(`[XTB Errore Ordine] Impossibile inviare ordine per ${inst}: ${errText}`);
-            }
-          } catch (err: any) {
-            addXtbLog(`[XTB Errore Network] Errore ordine per ${inst}: ${err.message}`);
-          }
-        } else {
-          // Demo order
-          xtbDemoPositions[inst] = {
-            units: unitsToTrade,
-            avgPrice: currentPrice,
-            side: sentimentData.sentiment === 'BUY' ? 'buy' : 'sell'
-          };
-          addXtbLog(`[DEMO XTB] Ordine simulato ${sentimentData.sentiment.toUpperCase()} di ${unitsToTrade} unità eseguito per ${inst} al prezzo di ${currentPrice.toFixed(5)}!`);
-          addXtbLogicLog({
-            timestamp: new Date().toISOString(),
-            instrument: inst,
-            action: sentimentData.sentiment,
-            reasoning: sentimentData.reasoning,
-            price: currentPrice
-          });
-          await saveXtbBotStatus();
-        }
-      } else {
-        // HOLD, nessuna posizione aperta. Manteniamo la posizione d'attesa.
-        addXtbLogicLog({
-          timestamp: new Date().toISOString(),
-          instrument: inst,
-          action: 'HOLD',
-          reasoning: sentimentData.reasoning,
-          price: currentPrice
-        });
-      }
-    }
-
-    addXtbLog(`[Auto-Trading] Ciclo di trading automatico XTB completato con successo.`);
-  } catch (error: any) {
-    addXtbLog(`[Auto-Trading Errore Critico] Errore durante l'esecuzione del ciclo XTB: ${error.message}`);
-  }
-}
-
-// --- XTB API AUTOMATION ENDPOINTS ---
-
-app.get("/api/trading/xtb-status", async (req, res) => {
-  const XTB_USER_ID = process.env.XTB_USER_ID;
-  const XTB_PASSWORD = process.env.XTB_PASSWORD;
-  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
-
-  try {
-    initializeXtbPnLHistory();
-
-    // Fetch current prices to compute unrealized P&L
-    const currentPrices: Record<string, number> = {};
-    const eurUsdCandles = await getXtbCandles('EUR_USD');
-    const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
-    currentPrices['EUR_USD'] = eurUsdPrice;
-
-    for (const inst of xtbBotStatus.monitoredInstruments) {
-      if (inst === 'EUR_USD') continue;
-      const candles = await getXtbCandles(inst);
-      currentPrices[inst] = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
-    }
-
-    // Process positions
-    let positionsList: any[] = [];
-    let totalUnrealizedPnL = 0;
-
-    if (isRealAccount) {
-      try {
-        const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions`, {
-          headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          const positions = data.positions || [];
-          for (const pos of positions) {
-            const inst = pos.instrument;
-            const longUnits = parseFloat(pos.long?.units || '0');
-            const shortUnits = parseFloat(pos.short?.units || '0');
-            const units = longUnits > 0 ? longUnits : (shortUnits > 0 ? -shortUnits : 0);
-            const side = longUnits > 0 ? 'buy' : 'sell';
-
-            if (units !== 0) {
-              const avgPrice = parseFloat(side === 'buy' ? pos.long?.averagePrice : pos.short?.averagePrice) || 0;
-              const currentPrice = currentPrices[inst] || avgPrice;
-              const unrealizedPl = parseFloat(side === 'buy' ? pos.long?.unrealizedPL : pos.short?.unrealizedPL) || 0;
-              
-              // convert unrealized PL to EUR if quote is different
-              let unrealizedPlEur = unrealizedPl;
-              if (inst === 'EUR_USD' || inst === 'EUR_GBP') {
-                unrealizedPlEur = unrealizedPl / currentPrice;
-              } else if (inst === 'GBP_USD' || inst === 'AUD_USD') {
-                unrealizedPlEur = unrealizedPl / eurUsdPrice;
-              } else if (inst === 'USD_JPY') {
-                unrealizedPlEur = (unrealizedPl / currentPrice) / eurUsdPrice;
-              }
-
-              totalUnrealizedPnL += unrealizedPlEur;
-              positionsList.push({
-                symbol: inst,
-                qty: String(Math.abs(units)),
-                avg_entry_price: String(avgPrice),
-                current_price: String(currentPrice),
-                unrealized_pl: String(unrealizedPlEur),
-                side: side
-              });
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Errore recupero posizioni XTB reali:", err);
-      }
-    } else {
-      // Demo positions
-      for (const inst in xtbDemoPositions) {
-        const pos = xtbDemoPositions[inst];
-        const currentPrice = currentPrices[inst] || pos.avgPrice;
-        const pnlInEur = calculateDemoPnLInEur(inst, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-        
-        totalUnrealizedPnL += pnlInEur;
-        positionsList.push({
-          symbol: inst,
-          qty: String(pos.units),
-          avg_entry_price: String(pos.avgPrice),
-          current_price: String(currentPrice),
-          unrealized_pl: String(pnlInEur),
-          side: pos.side
-        });
-      }
-    }
-
-    // Set today's unrealized P&L in the last item of the daily P&L history
-    if (xtbBotStatus.dailyPnL && xtbBotStatus.dailyPnL.length > 0) {
-      xtbBotStatus.dailyPnL[xtbBotStatus.dailyPnL.length - 1].unrealized = totalUnrealizedPnL;
-    }
-
-    res.json({
-      status: {
-        ...xtbBotStatus,
-        unrealizedPnL: totalUnrealizedPnL,
-        equity: isRealAccount ? undefined : (xtbBotStatus.balance + totalUnrealizedPnL)
-      },
-      positions: positionsList,
-      isDemo: !isRealAccount
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post("/api/trading/xtb-close-position", async (req, res) => {
-  const { symbol } = req.body; // use symbol to be compliant with Alpaca parameter
-  const instrument = symbol;
-  const XTB_USER_ID = process.env.XTB_USER_ID;
-  const XTB_PASSWORD = process.env.XTB_PASSWORD;
-  const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-  const isRealAccount = !!(XTB_USER_ID && XTB_PASSWORD);
-
-  if (!instrument) {
-    return res.status(400).json({ success: false, error: "Strumento mancante." });
-  }
-
-  try {
-    if (isRealAccount) {
-      // Find position first
-      const posRes = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/openPositions`, {
-        headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-      });
-      if (!posRes.ok) {
-        throw new Error("Impossibile recuperare le posizioni reali.");
-      }
-      const posData = await posRes.json();
-      const pos = (posData.positions || []).find((p: any) => p.instrument === instrument);
-      if (!pos) {
-        return res.status(404).json({ success: false, error: "Posizione non trovata." });
-      }
-
-      const longUnits = parseFloat(pos.long?.units || '0');
-      const shortUnits = parseFloat(pos.short?.units || '0');
-      const closeBody: any = {};
-      if (longUnits > 0) {
-        closeBody.longUnits = "ALL";
-      } else if (shortUnits > 0) {
-        closeBody.shortUnits = "ALL";
-      } else {
-        return res.status(400).json({ success: false, error: "Nessuna unità da chiudere." });
-      }
-
-      const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/positions/${instrument}/close`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${XTB_USER_ID}`
-        },
-        body: JSON.stringify(closeBody)
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Errore chiusura XTB: ${errText}`);
-      }
-
-      addXtbLog(`[XTB] Posizione su ${instrument} chiusa manualmente con successo!`);
-      res.json({ success: true });
-    } else {
-      // Demo close
-      const pos = xtbDemoPositions[instrument];
-      if (!pos) {
-        return res.status(404).json({ success: false, error: "Posizione non trovata." });
-      }
-
-      const candles = await getXtbCandles(instrument);
-      const currentPrice = candles.length > 0 ? parseFloat(candles[candles.length - 1].mid.c) : 1.0800;
-
-      const eurUsdCandles = await getXtbCandles('EUR_USD');
-      const eurUsdPrice = eurUsdCandles.length > 0 ? parseFloat(eurUsdCandles[eurUsdCandles.length - 1].mid.c) : 1.0800;
-
-      const pnlInEur = calculateDemoPnLInEur(instrument, pos.side, pos.avgPrice, currentPrice, pos.units, eurUsdPrice);
-      xtbBotStatus.balance += pnlInEur;
-
-      delete xtbDemoPositions[instrument];
-      addXtbLog(`[DEMO XTB] Posizione simulata su ${instrument} chiusa manualmente con successo! P&L: ${pnlInEur >= 0 ? '+' : ''}${pnlInEur.toFixed(2)} €`);
-      
-      // Update historical P&L
-      updateXtbPnLHistory(pnlInEur);
-
-      await saveXtbBotStatus();
-      res.json({ success: true });
-    }
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post("/api/trading/xtb-status", async (req, res) => {
-  const { active } = req.body;
-  if (typeof active === 'boolean') {
-    xtbBotStatus.active = active;
-    addXtbLog(`[Auto-Trading] Stato trading automatico modificato in: ${active ? 'ATTIVO' : 'SPENTO'}`);
-    await saveXtbBotStatus();
-    res.json({ success: true, active: xtbBotStatus.active });
-  } else {
-    res.status(400).json({ success: false, error: 'Parametro active non valido.' });
-  }
-});
-
-app.post("/api/trading/xtb-trigger", async (req, res) => {
-  try {
-    await executeXtbTradingCycle(true);
-    res.json({ success: true, message: 'Ciclo di trading automatico XTB completato con successo.' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post("/api/trading/xtb-reset-logs", async (req, res) => {
-  xtbBotStatus.logs = [];
-  xtbBotStatus.logicLogs = [];
-  addXtbLog(`[Auto-Trading] Log XTB azzerati dall'utente.`);
-  await saveXtbBotStatus();
-  await saveXtbLogicLogs();
-  res.json({ success: true });
-});
-
-app.post("/api/trading/xtb-reset-balance", async (req, res) => {
-  xtbBotStatus.balance = 50.00;
-  xtbDemoPositions = {};
-  xtbBotStatus.dailyPnL = [];
-  addXtbLog(`[Auto-Trading] Saldo simulato riportato a 50.00€ e posizioni azzerate dall'utente.`);
-  await saveXtbBotStatus();
-  res.json({ success: true });
-});
-
-app.post("/api/trading/xtb-settings", async (req, res) => {
-  const { defaultTP, defaultSL, riskPercentage, timeframe, trailingStop } = req.body;
-  if (typeof defaultTP === 'number' && typeof defaultSL === 'number') {
-    xtbBotStatus.defaultTP = defaultTP;
-    xtbBotStatus.defaultSL = defaultSL;
-    if (typeof riskPercentage === 'number') {
-      xtbBotStatus.riskPercentage = riskPercentage;
-    }
-    if (typeof timeframe === 'number') {
-      xtbBotStatus.timeframe = timeframe;
-    }
-    if (typeof trailingStop === 'number') {
-      xtbBotStatus.trailingStop = trailingStop;
-    }
-    addXtbLog(`[Auto-Trading] Aggiornate impostazioni globali: TP=${defaultTP}€, SL=${defaultSL}€, Rischio=${xtbBotStatus.riskPercentage}%`);
-    await saveXtbBotStatus();
-    res.json({ success: true, defaultTP, defaultSL, riskPercentage: xtbBotStatus.riskPercentage });
-  } else {
-    res.status(400).json({ success: false, error: 'Parametri non validi.' });
-  }
-});
-
-
-// --- XTB API INTEGRATION ENDPOINTS ---
-
-async function analyzeMarketWithAI(instrument: string, candles: any[]) {
-  if (checkQuotaExceeded()) {
-    return `### Analisi Tecnica (Fallback Locale - IA in Cooldown)
-Il servizio di intelligenza artificiale di Gemini è momentaneamente in cooldown per limiti di quota.
-
-#### Analisi Stimata per ${instrument.replace('_', '/')}:
-- **Sentiment**: Neutrale
-- **Tendenza**: Il prezzo si muove in un canale laterale con supporti stabili.
-- **Consiglio**: Operare con cautela con lotti ridotti.`;
-  }
-
-  try {
-    const prompt = `Analizza questi dati candlestick per ${instrument}: ${JSON.stringify(candles)}. 
-    Fornisci un'analisi tecnica concisa in italiano, il sentiment attuale (Rialzista/Ribassista/Neutrale) e un suggerimento operativo chiaro (BUY/SELL/HOLD).`;
-    
-    const response = await getAi().models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-    });
-    return response.text || "Nessun testo generato da Gemini.";
-  } catch (error: any) {
-    const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
-      console.warn(`[XTB AI Analysis] API Quota Exceeded. Falling back to local analysis.`);
-      isQuotaExceeded = true;
-      quotaExceededTime = Date.now();
-      return `### Analisi Tecnica (Fallback Locale - Quota IA Superata)
-La chiamata IA ha superato i limiti di quota.
-
-#### Analisi Stimata per ${instrument.replace('_', '/')}:
-- **Sentiment**: Neutrale
-- **Consiglio**: Attendere il ripristino della quota prima di avviare analisi avanzate.`;
-    }
-    throw error;
-  }
-}
-
-app.get("/api/trading/xtb-analysis/:instrument", async (req, res) => {
-  try {
-    const { instrument } = req.params;
-    const XTB_USER_ID = process.env.XTB_USER_ID;
-    const XTB_PASSWORD = process.env.XTB_PASSWORD;
-    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-
-    if (true) {
-      // Dati candlestick di demo per mostrare l'interfaccia se non configurata
-      const mockCandles = Array.from({ length: 50 }, (_, i) => {
-        const base = 1.0820 + Math.sin(i / 8) * 0.003 + Math.random() * 0.001;
-        return {
-          time: new Date(Date.now() - (50 - i) * 60 * 60 * 1000).toISOString(),
-          mid: {
-            o: String(base),
-            h: String(base + 0.0008),
-            l: String(base - 0.0008),
-            c: String(base + 0.0002)
-          },
-          volume: Math.floor(Math.random() * 500 + 50)
-        };
-      });
-      const analysis = `### Analisi Tecnica di Demo (${instrument.replace('_', '/')})
-*Configurazione XTB mancante nel file .env (Viene mostrata la modalità demo).*
-
-- **Sentiment**: Neutrale / Moderatamente Rialzista
-- **Analisi**: Il grafico eur/usd mostra un pattern ondulatorio con una leggera tendenza ascendente. Il supporto si sta consolidando attorno ai minimi recenti.
-- **Suggerimento**: BUY consigliato in caso di rottura della resistenza locale. Impostare Stop Loss a -10 pips.`;
-      
-      return res.json({ 
-        candles: mockCandles, 
-        analysis, 
-        isDemo: true,
-        message: "XTB usa WebSocket (xAPI). Attualmente in modalità Demo Sandbox." 
-      });
-    }
-
-    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/instruments/${instrument}/candles?count=50&price=M&granularity=H1`, {
-      headers: { "Authorization": `Bearer ${XTB_USER_ID}` }
-    });
-    
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Errore API XTB: ${response.status} - ${errText}`);
-    }
-
-    const data = await response.json();
-    const candles = data.candles || [];
-    
-    const analysis = await analyzeMarketWithAI(instrument, candles);
-    res.json({ candles, analysis });
-  } catch (error: any) {
-    console.error("Errore durante l'analisi XTB:", error);
-    res.status(500).json({ error: error.message || "Errore durante l'analisi" });
-  }
-});
-
-app.post("/api/trading/xtb-order", async (req, res) => {
-  try {
-    const { instrument, units, side } = req.body;
-    const XTB_USER_ID = process.env.XTB_USER_ID;
-    const XTB_PASSWORD = process.env.XTB_PASSWORD;
-    const XTB_BASE_URL = process.env.XTB_BASE_URL || "https://api-demo.xtb.com";
-
-    if (true) {
-      return res.json({
-        isDemo: true,
-        orderFillTransaction: {
-          id: "DEMO_" + Math.floor(Math.random() * 900000 + 100000),
-          instrument,
-          units: side === "buy" ? String(units) : `-${units}`,
-          price: "1.0854",
-          pl: "0.00",
-          commission: "0.00",
-          accountBalance: xtbBotStatus.balance.toFixed(2)
-        },
-        message: "Ordine simulato con successo in modalità Demo."
-      });
-    }
-
-    const orderBody = {
-      order: {
-        units: side === "buy" ? String(units) : `-${units}`,
-        instrument,
-        timeInForce: "FOK",
-        type: "MARKET",
-        positionFill: "DEFAULT"
-      }
-    };
-
-    const response = await fetch(`${XTB_BASE_URL}/accounts/${XTB_PASSWORD}/orders`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${XTB_USER_ID}`
-      },
-      body: JSON.stringify(orderBody)
-    });
-
-    const result = await response.json();
-    res.json(result);
-  } catch (error: any) {
-    console.error("Errore esecuzione ordine XTB:", error);
-    res.status(500).json({ error: error.message || "Errore esecuzione ordine" });
-  }
-});
-
-app.get("/api/trading/xtb-account", async (req, res) => {
-  try {
-    // Carica credenziali da Firestore
-    let credentials: any = {};
-    if (db) {
-      try {
-        const doc = await runWithTimeout(
-          db.collection('broker_credentials').doc('config').get(),
-          800,
-          { exists: false, data: () => null }
-        );
-        if (doc.exists) {
-          credentials = doc.data()?.xtb || {};
-        }
-      } catch (err: any) {
-        console.warn('[Firestore] Errore caricamento xtb account, uso fallback:', err.message);
-      }
-    }
-    
-    if (!credentials.real && !credentials.demo) {
-      credentials = localCredentialsFallback.xtb || {};
-    }
-
-    const env = (process.env.XTB_MODE || 'demo').toLowerCase();
-    const envCreds = credentials[env === 'real' || env === 'live' ? 'real' : 'demo'] || {};
-    
-    // Se abbiamo un account ID nelle credenziali, usiamolo per il display
-    const displayAccountId = envCreds.accountId || (env === 'demo' ? "IT/M189975/EUR" : "Non configurato");
-    const alias = env === 'demo' ? "XTB-Demo" : "XTB-Real";
-
-    // Per ora XTB è simulato nel backend, quindi restituiamo lo stato simulato
-    // Ma usiamo l'ID conto inserito dall'utente se disponibile
-    res.json({
-      success: true,
-      isDemo: env === 'demo',
-      account: {
-        id: displayAccountId,
-        balance: xtbBotStatus.balance.toFixed(2),
-        currency: "EUR",
-        NAV: xtbBotStatus.balance.toFixed(2),
-        openPositionCount: Object.keys(xtbDemoPositions).length,
-        pendingOrderCount: 0,
-        alias: alias
-      }
-    });
-  } catch (error: any) {
-    console.error("Errore recupero account XTB:", error);
-    res.status(500).json({ error: error.message || "Errore recupero account" });
-  }
-});
+// Vite middleware for development
 
 
 
@@ -4512,6 +3301,9 @@ app.get("/api/trading/xtb-account", async (req, res) => {
 
 // Vite middleware for development
 async function startServer() {
+  // Inizializza e testa la connessione con fallback automatico per Firestore
+  await initializeAndTestFirestore();
+
   // Carica lo stato salvato da Firestore
   await loadStateFromFirestore().catch(err => {
     console.error('[Firebase Error] Errore durante il caricamento dello stato:', err);
@@ -4531,9 +3323,6 @@ async function startServer() {
 
   // Loop molto veloce (5 secondi) per chiudere in tempo reale le posizioni in profitto
   setInterval(() => {
-    executeXtbRealtimeCheck().catch(err => {
-      console.error('[Background Fast Check Error]', err);
-    });
     executeAlpacaRealtimeCheck().catch(err => {
       console.error('[Background Fast Check Alpaca Error]', err);
     });

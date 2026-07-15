@@ -13,7 +13,6 @@ export interface RiskConfig {
   defaultSL?: number; // Stop Loss personalizzato (assoluto o percentuale)
   defaultTP?: number; // Take Profit personalizzato
   trailingStop?: number; // Trailing Stop personalizzato (percentuale, es: 1 = 1%)
-  isAlpaca?: boolean; // Se vero, esclude le regole micro-forex (regola 1, 2, 3) pensate per XTB
 }
 
 /**
@@ -68,38 +67,6 @@ export class RiskManagementService {
           action: 'CLOSE',
           reason: `Trailing Stop Loss di ${tsPercent}% Raggiunto (Picco massimo: $${highestPrice.toFixed(2)}, Prezzo Limite: $${trailingStopPrice.toFixed(2)}, Prezzo Attuale: $${currentPrice.toFixed(2)})`
         };
-      }
-    }
-
-    // --- 2. REGOLE STORICHE MANDATORIE DELL'UTENTE ---
-
-    // Se stiamo operando su Alpaca, non applichiamo le regole micro-forex pensate in euro per XTB (regole 1, 2, 3)
-    if (config.isAlpaca) {
-      return null;
-    }
-
-    // VINCOLO: L'Oro (GLD) è esplicitamente abilitato. Non viene mai scartato o bloccato a priori.
-
-    // REGOLA 1: Chiusura a 2€ ESCLUSIVAMENTE se il profitto è esattamente 2.00€ (epsilon 0.01 per tolleranza)
-    const isExactlyTwo = Math.abs(unrealizedProfit - 2.00) < 0.01;
-    if (isExactlyTwo) {
-      return { action: 'CLOSE', reason: 'Target Esatto di 2.00€ Raggiunto' };
-    }
-
-    // REGOLA 2: Regola y=1, chiusura a profitti storici pari a 2Y fino a max 3€
-    if (Y === 1) {
-      const targetProfit = 2 * Y; // 2€
-      const maxAllowedProfit = 3.00; // 3€
-      
-      if (historicalProfits >= targetProfit && unrealizedProfit > 2.00 && unrealizedProfit <= maxAllowedProfit) {
-          return { action: 'CLOSE', reason: `Strategia Y=1: Profitto Storico soddisfatto e PnL corrente (${unrealizedProfit.toFixed(2)}€) entro il limite di 3€` };
-      }
-    }
-
-    // REGOLA 3: Break-even (minima perdita 0.50€) su posizioni con valore >= 2€
-    if (currentValue >= 2.00) {
-      if (unrealizedProfit <= -0.50) {
-        return { action: 'CLOSE', reason: 'Stop Loss Break-Even a -0.50€ Scattato (Valore Posizione >= 2€)' };
       }
     }
 

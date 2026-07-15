@@ -93,4 +93,156 @@ Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
       throw error;
     }
   }
+
+  /**
+   * Motore decisionale ultra-conservativo per l'analisi dei dati di mercato e sentiment.
+   * Rispetta i requisiti di Failsafe, Stop-Loss inviolabili, Limiti di quota e Orari di New York.
+   */
+  public evaluateTradingDecision(params: {
+    ticker: string;
+    currentPrice: number;
+    unrealizedPL: number;
+    currentValue: number;
+    stopLossThreshold?: number; // soglia stop loss (es. -0.50 o in percentuale slPct)
+    maxConcurrentPositions?: number;
+    currentPositionsCount?: number;
+    sentimentScore: number | null; // null in caso di errore
+    sentimentReasoning: string;
+    isSentimentError?: boolean;
+  }): {
+    stato: string;
+    azione: string;
+    ticker: string;
+    sentiment_score: number | 'ERROR';
+    stop_loss_triggered: boolean;
+    motivazione: string;
+  } {
+    const {
+      ticker,
+      currentPrice,
+      unrealizedPL,
+      currentValue,
+      stopLossThreshold = -0.50,
+      maxConcurrentPositions = 10,
+      currentPositionsCount = 0,
+      sentimentScore,
+      sentimentReasoning,
+      isSentimentError = false
+    } = params;
+
+    // Calcolo orario New York (EST/EDT)
+    const options = { timeZone: 'America/New_York', hour12: false };
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      ...options,
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const parts = formatter.formatToParts(new Date());
+    const partMap = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const hour = parseInt(partMap.hour || '0');
+    const minute = parseInt(partMap.minute || '0');
+
+    // 1. REQUISITI DI STOP-LOSS (Sacro e inviolabile - da controllare PRIMA di tutto il resto)
+    const hasPosition = currentValue > 0 || unrealizedPL !== 0;
+    let stopLossTriggered = false;
+
+    if (hasPosition) {
+      // Se il profitto non realizzato è minore o uguale alla soglia di stop loss impostata
+      if (unrealizedPL <= stopLossThreshold) {
+        stopLossTriggered = true;
+        return {
+          stato: "OPERATIVO",
+          azione: "SELL",
+          ticker,
+          sentiment_score: isSentimentError ? "ERROR" : (sentimentScore ?? "ERROR"),
+          stop_loss_triggered: true,
+          motivazione: `Stop Loss inviolabile scattato per lo strumento ${ticker}. Profitto corrente: $${unrealizedPL.toFixed(2)} <= Soglia Stop Loss: $${stopLossThreshold.toFixed(2)}.`
+        };
+      }
+    }
+
+    // 2. REGOLE DI GESTIONE DEGLI ERRORI (Failsafe)
+    // Se c'è un errore nel recupero del sentiment o API offline
+    const isError = isSentimentError || sentimentScore === null || isNaN(sentimentScore) ||
+                    sentimentReasoning.toLowerCase().includes('errore') ||
+                    sentimentReasoning.toLowerCase().includes('quota') ||
+                    sentimentReasoning.toLowerCase().includes('nessun sentiment');
+
+    if (isError) {
+      return {
+        stato: "SOSPESO - Errore recupero dati",
+        azione: "HOLD",
+        ticker,
+        sentiment_score: "ERROR",
+        stop_loss_triggered: false,
+        motivazione: `STATO: SOSPESO - Errore recupero dati del sentiment o API offline per ${ticker}. Nessun nuovo trade consentito per sicurezza. Posizione mantenuta e monitorata via Stop Loss.`
+      };
+    }
+
+    // 3. GESTIONE ORARI DI MERCATO (New York Time EST/EDT)
+    // [ORARIO DI CHIUSURA - 15 MINUTI]: 15:45 - 16:00 EST/EDT
+    const isPreCloseWindow = hour === 15 && minute >= 45 && minute < 60;
+    if (isPreCloseWindow) {
+      return {
+        stato: "OPERATIVO",
+        azione: "CHIUDI_POSIZIONI_ATTIVE",
+        ticker,
+        sentiment_score: sentimentScore!,
+        stop_loss_triggered: false,
+        motivazione: `Fase pre-chiusura (15 minuti alla chiusura di New York: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} EST). Chiudere tempestivamente le posizioni attive per azzerare il rischio overnight.`
+      };
+    }
+
+    // [ORARIO DI APERTURA - 15 MINUTI] (Pre-Market): 09:15 - 09:30 EST/EDT
+    const isPreOpenWindow = hour === 9 && minute >= 15 && minute < 30;
+    if (isPreOpenWindow) {
+      return {
+        stato: "OPERATIVO",
+        azione: "AVVIO_ANALISI_PREMARKET",
+        ticker,
+        sentiment_score: sentimentScore!,
+        stop_loss_triggered: false,
+        motivazione: `Fase Pre-Market (15 minuti all'apertura di New York: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} EST). Avvio dell'analisi preventiva e sentiment iniziale per la strategia di apertura.`
+      };
+    }
+
+    // 4. LIMITI DI QUOTA GIORNALIERI / EXPOSURE LIMITS
+    // Se stiamo valutando un acquisto ma abbiamo raggiunto il numero massimo di trade o posizioni contemporanee
+    let action: 'BUY' | 'SELL' | 'HOLD' | 'CHIUDI_POSIZIONI_ATTIVE' | 'AVVIO_ANALISI_PREMARKET' = 'HOLD';
+    let motivazione = `Sentiment per ${ticker} stabile a ${sentimentScore!.toFixed(2)}. Manteniamo la posizione corrente (HOLD).`;
+
+    if (!hasPosition) {
+      // Se non abbiamo la posizione, valutiamo l'acquisto se il sentiment è positivo (> 0.2)
+      if (sentimentScore! > 0.2) {
+        if (currentPositionsCount >= maxConcurrentPositions) {
+          return {
+            stato: "OPERATIVO",
+            azione: "HOLD",
+            ticker,
+            sentiment_score: sentimentScore!,
+            stop_loss_triggered: false,
+            motivazione: `Sentiment positivo (${sentimentScore!.toFixed(2)}) ma limite di quota o posizioni contemporanee raggiunto (${currentPositionsCount}/${maxConcurrentPositions}). Nuovo acquisto BLOCCATO.`
+          };
+        } else {
+          action = 'BUY';
+          motivazione = `Sentiment positivo (${sentimentScore!.toFixed(2)}) idoneo all'acquisto. Allocazione slot disponibile.`;
+        }
+      }
+    } else {
+      // Se abbiamo già la posizione, valutiamo la vendita se il sentiment scende sotto o a 0
+      if (sentimentScore! <= 0) {
+        action = 'SELL';
+        motivazione = `Sentiment neutro/negativo (${sentimentScore!.toFixed(2)}) sceso sotto o pari alla soglia di tolleranza di 0. Segnale di chiusura posizione inviato.`;
+      }
+    }
+
+    return {
+      stato: "OPERATIVO",
+      azione: action,
+      ticker,
+      sentiment_score: sentimentScore!,
+      stop_loss_triggered: false,
+      motivazione
+    };
+  }
 }

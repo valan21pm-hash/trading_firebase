@@ -1,8 +1,49 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default-deny catch-all
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // Since this application uses the Firebase Admin SDK exclusively,
+    // client-side rules are kept restrictive.
+    
+    match /broker_credentials/{docId} {
+      allow read, write: if false;
+    }
+
+    match /settings/{docId} {
+      allow read, write: if false;
+    }
+
+    match /bot_data/{docId} {
+      allow read, write: if false;
+    }
+
+    match /logic_logs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /operational_logs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /sentiment_cache/{docId} {
+      allow read, write: if false;
+    }
+
+    match /gemini_signals/{docId} {
+      allow read, write: if false;
+    }
+
+    match /trending_stocks/{docId} {
+      allow read, write: if false;
+    }
+
+    match /alpaca_positions/{docId} {
+      allow read, write: if false;
     }
   }
 }

@@ -65,9 +65,6 @@ export const AlpacaMonitorModule: React.FC = () => {
               </tr>
             ) : (
               positions.map((pos) => {
-                const isExactlyTwo = Math.abs(pos.unrealizedPL - 2.00) < 0.005;
-                const isNearBreakEven = pos.currentValue >= 2.00 && pos.unrealizedPL <= -0.50;
-
                 return (
                   <tr key={pos.symbol} className="hover:bg-slate-800/30 transition-colors">
                     <td className="p-3 font-semibold text-white">{pos.symbol}</td>
@@ -77,9 +74,7 @@ export const AlpacaMonitorModule: React.FC = () => {
                       {pos.unrealizedPL >= 0 ? `+${pos.unrealizedPL.toFixed(2)}` : pos.unrealizedPL.toFixed(2)}€
                     </td>
                     <td className="p-3">
-                      {isExactlyTwo && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/30">Trigger Target (2€)</span>}
-                      {isNearBreakEven && <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded border border-red-500/30">Rischio Break-Even (-0.50€)</span>}
-                      {!isExactlyTwo && !isNearBreakEven && <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded">In Osservazione</span>}
+                      <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded">In Osservazione</span>
                     </td>
                   </tr>
                 );
