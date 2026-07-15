@@ -1340,6 +1340,41 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     addLog(mode as 'paper' | 'live', `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
 
+    addLog(mode as 'paper' | 'live', `[Valutazione IA] Riepilogo sentiment per ciascun asset analizzato:`);
+    for (const sym of symbolsToAnalyze) {
+      const { score, reasoning } = bulkSentiment[sym] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
+      const isOpen = openSymbols.includes(sym);
+      const isMonitored = ALL_TRADED_SYMBOLS.includes(sym);
+      
+      let statusLabel = '';
+      if (score > 0.2) {
+        statusLabel = `🟢 RIALZISTA (Punteggio: ${score.toFixed(2)})`;
+      } else if (score <= 0) {
+        statusLabel = `🔴 RIBASSISTA/NEGATIVO (Punteggio: ${score.toFixed(2)})`;
+      } else {
+        statusLabel = `🟡 DEBOLE/NEUTRO (Punteggio: ${score.toFixed(2)})`;
+      }
+
+      let actionLabel = '';
+      if (isOpen) {
+        if (score <= 0) {
+          actionLabel = `👉 [In Portafoglio] Sotto la soglia di 0 -> Verrà CHIUSO per limitare le perdite o consolidare i profitti.`;
+        } else {
+          actionLabel = `👉 [In Portafoglio] Sentiment positivo -> Mantenuto in portafoglio.`;
+        }
+      } else if (isMonitored) {
+        if (score > 0.2) {
+          actionLabel = `👉 [Disponibile] Sopra la soglia di 0.2 -> Idoneo all'ACQUISTO (se ci sono slot liberi).`;
+        } else {
+          actionLabel = `👉 [Disponibile] Sotto la soglia di 0.2 -> Escluso dall'acquisto (richiesto > 0.20).`;
+        }
+      } else {
+        actionLabel = `👉 [Nessuna azione] Asset non monitorato per acquisti e non in portafoglio.`;
+      }
+
+      addLog(mode as 'paper' | 'live', `  - ${sym}: ${statusLabel} | ${actionLabel}\n    └─ Motivazione: ${reasoning}`);
+    }
+
     // 1. Fase di Vendita (Sell/Close phase): Gestione Sentiment, Take Profit (0.25%) e Chiusura EOD
     const closedSymbolsThisCycle = new Set<string>();
     for (const pos of openPositions) {
@@ -1556,7 +1591,27 @@ async function executeTradingCycle(force: boolean = false) {
         addLog('system', `[Alpaca] Nessun conto attivo per il trading.`);
       }
     } else {
-      addLog('system', `[Alpaca] Attesa timeframe (${botStatus.timeframe || 15} min)...`);
+      const nextRunTime = lastAlpacaRunTime + alpacaTimeframeMs;
+      const msLeft = nextRunTime - now;
+      const minLeft = Math.floor(msLeft / 60000);
+      const secLeft = Math.floor((msLeft % 60000) / 1000);
+      const lastCheckTimeStr = new Date(lastAlpacaRunTime).toLocaleTimeString('it-IT');
+      
+      const isMarketOpenUtc = (() => {
+        const utcNow = new Date();
+        const day = utcNow.getUTCDay();
+        if (day === 0 || day === 6) return false;
+        const hour = utcNow.getUTCHours();
+        const minute = utcNow.getUTCMinutes();
+        const timeInMinutes = hour * 60 + minute;
+        return timeInMinutes >= 810 && timeInMinutes <= 1260; // 13:30 - 21:00 UTC (9:30 AM - 4:00 PM EST/EDT)
+      })();
+      
+      const marketStateMsg = isMarketOpenUtc 
+        ? `🟢 Il mercato USA è attualmente APERTO.` 
+        : `🔴 Il mercato USA è attualmente CHIUSO (orario standard: lun-ven 13:30 - 21:00 UTC / 15:30 - 23:00 italiane).`;
+
+      addLog('system', `[Alpaca] Stato: In attesa della prossima finestra di calcolo. Prossima valutazione automatica degli acquisti tra ${minLeft} min e ${secLeft} sec. ${marketStateMsg} Ultimo ciclo eseguito alle: ${lastCheckTimeStr} (Timeframe impostato: ${botStatus.timeframe || 15} min).`);
     }
   }
 
@@ -1566,7 +1621,12 @@ async function executeTradingCycle(force: boolean = false) {
       lastXtbRunTime = now;
       await executeXtbTradingCycle(force);
     } else {
-      addXtbLog(`[XTB] Attesa timeframe (${xtbBotStatus.timeframe || 15} min)...`);
+      const nextRunTime = lastXtbRunTime + xtbTimeframeMs;
+      const msLeft = nextRunTime - now;
+      const minLeft = Math.floor(msLeft / 60000);
+      const secLeft = Math.floor((msLeft % 60000) / 1000);
+      const lastCheckTimeStr = new Date(lastXtbRunTime).toLocaleTimeString('it-IT');
+      addXtbLog(`[XTB] Stato: In attesa del prossimo ciclo. Prossimo ricalcolo automatico tra ${minLeft} min e ${secLeft} sec. Ultimo ciclo eseguito alle: ${lastCheckTimeStr} (Timeframe impostato: ${xtbBotStatus.timeframe || 15} min).`);
     }
   }
 }
