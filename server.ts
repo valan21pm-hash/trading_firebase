@@ -1916,7 +1916,7 @@ async function executeTradingCycle(force: boolean = false) {
         ? `🟢 Il mercato USA è attualmente APERTO.` 
         : `🔴 Il mercato USA è attualmente CHIUSO (orario standard: lun-ven 13:30 - 21:00 UTC / 15:30 - 23:00 italiane).`;
 
-      addLog('system', `[Alpaca] Stato: In attesa della prossima finestra di calcolo. Prossima valutazione automatica degli acquisti tra ${minLeft} min e ${secLeft} sec. ${marketStateMsg} Ultimo ciclo eseguito alle: ${lastCheckTimeStr} (Timeframe impostato: ${botStatus.timeframe || 15} min).`);
+      addLog('system', `[Alpaca] In attesa finestra di calcolo (tra ${minLeft}m ${secLeft}s). Mercato USA ${isMarketOpenUtc ? 'APERTO' : 'CHIUSO'}.`);
     }
   }
 }
@@ -2205,17 +2205,23 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
     let rangeLogicLogs: any[] = [];
     if (db) {
       if (mode === 'paper' || mode === 'live') {
-        const querySnap = await db.collection('logic_logs')
-          .where('mode', '==', mode)
-          .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
-          .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
-          .orderBy('timestamp', 'asc')
-          .get();
-        
-        querySnap.forEach((doc: any) => {
-          rangeLogicLogs.push(doc.data());
-        });
-    }
+        try {
+          const querySnap = await db.collection('logic_logs')
+            .where('timestamp', '>=', startDate + 'T00:00:00.000Z')
+            .where('timestamp', '<=', endDate + 'T23:59:59.999Z')
+            .orderBy('timestamp', 'asc')
+            .get();
+          
+          querySnap.forEach((doc: any) => {
+            const data = doc.data();
+            if (data.mode === mode) {
+              rangeLogicLogs.push(data);
+            }
+          });
+        } catch (err) {
+          console.error('[Firebase] Errore recupero log per debrief periodico:', err);
+        }
+      }
     } else {
       // Fallback in-memory
       const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];

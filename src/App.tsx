@@ -3048,9 +3048,18 @@ export default function App() {
 
         {/* Feedback Form */}
         <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6">
-           <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-             <MessageSquare className="w-5 h-5 text-gray-500" />
-             Loop di Correzione (Invia Regole al Bot)
+           <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center justify-between">
+             <div className="flex items-center gap-2">
+               <MessageSquare className="w-5 h-5 text-gray-500" />
+               Loop di Correzione (Invia Regole al Bot)
+             </div>
+             <button 
+               onClick={fetchStatus}
+               className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded"
+               title="Ricarica regole dal Database"
+             >
+               🔄 Sincronizza Cloud
+             </button>
            </h2>
            <form onSubmit={async (e) => {
              e.preventDefault();
