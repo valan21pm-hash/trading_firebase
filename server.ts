@@ -59,7 +59,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
-import { LLMProviderService } from "./src/backend/services/LLMProviderService";
+import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
 
 let db: any = null;
 let firebaseApp: any = null;
