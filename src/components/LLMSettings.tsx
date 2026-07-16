@@ -208,7 +208,7 @@ export function LLMSettings() {
       <div className="space-y-3">
         <h5 className="text-[10px] font-bold text-slate-400 uppercase">Gestione Chiavi API & Modelli</h5>
         
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_1.5fr_auto] gap-2 items-end">
+        <form onSubmit={(e) => e.preventDefault()} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_1.5fr_auto] gap-2 items-end">
           <div>
             <label className="text-[10px] text-slate-400 block mb-1">Provider</label>
             <select
@@ -255,7 +255,7 @@ export function LLMSettings() {
               Aggiorna
             </button>
           </div>
-        </div>
+        </form>
       </div>
       
       {/* Status Table */}
