@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
-export type LLMProvider = 'gemini' | 'openai' | 'deepseek' | 'groq' | 'anthropic';
+export type LLMProvider = 'gemini' | 'mistral' | 'deepseek' | 'groq' | 'anthropic';
 
 export interface LLMConfig {
   provider: LLMProvider;
@@ -31,10 +31,10 @@ export class LLMProviderService {
       apiKey: process.env.GEMINI_API_KEY || '',
       model: 'gemini-3.1-flash-lite'
     },
-    openai: {
-      provider: 'openai',
-      apiKey: process.env.OPENAI_API_KEY || '',
-      model: 'gpt-4o-mini'
+    mistral: {
+      provider: 'mistral',
+      apiKey: process.env.MISTRAL_API_KEY || '',
+      model: 'mistral-small-latest'
     },
     deepseek: {
       provider: 'deepseek',
@@ -53,7 +53,7 @@ export class LLMProviderService {
     }
   };
 
-  private activeProviderOrder: LLMProvider[] = ['gemini', 'openai', 'groq', 'deepseek', 'anthropic'];
+  private activeProviderOrder: LLMProvider[] = ['gemini', 'mistral', 'groq', 'deepseek', 'anthropic'];
   private failoverEnabled: boolean = true;
 
   private constructor() {}
@@ -88,7 +88,7 @@ export class LLMProviderService {
    * Permette di impostare l'ordine dei provider preferiti per il failover.
    */
   public setProviderOrder(order: LLMProvider[]) {
-    this.activeProviderOrder = order.filter(p => ['gemini', 'openai', 'deepseek', 'groq', 'anthropic'].includes(p));
+    this.activeProviderOrder = order.filter(p => ['gemini', 'mistral', 'deepseek', 'groq', 'anthropic'].includes(p));
   }
 
   public getProviderOrder(): LLMProvider[] {
@@ -136,8 +136,8 @@ export class LLMProviderService {
           case 'gemini':
             text = await this.queryGemini(prompt, config, options);
             break;
-          case 'openai':
-            text = await this.queryOpenAI(prompt, config, options);
+          case 'mistral':
+            text = await this.queryMistral(prompt, config, options);
             break;
           case 'deepseek':
             text = await this.queryDeepSeek(prompt, config, options);
@@ -219,9 +219,9 @@ export class LLMProviderService {
     return response.text || '';
   }
 
-  private async queryOpenAI(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {
+  private async queryMistral(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {
     const body: any = {
-      model: config.model || 'gpt-4o-mini',
+      model: config.model || 'mistral-small-latest',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1
     };
@@ -230,7 +230,7 @@ export class LLMProviderService {
       body.response_format = { type: 'json_object' };
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

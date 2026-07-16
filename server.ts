@@ -314,6 +314,7 @@ app.post('/api/llm/preference', async (req, res) => {
   }
   if (Array.isArray(providerOrder)) {
     LLMProviderService.getInstance().setProviderOrder(providerOrder);
+    botStatus.llmProviderOrder = providerOrder;
   }
 
   await saveBotStatus();
@@ -614,8 +615,9 @@ let botStatus: {
   timeframe?: number;
   riskPercentage?: number;
   maxConcurrentPositions?: number;
-  llmPreferredProvider?: 'gemini' | 'openai' | 'deepseek' | 'groq' | 'anthropic';
+  llmPreferredProvider?: 'gemini' | 'mistral' | 'deepseek' | 'groq' | 'anthropic';
   llmFailoverEnabled?: boolean;
+  llmProviderOrder?: string[];
 } = {
   active: false,
   paperActive: false,
@@ -640,7 +642,8 @@ let botStatus: {
   riskPercentage: 10,
   maxConcurrentPositions: 10,
   llmPreferredProvider: 'gemini',
-  llmFailoverEnabled: true
+  llmFailoverEnabled: true,
+  llmProviderOrder: ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq']
 };
 
 let positionStrategies: {
@@ -961,6 +964,7 @@ async function saveBotStatus() {
       maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
       llmPreferredProvider: botStatus.llmPreferredProvider ?? 'gemini',
       llmFailoverEnabled: botStatus.llmFailoverEnabled ?? true,
+      llmProviderOrder: botStatus.llmProviderOrder || ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
       positionStrategies: positionStrategies
     }, { merge: true });
   } catch (err: any) {
@@ -1036,6 +1040,10 @@ async function loadStateFromFirestore() {
       botStatus.maxConcurrentPositions = data.maxConcurrentPositions ?? botStatus.maxConcurrentPositions;
       botStatus.llmPreferredProvider = data.llmPreferredProvider ?? botStatus.llmPreferredProvider ?? 'gemini';
       botStatus.llmFailoverEnabled = data.llmFailoverEnabled ?? botStatus.llmFailoverEnabled ?? true;
+      botStatus.llmProviderOrder = data.llmProviderOrder ?? botStatus.llmProviderOrder;
+      if (botStatus.llmProviderOrder && botStatus.llmProviderOrder.length > 0) {
+        LLMProviderService.getInstance().setProviderOrder(botStatus.llmProviderOrder as any);
+      }
 
       if (botStatus.llmPreferredProvider) {
         LLMProviderService.getInstance().setFailoverEnabled(!!botStatus.llmFailoverEnabled);
@@ -1047,7 +1055,7 @@ async function loadStateFromFirestore() {
         if (llmConfigsDoc.exists) {
           const configsData = llmConfigsDoc.data() || {};
           const llmService = LLMProviderService.getInstance();
-          for (const provider of ['gemini', 'openai', 'deepseek', 'groq', 'anthropic'] as const) {
+          for (const provider of ['gemini', 'mistral', 'deepseek', 'groq', 'anthropic'] as const) {
             if (configsData[provider]) {
               llmService.updateConfig(provider, configsData[provider]);
             }

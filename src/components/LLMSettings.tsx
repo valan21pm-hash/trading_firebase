@@ -12,17 +12,19 @@ export function LLMSettings() {
   const [configs, setConfigs] = useState<Record<string, ProviderConfig>>({});
   const [preferredProvider, setPreferredProvider] = useState<string>('gemini');
   const [failoverEnabled, setFailoverEnabled] = useState<boolean>(true);
+  const [providerOrder, setProviderOrder] = useState<string[]>(providers);
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // Form states for adding/editing keys
-  const [selectedProvider, setSelectedProvider] = useState<string>('openai');
+  const [selectedProvider, setSelectedProvider] = useState<string>('mistral');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [modelInput, setModelInput] = useState('');
+  const [orderInput, setOrderInput] = useState<string>('');
 
-  const providers = ['gemini', 'openai', 'anthropic', 'deepseek', 'groq'];
+  const providers = ['gemini', 'mistral', 'anthropic', 'deepseek', 'groq'];
 
   useEffect(() => {
     fetchConfigs();
@@ -37,6 +39,12 @@ export function LLMSettings() {
         setConfigs(data.configs || {});
         setPreferredProvider(data.preferredProvider || 'gemini');
         setFailoverEnabled(data.failoverEnabled ?? true);
+        if (data.providerOrder) {
+          setProviderOrder(data.providerOrder);
+          setOrderInput(data.providerOrder.join(', '));
+        } else {
+          setOrderInput(providers.join(', '));
+        }
       }
     } catch (e) {
       console.error('Failed to fetch LLM configs:', e);
@@ -87,7 +95,7 @@ export function LLMSettings() {
       const res = await fetch('/api/llm/preference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferredProvider, failoverEnabled })
+        body: JSON.stringify({ preferredProvider, failoverEnabled, providerOrder })
       });
       const data = await res.json();
       
@@ -125,7 +133,7 @@ export function LLMSettings() {
       {/* Preferences Section */}
       <div className="space-y-3 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
         <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Preferenze Generali</h5>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div>
             <label className="text-[10px] text-slate-400 block mb-1">Provider Preferito (Primario)</label>
             <select
@@ -137,6 +145,20 @@ export function LLMSettings() {
                 <option key={p} value={p}>{p.toUpperCase()}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 block mb-1">Ordine di Cascata (virgola sep.)</label>
+            <input
+              type="text"
+              value={orderInput}
+              onChange={(e) => {
+                setOrderInput(e.target.value);
+                const order = e.target.value.split(',').map(s => s.trim().toLowerCase()).filter(s => providers.includes(s));
+                if (order.length > 0) setProviderOrder(order);
+              }}
+              placeholder="es. mistral, gemini, anthropic"
+              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none font-mono"
+            />
           </div>
           <div className="flex items-end">
             <label className="flex items-center gap-2 cursor-pointer pb-1.5">
