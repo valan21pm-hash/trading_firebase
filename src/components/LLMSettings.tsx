@@ -9,10 +9,13 @@ interface ProviderConfig {
 }
 
 export function LLMSettings() {
+  const providers = ['gemini', 'mistral', 'anthropic', 'deepseek', 'groq'];
+
   const [configs, setConfigs] = useState<Record<string, ProviderConfig>>({});
   const [preferredProvider, setPreferredProvider] = useState<string>('gemini');
   const [failoverEnabled, setFailoverEnabled] = useState<boolean>(true);
   const [providerOrder, setProviderOrder] = useState<string[]>(providers);
+
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -23,8 +26,6 @@ export function LLMSettings() {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [modelInput, setModelInput] = useState('');
   const [orderInput, setOrderInput] = useState<string>('');
-
-  const providers = ['gemini', 'mistral', 'anthropic', 'deepseek', 'groq'];
 
   useEffect(() => {
     fetchConfigs();
