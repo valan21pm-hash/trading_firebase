@@ -295,6 +295,56 @@ app.post('/api/feedback/reload', async (req, res) => {
     res.status(500).json({ success: false, error: e.message });
   }
 });
+
+app.get('/api/backup/export', (req, res) => {
+  try {
+    const data = {
+      paperDailyLogicLogs: botData.paper.dailyLogicLogs || [],
+      liveDailyLogicLogs: botData.live.dailyLogicLogs || [],
+      paperLogs: botData.paper.logs || [],
+      liveLogs: botData.live.logs || []
+    };
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename=trading_bot_logs_backup.json');
+    res.send(JSON.stringify(data, null, 2));
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/backup/import', express.json({ limit: '50mb' }), (req, res) => {
+  try {
+    const { paperDailyLogicLogs, liveDailyLogicLogs, paperLogs, liveLogs } = req.body;
+    
+    if (paperDailyLogicLogs) {
+      botData.paper.dailyLogicLogs = mergeLogicLogs(botData.paper.dailyLogicLogs || [], paperDailyLogicLogs).slice(-3000);
+    }
+    if (liveDailyLogicLogs) {
+      botData.live.dailyLogicLogs = mergeLogicLogs(botData.live.dailyLogicLogs || [], liveDailyLogicLogs).slice(-3000);
+    }
+    if (paperLogs) {
+      botData.paper.logs = mergeOperationalLogs(botData.paper.logs || [], paperLogs).slice(0, 2000);
+    }
+    if (liveLogs) {
+      botData.live.logs = mergeOperationalLogs(botData.live.logs || [], liveLogs).slice(0, 2000);
+    }
+    
+    saveLogsToBackupFile();
+    
+    res.json({
+      success: true,
+      message: 'Backup importato e unito con successo!',
+      counts: {
+        paperLogicLogs: botData.paper.dailyLogicLogs?.length || 0,
+        liveLogicLogs: botData.live.dailyLogicLogs?.length || 0,
+        paperLogs: botData.paper.logs?.length || 0,
+        liveLogs: botData.live.logs?.length || 0
+      }
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
 app.get('/api/llm/configs', (req, res) => {
   const service = LLMProviderService.getInstance();
   const configs = service.getConfigs();
@@ -996,6 +1046,74 @@ const botData = {
   }
 };
 
+function mergeLogicLogs(existing: any[], incoming: any[]): any[] {
+  const map = new Map();
+  if (Array.isArray(existing)) {
+    existing.forEach(item => {
+      if (item && item.timestamp) {
+        map.set(`${item.timestamp}_${item.symbol}_${item.action}`, item);
+      }
+    });
+  }
+  if (Array.isArray(incoming)) {
+    incoming.forEach(item => {
+      if (item && item.timestamp) {
+        map.set(`${item.timestamp}_${item.symbol}_${item.action}`, item);
+      }
+    });
+  }
+  return Array.from(map.values()).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+function mergeOperationalLogs(existing: string[], incoming: string[]): string[] {
+  const allLogs = [
+    ...(Array.isArray(existing) ? existing : []),
+    ...(Array.isArray(incoming) ? incoming : [])
+  ];
+  const set = new Set(allLogs);
+  return Array.from(set).sort((a, b) => {
+    const tA = a.match(/^\[(.*?)\]/)?.[1] || '';
+    const tB = b.match(/^\[(.*?)\]/)?.[1] || '';
+    return tB.localeCompare(tA);
+  });
+}
+
+function saveLogsToBackupFile() {
+  try {
+    const dataToSave = {
+      paperDailyLogicLogs: botData.paper.dailyLogicLogs || [],
+      liveDailyLogicLogs: botData.live.dailyLogicLogs || [],
+      paperLogs: botData.paper.logs || [],
+      liveLogs: botData.live.logs || []
+    };
+    fs.writeFileSync('./local_logs_backup.json', JSON.stringify(dataToSave, null, 2), 'utf8');
+    console.log('[Backup] Saved local logs backup file successfully.');
+  } catch (err: any) {
+    console.error('[Backup] Error saving local logs backup file:', err.message);
+  }
+}
+
+function loadLogsFromBackupFile() {
+  try {
+    if (fs.existsSync('./local_logs_backup.json')) {
+      const data = fs.readFileSync('./local_logs_backup.json', 'utf8');
+      const parsed = JSON.parse(data);
+      if (parsed.paperDailyLogicLogs) botData.paper.dailyLogicLogs = parsed.paperDailyLogicLogs;
+      if (parsed.liveDailyLogicLogs) botData.live.dailyLogicLogs = parsed.liveDailyLogicLogs;
+      if (parsed.paperLogs) botData.paper.logs = parsed.paperLogs;
+      if (parsed.liveLogs) botData.live.logs = parsed.liveLogs;
+      console.log('[Backup] Loaded local logs backup file successfully.');
+      return true;
+    }
+  } catch (err: any) {
+    console.error('[Backup] Error loading local logs backup file:', err.message);
+  }
+  return false;
+}
+
+// Save backup to file every 30 seconds
+setInterval(saveLogsToBackupFile, 30000);
+
 async function saveBotStatus() {
   if (!db) return;
   try {
@@ -1061,13 +1179,16 @@ async function addLogicLog(mode: 'paper' | 'live', log: { timestamp: string; sym
     botData[mode].dailyLogicLogs = [];
   }
   botData[mode].dailyLogicLogs.push(log);
-  if (botData[mode].dailyLogicLogs.length > 500) {
-    botData[mode].dailyLogicLogs = botData[mode].dailyLogicLogs.slice(-500);
+  if (botData[mode].dailyLogicLogs.length > 3000) {
+    botData[mode].dailyLogicLogs = botData[mode].dailyLogicLogs.slice(-3000);
   }
   saveLogicLog(mode, log).catch(err => console.error('[Firebase] Error saving logic log:', err));
 }
 
 async function loadStateFromFirestore() {
+  // 1. Carica prima i log salvati nel backup locale su disco per garantire l'accessibilità immediata
+  loadLogsFromBackupFile();
+  
   if (!db) return;
   try {
     console.log('[Firebase] Loading state from Firestore...');
@@ -1151,8 +1272,8 @@ async function loadStateFromFirestore() {
                 fetchedLogs.push(`[${data.timestamp}] ${data.message}`);
               }
             });
-            // Limit to 1000 per mode
-            botData[mode].logs = fetchedLogs.slice(0, 1000);
+            // Unisci i log di Firestore con quelli caricati dal backup locale
+            botData[mode].logs = mergeOperationalLogs(botData[mode].logs || [], fetchedLogs).slice(0, 2000);
           } else {
             botData[mode].logs = d.logs ?? botData[mode].logs;
           }
@@ -1183,8 +1304,9 @@ async function loadStateFromFirestore() {
             });
           }
         });
-        botData[mode].dailyLogicLogs = loadedLogicLogs.slice(0, 500).reverse();
-        console.log(`[Firebase] Loaded ${botData[mode].dailyLogicLogs.length} logic logs for ${mode}.`);
+        // Unisci i log decisionali con quelli del backup locale
+        botData[mode].dailyLogicLogs = mergeLogicLogs(botData[mode].dailyLogicLogs || [], loadedLogicLogs).slice(-3000);
+        console.log(`[Firebase] Loaded and merged ${botData[mode].dailyLogicLogs.length} logic logs for ${mode}.`);
       } catch (err) {
         console.error(`[Firebase] Error loading logic logs for ${mode}:`, err);
       }
@@ -1200,12 +1322,12 @@ function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   
   if (mode === 'paper' || mode === 'system') {
     botData.paper.logs.unshift(logMsg);
-    if (botData.paper.logs.length > 1000) botData.paper.logs = botData.paper.logs.slice(0, 1000);
+    if (botData.paper.logs.length > 2000) botData.paper.logs = botData.paper.logs.slice(0, 2000);
     saveBotData('paper').catch(err => console.error('[Firebase Error] Error saving paper logs:', err));
   }
   if (mode === 'live' || mode === 'system') {
     botData.live.logs.unshift(logMsg);
-    if (botData.live.logs.length > 1000) botData.live.logs = botData.live.logs.slice(0, 1000);
+    if (botData.live.logs.length > 2000) botData.live.logs = botData.live.logs.slice(0, 2000);
     saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live logs:', err));
   }
 
@@ -2148,10 +2270,27 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
           if (data.mode === 'paper') paperLogsArr.push(data);
           else if (data.mode === 'live') liveLogsArr.push(data);
         });
+        
+        // Fallback automatico ai log locali in-memory se Firestore non ha dati o fallisce
+        if (paperLogsArr.length === 0) {
+          const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
+          paperLogsArr.push(...localPaper);
+        }
+        if (liveLogsArr.length === 0) {
+          const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
+          liveLogsArr.push(...localLive);
+        }
+
         if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
         if (liveLogsArr.length > 0) liveLogicLogs = JSON.stringify(liveLogsArr);
       } catch (err) {
-        console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero:', err);
+        console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero, uso dei log in-memory:', err);
+        const startOfDay = todayStr + 'T00:00:00.000Z';
+        const endOfDay = todayStr + 'T23:59:59.999Z';
+        const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
+        const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
+        if (localPaper.length > 0) paperLogicLogs = JSON.stringify(localPaper);
+        if (localLive.length > 0) liveLogicLogs = JSON.stringify(localLive);
       }
     }
     
@@ -2290,12 +2429,16 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
           console.error('[Firebase] Errore recupero log per debrief periodico:', err);
         }
       }
-    } else {
-      // Fallback in-memory
+    }
+
+    // Fallback automatico in-memory se Firestore ha riscontrato errori, quote superate o non ha ritornato dati
+    if (rangeLogicLogs.length === 0) {
+      console.log(`[Debriefing Periodico AI] Nessun log da Firestore o errore di quota. Uso del fallback in-memory per ${mode}...`);
       const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];
       rangeLogicLogs = sourceLogs.filter(l => {
         return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
       });
+      console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log locali.`);
     }
 
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0

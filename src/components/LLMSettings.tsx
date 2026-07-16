@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Settings, CheckCircle2, AlertCircle, Download, Upload, RefreshCw } from 'lucide-react';
 
 interface ProviderConfig {
   provider: string;
@@ -26,6 +26,70 @@ export function LLMSettings() {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [modelInput, setModelInput] = useState('');
   const [orderInput, setOrderInput] = useState<string>('');
+
+  // Backup states and handlers
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
+
+  const handleExport = async () => {
+    setBackupLoading(true);
+    setBackupError(null);
+    setBackupSuccess(null);
+    try {
+      const res = await fetch('/api/backup/export');
+      if (!res.ok) throw new Error('Errore durante il download del backup');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trading_bot_logs_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setBackupSuccess('Backup esportato con successo!');
+    } catch (err: any) {
+      setBackupError(err.message || 'Errore durante l\'esportazione.');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setBackupLoading(true);
+    setBackupError(null);
+    setBackupSuccess(null);
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+        
+        const response = await fetch('/api/backup/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+          setBackupSuccess(`Backup importato con successo! Uniti: ${result.counts.paperLogicLogs} log Paper e ${result.counts.liveLogicLogs} log Live.`);
+        } else {
+          throw new Error(result.error || 'Errore sconosciuto');
+        }
+      } catch (err: any) {
+        setBackupError('File non valido: ' + (err.message || 'Controlla la struttura del JSON.'));
+      } finally {
+        setBackupLoading(false);
+        e.target.value = '';
+      }
+    };
+    reader.readAsText(file);
+  };
 
   useEffect(() => {
     fetchConfigs();
@@ -296,6 +360,70 @@ export function LLMSettings() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Sezione Gestione Backup dei Log */}
+      <div className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 mt-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-indigo-400" />
+            <h5 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Strategia Precauzionale & Backup Log
+            </h5>
+          </div>
+          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[9px] uppercase font-mono font-medium flex items-center gap-1">
+            ● Locale Resiliente
+          </span>
+        </div>
+
+        <p className="text-[11px] text-slate-400 leading-relaxed">
+          I log operativi e decisionali (loop al bot) vengono salvati e aggregati continuamente sia in tempo reale su 
+          Firestore (Firebase), sia localmente sul server in un file di backup persistente a intervalli di 30 secondi. 
+          Se Firebase dovesse esaurire le quote di lettura, il bot utilizzerà automaticamente i dati locali 
+          senza interrompere l'analisi dei debriefing settimanali.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          <button
+            onClick={handleExport}
+            disabled={backupLoading}
+            className="flex items-center justify-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 hover:border-indigo-500/50 text-indigo-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50 animate-pulse-subtle"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Esporta Backup Log (JSON)
+          </button>
+
+          <label className="flex items-center justify-center gap-2 bg-slate-800/60 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all cursor-pointer disabled:opacity-50 text-center">
+            <Upload className="w-3.5 h-3.5" />
+            Importa Backup Log (JSON)
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleImport}
+              disabled={backupLoading}
+              className="hidden"
+            />
+          </label>
+        </div>
+
+        {backupLoading && (
+          <div className="flex items-center gap-2 text-xs text-slate-400 justify-center py-1">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+            <span>Elaborazione del backup in corso...</span>
+          </div>
+        )}
+
+        {backupError && (
+          <div className="p-2 bg-rose-500/10 border border-rose-500/20 rounded text-rose-400 text-xs">
+            {backupError}
+          </div>
+        )}
+
+        {backupSuccess && (
+          <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-emerald-400 text-xs">
+            {backupSuccess}
+          </div>
+        )}
       </div>
     </div>
   );
