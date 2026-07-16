@@ -119,9 +119,31 @@ export function LLMSettings() {
 
   return (
     <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-5 animate-in fade-in duration-200 mt-2">
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        <Settings className="w-4 h-4 text-indigo-400" />
-        <h4 className="text-xs font-bold text-indigo-400 uppercase">Configurazione Multi-LLM</h4>
+      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-indigo-400" />
+          <h4 className="text-xs font-bold text-indigo-400 uppercase">Configurazione Multi-LLM</h4>
+        </div>
+        <button 
+          onClick={async () => {
+            setLoading(true);
+            try {
+              const res = await fetch('/api/llm/sync', { method: 'POST' });
+              if (res.ok) {
+                setStatusMsg({ type: 'success', text: 'Chiavi API e configurazioni reimportate!' });
+                await fetchConfigs();
+              }
+            } catch (e) {
+              setStatusMsg({ type: 'error', text: 'Errore di reimportazione' });
+            } finally {
+              setLoading(false);
+              setTimeout(() => setStatusMsg(null), 3000);
+            }
+          }}
+          className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded transition-colors flex items-center gap-1"
+        >
+          🔄 Reimporta Chiavi/Config
+        </button>
       </div>
 
       {statusMsg && (

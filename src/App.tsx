@@ -3053,13 +3053,32 @@ export default function App() {
                <MessageSquare className="w-5 h-5 text-gray-500" />
                Loop di Correzione (Invia Regole al Bot)
              </div>
-             <button 
-               onClick={fetchStatus}
-               className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded"
-               title="Ricarica regole dal Database"
-             >
-               🔄 Sincronizza Cloud
-             </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/feedback/reload", { method: "POST" });
+                    if (res.ok) {
+                      showToast("Regole sincronizzate da Firebase!", "success", "Sincronizzazione");
+                      fetchStatus();
+                    } else {
+                      showToast("Errore sincronizzazione.", "error", "Sincronizzazione");
+                    }
+                  } catch (e) {
+                    showToast("Errore sincronizzazione.", "error", "Sincronizzazione");
+                  }
+                }}
+                className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded mr-2"
+                title="Ricarica regole da Firebase"
+              >
+                🔄 Reimporta
+              </button>
+              <button 
+                onClick={fetchStatus}
+                className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded"
+                title="Ricarica regole dal Database"
+              >
+                🔄 Sincronizza Cloud
+              </button>
            </h2>
            <form onSubmit={async (e) => {
              e.preventDefault();

@@ -64,6 +64,29 @@ import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProvi
 let db: any = null;
 let firebaseApp: any = null;
 
+const logBuffer: { collection: string; data: any }[] = [];
+
+async function flushLogs() {
+  if (!db || logBuffer.length === 0) return;
+  const batch = db.batch();
+  const logsToFlush = logBuffer.splice(0, Math.min(logBuffer.length, 500));
+  
+  for (const log of logsToFlush) {
+    const docRef = db.collection(log.collection).doc();
+    batch.set(docRef, log.data);
+  }
+  
+  try {
+    await batch.commit();
+    console.log(`[Firebase] Flushed ${logsToFlush.length} logs to Firestore.`);
+  } catch (err: any) {
+    console.error('[Firebase] Error flushing logs batch:', err);
+  }
+}
+
+// Flush every 60 seconds
+setInterval(flushLogs, 60000);
+
 async function initializeAndTestFirestore() {
   try {
     let projectId = 'project-88b687bc-f709-4722-bc0';
@@ -240,6 +263,38 @@ app.post('/api/trading/credentials', async (req, res) => {
 });
 
 // --- MULTI-LLM MANAGEMENT ENDPOINTS ---
+app.post('/api/llm/sync', async (req, res) => {
+  if (!db) return res.json({ success: false, error: 'Database non disponibile' });
+  try {
+    const llmConfigsDoc = await db.collection('settings').doc('llm').get();
+    if (llmConfigsDoc.exists) {
+      const configsData = llmConfigsDoc.data() || {};
+      const llmService = LLMProviderService.getInstance();
+      for (const provider of ['gemini', 'mistral', 'deepseek', 'groq', 'anthropic'] as const) {
+        if (configsData[provider]) {
+          llmService.updateConfig(provider, configsData[provider]);
+        }
+      }
+    }
+    res.json({ success: true, message: 'LLM configs sincronizzate' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/api/feedback/reload', async (req, res) => {
+  if (!db) return res.json({ success: false, error: 'Database non disponibile' });
+  try {
+    const statusDoc = await db.collection('settings').doc('bot').get();
+    if (statusDoc.exists) {
+      const data = statusDoc.data() || {};
+      botStatus.userFeedbackRules = data.userFeedbackRules ?? [];
+    }
+    res.json({ success: true, message: 'Regole sincronizzate', userFeedbackRules: botStatus.userFeedbackRules });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 app.get('/api/llm/configs', (req, res) => {
   const service = LLMProviderService.getInstance();
   const configs = service.getConfigs();
@@ -988,19 +1043,17 @@ async function saveBotData(mode: 'paper' | 'live') {
 }
 
 async function saveLogicLog(mode: 'paper' | 'live', log: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }) {
-  if (!db) return;
-  try {
-    await db.collection('logic_logs').add({
+  logBuffer.push({
+    collection: 'logic_logs',
+    data: {
       mode,
       timestamp: log.timestamp,
       symbol: log.symbol,
       action: log.action,
       reasoning: log.reasoning,
       price: log.price || null
-    });
-  } catch (err: any) {
-    console.error('[Firebase] Error saving logic log:', err);
-  }
+    }
+  });
 }
 
 async function addLogicLog(mode: 'paper' | 'live', log: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }) {
@@ -1156,21 +1209,25 @@ function addLog(mode: 'paper' | 'live' | 'system', message: string) {
     saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live logs:', err));
   }
 
-  if (db) {
-    const targetMode = mode === 'system' ? 'paper' : mode;
-    db.collection('operational_logs').add({
+  const targetMode = mode === 'system' ? 'paper' : mode;
+  logBuffer.push({
+    collection: 'operational_logs',
+    data: {
       mode: targetMode,
       message: message,
       timestamp: timestamp
-    }).catch((err: any) => console.error('[Firebase] Error saving operational log:', err));
+    }
+  });
 
-    if (mode === 'system') {
-      db.collection('operational_logs').add({
+  if (mode === 'system') {
+    logBuffer.push({
+      collection: 'operational_logs',
+      data: {
         mode: 'live',
         message: message,
         timestamp: timestamp
-      }).catch((err: any) => console.error('[Firebase] Error saving operational log for system/live:', err));
-    }
+      }
+    });
   }
   
   console.log(logMsg);
@@ -2210,6 +2267,9 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
   }
 
   try {
+    // Forza il salvataggio dei log in sospeso prima dell'analisi
+    await flushLogs();
+
     let rangeLogicLogs: any[] = [];
     if (db) {
       if (mode === 'paper' || mode === 'live') {
