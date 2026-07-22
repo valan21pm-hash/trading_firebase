@@ -181,6 +181,7 @@ async function getBrokerCredentials(broker: string, env: string) {
 
 const PORT = process.env.PORT || 3000;
 let localCredentialsFallback: Record<string, any> = {};
+const localHighestPrices: Record<string, number> = {};
 try {
   if (fs.existsSync('credentials_fallback.json')) {
     localCredentialsFallback = JSON.parse(fs.readFileSync('credentials_fallback.json', 'utf8'));
@@ -283,16 +284,29 @@ app.post('/api/llm/sync', async (req, res) => {
 });
 
 app.post('/api/feedback/reload', async (req, res) => {
-  if (!db) return res.json({ success: false, error: 'Database non disponibile' });
   try {
-    const statusDoc = await db.collection('settings').doc('bot').get();
-    if (statusDoc.exists) {
-      const data = statusDoc.data() || {};
-      botStatus.userFeedbackRules = data.userFeedbackRules ?? [];
+    if (db) {
+      await loadStateFromFirestore();
+      await autoDetectCredentials();
+      res.json({
+        success: true,
+        message: 'Stato, Regole, LLM e Credenziali Alpaca sincronizzati da Firebase!',
+        userFeedbackRules: botStatus.userFeedbackRules || []
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'Regole aggiornate dallo stato locale (DB non collegato)',
+        userFeedbackRules: botStatus.userFeedbackRules || []
+      });
     }
-    res.json({ success: true, message: 'Regole sincronizzate', userFeedbackRules: botStatus.userFeedbackRules });
   } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message });
+    console.error('[Firebase Error] Reload feedback rules error:', e.message);
+    res.json({
+      success: true,
+      message: 'Sincronizzato dallo stato locale (Quota Firebase/Rete temporaneamente non disponibile)',
+      userFeedbackRules: botStatus.userFeedbackRules || []
+    });
   }
 });
 
@@ -1868,6 +1882,35 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const params = STRATEGY_PARAMS[activeStrategy];
       const targetTpPct = params.tpPct / 100;
 
+      // Aggiorna picco massimo prezzo per trailing stop
+      const currentPrice = parseFloat(pos.current_price || '0');
+      const avgEntryPrice = parseFloat(pos.avg_entry_price || '0');
+      const costBasis = parseFloat(pos.market_value || '0') - profitAmt;
+      const slDollar = costBasis * (params.slPct / 100);
+      const tpDollar = costBasis * (params.tpPct / 100);
+
+      if (!localHighestPrices[symbol] || currentPrice > localHighestPrices[symbol]) {
+        localHighestPrices[symbol] = currentPrice;
+      }
+      const peakPrice = localHighestPrices[symbol];
+
+      const riskDecision = RiskManagementService.evaluateClosure({
+        id: symbol,
+        asset: symbol,
+        currentValue: parseFloat(pos.market_value || '0'),
+        openPrice: avgEntryPrice,
+        currentPrice: currentPrice,
+        unrealizedProfit: profitAmt,
+        highestPrice: peakPrice
+      }, botStatus.historicalProfits || 0, {
+        y: botStatus.y || 1,
+        defaultSL: slDollar,
+        defaultTP: tpDollar,
+        trailingStop: params.tsPct,
+        targetTpPct: params.tpPct,
+        isAlpaca: true
+      });
+
       let shouldClose = false;
       let closeReason = '';
 
@@ -1879,12 +1922,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (!isSentimentError && sentimentScore <= 0) {
         shouldClose = true;
         closeReason = `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
-      } else if (profitPct >= targetTpPct) {
+      } else if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
-        closeReason = `Take Profit Strategia ${activeStrategy} (${(targetTpPct * 100).toFixed(2)}%) raggiunto (+${(profitPct * 100).toFixed(2)}%).`;
+        closeReason = riskDecision.reason;
       } else if (isPreCloseWindow && profitAmt > 0) {
         shouldClose = true;
         closeReason = `Chiusura EOD (15 min alla fine): Profitto di $${profitAmt.toFixed(2)} garantito.`;
+      } else if (profitPct >= targetTpPct) {
+        addLog(mode as 'paper' | 'live', `[Strategia ${activeStrategy}] ${symbol} ha raggiunto la soglia di attivazione (+${(profitPct * 100).toFixed(2)}% >= ${(targetTpPct * 100).toFixed(2)}%). Trailing Stop (${params.tsPct}%) ATTIVO in inseguimento del picco massimo!`);
       }
 
       if (shouldClose) {
@@ -3500,19 +3545,25 @@ async function executeAlpacaRealtimeCheck() {
         defaultSL: slDollar,
         defaultTP: tpDollar,
         trailingStop: trailingStopPercent,
+        targetTpPct: params.tpPct,
         isAlpaca: true
       };
 
       // Recuperiamo/Aggiorniamo il massimo prezzo raggiunto (High Water Mark) per il trailing stop
-      let highestPrice = currentPrice;
+      if (!localHighestPrices[symbol] || currentPrice > localHighestPrices[symbol]) {
+        localHighestPrices[symbol] = currentPrice;
+      }
+      let highestPrice = Math.max(currentPrice, localHighestPrices[symbol]);
+
       if (db) {
         try {
           const docRef = db.collection('alpaca_positions').doc(symbol);
           const docSnap = await docRef.get();
           if (docSnap.exists) {
             const data = docSnap.data();
-            if (data && data.highestPrice && data.highestPrice > currentPrice) {
+            if (data && data.highestPrice && data.highestPrice > highestPrice) {
               highestPrice = data.highestPrice;
+              localHighestPrices[symbol] = highestPrice;
             }
           }
           // Sincronizza lo stato corrente su Firestore incluso il massimo prezzo storico di picco e la strategia attiva

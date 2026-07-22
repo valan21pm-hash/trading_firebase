@@ -1382,9 +1382,9 @@ function AccountPanel({
                         })}
                       </div>
                       <div className="text-[10px] text-gray-400 font-mono italic">
-                        {pos.activeStrategy === 'Prudente' && 'Stop Loss: -0.40% | Take Profit: +0.80% | Trailing: 0.30%'}
-                        {pos.activeStrategy === 'Conservativa' && 'Stop Loss: -0.75% | Take Profit: +1.50% | Trailing: 1.00%'}
-                        {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Take Profit: +2.50% | Trailing: 0.50%'}
+                        {pos.activeStrategy === 'Prudente' && 'Stop Loss: -0.40% | Target Attivazione: +0.80% | Trailing: 0.30%'}
+                        {pos.activeStrategy === 'Conservativa' && 'Stop Loss: -0.75% | Target Attivazione: +1.50% | Trailing: 1.00%'}
+                        {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Target Attivazione: +2.50% | Trailing: 0.50%'}
                       </div>
                     </div>
                   </div>
@@ -3057,14 +3057,15 @@ export default function App() {
                 onClick={async () => {
                   try {
                     const res = await fetch("/api/feedback/reload", { method: "POST" });
-                    if (res.ok) {
-                      showToast("Regole sincronizzate da Firebase!", "success", "Sincronizzazione");
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                      showToast(data.message || "Regole sincronizzate!", "success", "Sincronizzazione");
                       fetchStatus();
                     } else {
-                      showToast("Errore sincronizzazione.", "error", "Sincronizzazione");
+                      showToast(data.error || "Errore durante la sincronizzazione.", "error", "Sincronizzazione");
                     }
                   } catch (e) {
-                    showToast("Errore sincronizzazione.", "error", "Sincronizzazione");
+                    showToast("Errore di connessione.", "error", "Sincronizzazione");
                   }
                 }}
                 className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded mr-2"

@@ -10,9 +10,11 @@ export interface Position {
 
 export interface RiskConfig {
   y: number; // Parametro Y della strategia
-  defaultSL?: number; // Stop Loss personalizzato (assoluto o percentuale)
-  defaultTP?: number; // Take Profit personalizzato
-  trailingStop?: number; // Trailing Stop personalizzato (percentuale, es: 1 = 1%)
+  defaultSL?: number; // Stop Loss personalizzato ($)
+  defaultTP?: number; // Target di attivazione del Trailing Stop ($)
+  trailingStop?: number; // Distanza Trailing Stop in % (es: 1 = 1%)
+  targetTpPct?: number; // Target di attivazione % (es: 2.50 = +2.50%)
+  isAlpaca?: boolean;
 }
 
 /**
@@ -21,7 +23,9 @@ export interface RiskConfig {
 export class RiskManagementService {
   
   /**
-   * Determina l'azione da intraprendere sulla posizione corrente basandosi sulle regole di risk management ultra-conservative.
+   * Determina l'azione da intraprendere sulla posizione corrente basandosi sulle regole di risk management.
+   * Il Take Profit agisce ora come 'Activation Price' per il Trailing Stop: raggiunto il target di profitto,
+   * il Trailing Stop si attiva e insegue il picco massimo (highestPrice) senza chiudere prematuramente la posizione.
    * @param position I dati in tempo reale della posizione aperta
    * @param historicalProfits Il totale dei profitti storici accumulati
    * @param config Configurazione della strategia (es. y = 1)
@@ -32,16 +36,10 @@ export class RiskManagementService {
     historicalProfits: number, 
     config: RiskConfig
   ): { action: 'CLOSE'; reason: string } | null {
-    const { unrealizedProfit, currentValue, asset, currentPrice, highestPrice } = position;
+    const { unrealizedProfit, currentValue, openPrice, currentPrice, highestPrice } = position;
     const Y = config.y || 1;
 
-    // Arrotondamento a 2 decimali prima di eseguire confronti
-    const roundedProfit = Math.round(unrealizedProfit * 100) / 100;
-    const roundedValue = Math.round(currentValue * 100) / 100;
-
-    // --- 1. CONFIGURAZIONI AGGIUNTIVE DI GESTIONE PERSONALIZZATA DELLA POSIZIONE ---
-
-    // Stop Loss (dalla strategia della singola posizione)
+    // --- 1. STOP LOSS (Limite di perdita) ---
     if (config.defaultSL !== undefined && config.defaultSL !== 0) {
       const slLimit = config.defaultSL < 0 ? config.defaultSL : -config.defaultSL;
       if (unrealizedProfit <= slLimit) {
@@ -52,40 +50,47 @@ export class RiskManagementService {
       }
     }
 
-    // Take Profit (dalla strategia della singola posizione)
-    if (config.defaultTP !== undefined && config.defaultTP !== 0) {
-      if (unrealizedProfit >= config.defaultTP) {
-        return { 
-          action: 'CLOSE', 
-          reason: `Take Profit Raggiunto ($${unrealizedProfit.toFixed(2)} >= $${config.defaultTP.toFixed(2)})` 
-        };
+    // --- 2. TRAILING STOP CON ATTIVAZIONE DINAMICA AL TARGET PROFIT ---
+    // Il Take Profit diviene la soglia di attivazione del Trailing Stop (Activation Price)
+    const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
+
+    if (openPrice && openPrice > 0 && config.trailingStop && config.trailingStop > 0) {
+      const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
+      
+      // Target % di attivazione (es: +0.80% Prudente, +1.50% Conservativa, +2.50% Aggressiva)
+      const activationTargetPct = config.targetTpPct !== undefined 
+        ? config.targetTpPct 
+        : (config.defaultTP && currentValue > 0 
+            ? (config.defaultTP / Math.max(1, currentValue - unrealizedProfit)) * 100 
+            : 0);
+
+      // Verifichiamo se il picco massimo ha raggiunto o superato la soglia di attivazione
+      const isActivated = highestProfitPct >= (activationTargetPct - 0.001);
+
+      if (isActivated) {
+        const tsPercent = config.trailingStop;
+        const trailingStopPrice = peakPrice * (1 - tsPercent / 100);
+
+        if (currentPrice <= trailingStopPrice) {
+          return {
+            action: 'CLOSE',
+            reason: `Trailing Stop (${tsPercent}%) attivato dopo superamento Target (+${activationTargetPct.toFixed(2)}%). Picco max: $${peakPrice.toFixed(2)}, Limite trailing: $${trailingStopPrice.toFixed(2)}, Attuale: $${currentPrice.toFixed(2)}`
+          };
+        }
       }
     }
 
-    // Trailing Stop Loss (dalla strategia della singola posizione)
-    if (config.trailingStop !== undefined && config.trailingStop > 0 && highestPrice && highestPrice > 0) {
-      const tsPercent = config.trailingStop;
-      const trailingStopPrice = highestPrice * (1 - tsPercent / 100);
-      if (currentPrice <= trailingStopPrice && currentPrice < highestPrice) {
-        return {
-          action: 'CLOSE',
-          reason: `Trailing Stop Loss di ${tsPercent}% Raggiunto (Picco massimo: $${highestPrice.toFixed(2)}, Prezzo Limite: $${trailingStopPrice.toFixed(2)}, Prezzo Attuale: $${currentPrice.toFixed(2)})`
-        };
-      }
-    }
-
-    // Se la posizione ha TP/SL specifici (che ora hanno tutte grazie alla strategia), 
-    // ignoriamo le rigide regole globali che andrebbero a chiudere la posizione prematuramente,
-    // garantendo che i limiti della singola posizione vengano rispettati.
-    if (config.defaultTP !== undefined || config.defaultSL !== undefined) {
+    // Se la posizione ha configurazioni di TP/SL (es. strategie Alpaca), lasciamo che il Trailing Stop e lo Stop Loss guidino la posizione
+    if (config.defaultTP !== undefined || config.defaultSL !== undefined || config.targetTpPct !== undefined) {
       return null;
     }
 
-    // --- 2. RIGIDE REGOLE DI GESTIONE DEL RISCHIO (Fallback) ---
+    // --- 3. REGOLE DI RISCHIO GENERICAL FALLBACK ---
+    const roundedProfit = Math.round(unrealizedProfit * 100) / 100;
+    const roundedValue = Math.round(currentValue * 100) / 100;
 
-    // A. Regola y = 1: Chiusura a profitti storici pari a 2Y fino a un massimo di 3€
     if (Y === 1) {
-      const targetProfit = 2 * Y; // 2€
+      const targetProfit = 2 * Y;
       const maxProfitLimit = 3.00;
       if (roundedProfit >= targetProfit && roundedProfit <= maxProfitLimit) {
         return {
@@ -95,8 +100,6 @@ export class RiskManagementService {
       }
     }
 
-    // B. Chiusura a esattamente 2€ (Esclusiva)
-    // "La chiusura a 2€ è ammessa ESCLUSIVAMENTE se i profitti sono esattamente pari a 2€, altrimenti rimane aperta"
     if (roundedProfit === 2.00) {
       return {
         action: 'CLOSE',
@@ -104,15 +107,11 @@ export class RiskManagementService {
       };
     }
 
-    // C. Perdita minima a pareggio (Break-Even) per posizioni >= 2€
-    // "La perdita minima da considerare è di 0.50€ a pareggio (break-even) su posizioni con valore >= 2€"
-    if (roundedValue >= 2.00) {
-      if (roundedProfit <= -0.50) {
-        return {
-          action: 'CLOSE',
-          reason: `Break-even violato: Perdita di ${roundedProfit}€ su posizione di valore >= 2€`
-        };
-      }
+    if (roundedValue >= 2.00 && roundedProfit <= -0.50) {
+      return {
+        action: 'CLOSE',
+        reason: `Break-even violato: Perdita di ${roundedProfit}€ su posizione di valore >= 2€`
+      };
     }
 
     return null;
