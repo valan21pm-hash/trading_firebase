@@ -1692,6 +1692,22 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
 }
 
 async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: string): Promise<boolean> {
+  const now = new Date();
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) {
+    return false; // Weekend chiuso a costo zero (nessuna chiamata API)
+  }
+
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const timeInMinutes = hour * 60 + minute;
+
+  // Borsa USA aperta tra 13:30 (810 min UTC) e 21:00 (1260 min UTC).
+  // Se siamo ampiamente fuori (es. prima delle 12:30 UTC o dopo le 21:30 UTC), restituisce false senza chiamate API.
+  if (timeInMinutes < 750 || timeInMinutes > 1300) {
+    return false;
+  }
+
   try {
     const response = await fetch(`${baseUrl}/clock`, {
       headers: {
@@ -1708,17 +1724,6 @@ async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: st
   }
   
   // Fallback in caso di errore API: controlla orario standard USA (lunedì-venerdì, 13:30 - 21:00 UTC)
-  const now = new Date();
-  const day = now.getUTCDay();
-  if (day === 0 || day === 6) {
-    return false; // Weekend chiuso
-  }
-  
-  const hour = now.getUTCHours();
-  const minute = now.getUTCMinutes();
-  const timeInMinutes = hour * 60 + minute;
-  
-  // 13:30 - 21:00 UTC (9:30 AM - 4:00 PM EST/EDT)
   return timeInMinutes >= 810 && timeInMinutes <= 1260;
 }
 
@@ -3481,6 +3486,11 @@ async function executeAlpacaRealtimeCheck() {
   const mode = botStatus.tradingMode || 'paper';
   const { apiKey, secretKey, isConfigured, baseUrl } = getAlpacaConfig(mode);
   if (!isConfigured) return;
+
+  // Fuori orario o durante il weekend le posizioni sono congelate:
+  // evitiamo chiamate inutili ad Alpaca e azzeriamo l'uso di CPU/memoria
+  const isOpen = await isAlpacaMarketOpen(baseUrl, apiKey, secretKey);
+  if (!isOpen) return;
 
   try {
     const posResponse = await fetch(`${baseUrl}/positions`, {
