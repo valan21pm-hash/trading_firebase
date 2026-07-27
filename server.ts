@@ -1691,6 +1691,23 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
   return basePrices[symbol] || 100.0;
 }
 
+async function sendToGoogleSheets(payload: { eventType: string; mode?: string; data: any }) {
+  const url = 'https://script.google.com/macros/s/AKfycbxHvCVIH5ttVJzvgkqXHq2srws1c1Ghm4UXb4NqtVFHRrJQDH07khXgMDdrWpLd9IKGwg/exec';
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...payload
+      }),
+      redirect: 'follow'
+    });
+  } catch (err: any) {
+    console.error('[Google Sheets Webhook Error]', err.message);
+  }
+}
+
 async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: string): Promise<boolean> {
   const now = new Date();
   const day = now.getUTCDay();
@@ -1788,6 +1805,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (posResponse.ok) {
         openPositions = await posResponse.json();
       }
+      sendToGoogleSheets({
+        eventType: 'trading_cycle',
+        mode,
+        data: {
+          balance: botData[mode].balance,
+          buyingPower: currentBuyingPower,
+          openPositionsCount: openPositions.length,
+          openPositions: openPositions.map((p: any) => ({ symbol: p.symbol, qty: p.qty, unrealized_pl: p.unrealized_pl }))
+        }
+      }).catch(err => console.error('[Google Sheets Error]', err));
     } catch (e: any) {
       addLog(mode as 'paper' | 'live', `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
     }
@@ -2398,6 +2425,10 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       suggestedRule: result.suggestedRule,
       timestamp: new Date().toISOString()
     };
+    sendToGoogleSheets({
+      eventType: 'daily_debrief',
+      data: botStatus.latestDailyDebrief
+    }).catch(err => console.error('[Google Sheets Error]', err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
     addLog('system', '[Debriefing AI] Debriefing generato con successo.');
@@ -2410,6 +2441,10 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       quotaExceededTime = Date.now();
       
       botStatus.latestDailyDebrief = fallbackDebrief;
+      sendToGoogleSheets({
+        eventType: 'daily_debrief_fallback',
+        data: fallbackDebrief
+      }).catch(err => console.error('[Google Sheets Error]', err));
       saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief fallback catch:', err));
       
       return res.json({ success: true, debrief: fallbackDebrief });
@@ -2530,6 +2565,11 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 
     const result = JSON.parse(text.trim());
     
+    sendToGoogleSheets({
+      eventType: 'range_debrief',
+      data: { startDate, endDate, mode, analysis: result.analysis, suggestedRule: result.suggestedRule }
+    }).catch(err => console.error('[Google Sheets Error]', err));
+
     addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo.');
     res.json({ 
       success: true, 
@@ -2542,6 +2582,10 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       console.warn(`[Debriefing Periodico AI] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local range-debrief.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
+      sendToGoogleSheets({
+        eventType: 'range_debrief_fallback',
+        data: { startDate, endDate, mode, analysis: fallbackRangeDebrief.analysis, suggestedRule: fallbackRangeDebrief.suggestedRule }
+      }).catch(err => console.error('[Google Sheets Error]', err));
       return res.json({ 
         success: true, 
         analysis: fallbackRangeDebrief.analysis, 
@@ -2564,6 +2608,10 @@ app.post('/api/feedback', (req, res) => {
     }
     botStatus.userFeedbackRules.push(rule);
     addLog('system', `[Feedback Utente] Aggiunta nuova regola: ${rule}`);
+    sendToGoogleSheets({
+      eventType: 'correction_rule',
+      data: { rule }
+    }).catch(err => console.error('[Google Sheets Error]', err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule addition:', err));
     res.json({ success: true, message: 'Regola aggiunta con successo.' });
   } else {
