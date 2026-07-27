@@ -1714,7 +1714,7 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
   return basePrices[symbol] || 100.0;
 }
 
-async function sendToGoogleSheets(payload: { eventType: string; mode?: string; data: any }) {
+async function sendToGoogleSheets(payload: { eventType: string; mode?: string; symbol?: string; action?: string; data: any }) {
   const url = 'https://script.google.com/macros/s/AKfycbxHvCVIH5ttVJzvgkqXHq2srws1c1Ghm4UXb4NqtVFHRrJQDH07khXgMDdrWpLd9IKGwg/exec';
   try {
     await fetch(url, {
@@ -1995,6 +1995,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           action: 'SELL',
           reasoning: closeReason
         });
+        sendToGoogleSheets({
+          eventType: 'trade_action',
+          mode,
+          symbol,
+          action: 'SELL',
+          data: { symbol, action: 'SELL', reason: closeReason, profitAmt }
+        }).catch(err => console.error('[Google Sheets Error]', err));
 
         try {
           const closeResponse = await fetch(`${baseUrl}/positions/${symbol}`, {
@@ -2020,6 +2027,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         } else {
           addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment favorevole: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche.`);
         }
+        sendToGoogleSheets({
+          eventType: 'trade_action',
+          mode,
+          symbol,
+          action: 'HOLD',
+          data: { symbol, action: 'HOLD', sentimentScore, reasoning: sentimentReasoning }
+        }).catch(err => console.error('[Google Sheets Error]', err));
       }
     }
 
@@ -2113,6 +2127,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             action: 'BUY',
             reasoning: `Ordine frazionario simultaneo ($${order.amount.toFixed(2)}) - Sentiment: ${order.sentimentScore.toFixed(2)}: ${order.reasoning}`
           });
+          sendToGoogleSheets({
+            eventType: 'trade_action',
+            mode,
+            symbol: order.symbol,
+            action: 'BUY',
+            data: { symbol: order.symbol, action: 'BUY', amount: order.amount, sentimentScore: order.sentimentScore, reasoning: order.reasoning }
+          }).catch(err => console.error('[Google Sheets Error]', err));
 
           try {
             const orderResponse = await fetch(`${baseUrl}/orders`, {
