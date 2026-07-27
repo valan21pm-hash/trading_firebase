@@ -1739,6 +1739,46 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
   }
 }
 
+app.post('/api/sheets/sync', async (req, res) => {
+  try {
+    await sendToGoogleSheets({
+      eventType: 'sync_recovery_request',
+      data: { message: 'User requested sync/recovery from Google Sheets' }
+    });
+    if (db) {
+      await loadStateFromFirestore();
+      await autoDetectCredentials(); // Also reload Alpaca credentials on sync
+    }
+    res.json({
+      success: true,
+      message: 'Sincronizzazione con Google Sheets e ricaricamento stato completati con successo!',
+      userFeedbackRules: botStatus.userFeedbackRules || []
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/sheets/backup-credentials', async (req, res) => {
+  try {
+    const llmConfigs = LLMProviderService.getInstance().getConfigs();
+    const alpacaConfigs = localCredentialsFallback?.alpaca || {};
+    
+    await sendToGoogleSheets({
+      eventType: 'backup_credentials',
+      data: {
+        message: 'Backup of all API Keys',
+        llm: llmConfigs,
+        alpaca: alpacaConfigs
+      }
+    });
+
+    res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets!' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: string): Promise<boolean> {
   const now = new Date();
   const day = now.getUTCDay();

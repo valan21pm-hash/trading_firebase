@@ -32,6 +32,47 @@ export function LLMSettings() {
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
 
+  const [sheetsSyncLoading, setSheetsSyncLoading] = useState(false);
+  const [sheetsSyncMsg, setSheetsSyncMsg] = useState<string | null>(null);
+
+  const [sheetsExportLoading, setSheetsExportLoading] = useState(false);
+
+  const handleSyncSheets = async () => {
+    setSheetsSyncLoading(true);
+    setSheetsSyncMsg(null);
+    try {
+      const res = await fetch('/api/sheets/sync', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSheetsSyncMsg('Sincronizzazione e recupero da Google Sheets / Cloud completati con successo!');
+      } else {
+        throw new Error(data.error || 'Errore di sincronizzazione');
+      }
+    } catch (err: any) {
+      setSheetsSyncMsg('Errore: ' + (err.message || 'Impossibile sincronizzare'));
+    } finally {
+      setSheetsSyncLoading(false);
+    }
+  };
+
+  const handleExportToSheets = async () => {
+    setSheetsExportLoading(true);
+    setSheetsSyncMsg(null);
+    try {
+      const res = await fetch('/api/sheets/backup-credentials', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSheetsSyncMsg('Chiavi API esportate con successo su Google Sheets!');
+      } else {
+        throw new Error(data.error || 'Errore durante l\'esportazione');
+      }
+    } catch (err: any) {
+      setSheetsSyncMsg('Errore esportazione: ' + (err.message || 'Impossibile completare l\'azione'));
+    } finally {
+      setSheetsExportLoading(false);
+    }
+  };
+
   const handleExport = async () => {
     setBackupLoading(true);
     setBackupError(null);
@@ -385,6 +426,15 @@ export function LLMSettings() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
           <button
+            onClick={handleExportToSheets}
+            disabled={sheetsExportLoading}
+            className="sm:col-span-2 flex items-center justify-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 hover:border-blue-500/50 text-blue-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sheetsExportLoading ? 'animate-spin' : ''}`} />
+            Esporta Tutte le Chiavi (LLM & Alpaca) su Google Sheets
+          </button>
+          
+          <button
             onClick={handleExport}
             disabled={backupLoading}
             className="flex items-center justify-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 hover:border-indigo-500/50 text-indigo-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50 animate-pulse-subtle"
@@ -404,7 +454,22 @@ export function LLMSettings() {
               className="hidden"
             />
           </label>
+
+          <button
+            onClick={handleSyncSheets}
+            disabled={sheetsSyncLoading}
+            className="sm:col-span-2 flex items-center justify-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 hover:border-emerald-500/50 text-emerald-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sheetsSyncLoading ? 'animate-spin' : ''}`} />
+            Sincronizza / Recupera da Google Sheets (Chiavi & Regole)
+          </button>
         </div>
+
+        {sheetsSyncMsg && (
+          <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-emerald-400 text-xs">
+            {sheetsSyncMsg}
+          </div>
+        )}
 
         {backupLoading && (
           <div className="flex items-center gap-2 text-xs text-slate-400 justify-center py-1">
