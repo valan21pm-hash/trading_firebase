@@ -1567,13 +1567,28 @@ async function getDynamicTrendingStocks(): Promise<string[]> {
   }
 
   if (checkQuotaExceeded()) {
-    console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback immediatamente.');
-    return ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'AMD', 'GOOGL', 'AMZN'];
+    console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback estesi per tutto il mercato.');
+    return [
+      // Technology & Semiconductors
+      'NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM',
+      // Financials
+      'JPM', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'V', 'MA', 'PYPL',
+      // Consumer Discretionary & Staples
+      'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX',
+      // Healthcare & Biotech
+      'LLY', 'UNH', 'JNJ', 'PFE', 'ABBV', 'MRK',
+      // Energy & Materials
+      'XOM', 'CVX', 'COP', 'SLB', 'FCX', 'NEM',
+      // Industrials & Aerospace
+      'BA', 'CAT', 'GE', 'HON', 'UPS',
+      // Growth, Fintech & Crypto Proxies
+      'PLTR', 'COIN', 'SHOP', 'UBER', 'RBLX', 'HOOD', 'SQ', 'ROKU', 'ABNB', 'SNOW'
+    ];
   }
   try {
-    const prompt = `Identifica da 5 a 8 azioni (simboli ticker azionari statunitensi reali, come NVDA, AAPL, MSFT, AMD, TSLA, META, GOOGL, AMZN, NFLX, ecc.) che stanno mostrando forti segnali di rialzo recenti, momentum positivo o catalizzatori favorevoli di mercato.
+    const prompt = `Identifica da 35 a 50 azioni statunitensi leader di mercato che coprono l'intero spettro economico e tutti i settori GICS (Tecnologia, Semiconduttori, Software, Finanziario, Banche, Assicurazioni, Salute/Biotech, Energia, Petrolifero, Industriale/Aerospazio, Consumer Discretionary, Consumer Staples, Retail, Materiali, Utilities, Immobiliare, Fintech e Crypto proxies). Seleziona ticker reali ad altissima capitalizzazione e liquidità (es. NVDA, AAPL, MSFT, AMD, INTC, QCOM, AVGO, MU, SMCI, ARM, CRM, ORCL, ADBE, CSCO, IBM, JPM, BAC, WFC, MS, GS, BLK, V, MA, PYPL, TSLA, AMZN, NFLX, DIS, WMT, COST, NKE, MCD, SBUX, LLY, UNH, JNJ, PFE, ABBV, MRK, XOM, CVX, COP, SLB, FCX, NEM, BA, CAT, GE, HON, UPS, PLTR, COIN, SHOP, UBER, RBLX, HOOD, SQ, ROKU, ABNB, SNOW) che mostrano momentum, trend o opportunità su tutto il mercato.
 Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in maiuscolo. Esempio di output:
-["NVDA", "AAPL", "MSFT", "TSLA", "META"]`;
+["NVDA", "AAPL", "MSFT", "TSLA", "META", "AMD", "JPM", "BAC", "XOM", "UNH"]`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
@@ -1585,7 +1600,7 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
       const parsed = JSON.parse(cleanedText);
       if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
         const symbols = parsed.map(s => s.trim().toUpperCase());
-        const filteredSymbols = symbols.filter(s => /^[A-Z]{1,5}$/.test(s));
+        const filteredSymbols = symbols.filter(s => /^[A-Z]{1,6}$/.test(s));
         if (filteredSymbols.length > 0) {
           trendingStocksCache = { date: today, symbols: filteredSymbols };
           
@@ -1611,7 +1626,15 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
       console.error('[Dynamic Discovery] Errore nel recupero dei ticker dinamici:', error);
     }
   }
-  return ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'AMD', 'GOOGL', 'AMZN'];
+  return [
+    'NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM',
+    'JPM', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'V', 'MA', 'PYPL',
+    'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX',
+    'LLY', 'UNH', 'JNJ', 'PFE', 'ABBV', 'MRK',
+    'XOM', 'CVX', 'COP', 'SLB', 'FCX', 'NEM',
+    'BA', 'CAT', 'GE', 'HON', 'UPS',
+    'PLTR', 'COIN', 'SHOP', 'UBER', 'RBLX', 'HOOD', 'SQ', 'ROKU', 'ABNB', 'SNOW'
+  ];
 }
 
 async function getMarketMinutesToClose(baseUrl: string, apiKey: string, secretKey: string): Promise<number | null> {
