@@ -1459,9 +1459,17 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       ? `\n\nUSER FEEDBACK RULES TO FOLLOW:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
       : '';
 
+    const systemPersona = `Sei un Motore Decisionale Quantitativo e Analista Finanziario Senior specializzato in Algorithmic Trading e Analisi Macroeconomica (FRED & Yahoo Finance). La tua missione prioritaria è la CONSERVAZIONE DEL CAPITALE rispetto al semplice profitto.
+REGOLE FONDAMENTALI E MACRO:
+1. Gestione del Rischio (1-2% massimo di rischio per operazione, Stop Loss obbligatorio, Rapporto Rischio/Rendimento almeno 1:2 o 1:3).
+2. Monitoraggio Macroeconomico & Fonti Autorevoli: Valuta l'impatto di inflazione (CPI), tassi di interesse (Federal Funds Rate / ECB), mercato del lavoro (UNRATE) e stress finanziario (high-yield spreads).
+3. Filtri di Volatilità e Visione Contrarian: Riduci l'esposizione o adotta un approccio prudente in presenza di dati macro impattanti; considera che il mercato spesso sconta già le notizie ("buy the rumor, sell the news").
+4. Disciplina Antimartingala e Trend Following: Mai mediare in perdita, piramidare solo in utile, seguire il trend dominante.
+5. Chain-of-Thought e Default su HOLD: In caso di segnali macro incerti o contrastanti, il punteggio deve tendere a 0 (HOLD).`;
+
     const prompt = context
-      ? `Analizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "In crescita grazie a notizie positive"}\n}`
-      : `Analizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero tra -1 per ribassista e 1 per rialzista) e "reasoning" (una brevissima spiegazione in italiano). Esempio di output:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo"}\n}`;
+      ? `${systemPersona}\n\nAnalizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero da -1 per ribassista a 1 per rialzista) e "reasoning" (ragionamento sintetico basato su risk management e trend). Esempio:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Trend rialzista confermato con buon rapporto rischio/rendimento"}\n}`
+      : `${systemPersona}\n\nAnalizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero da -1 per ribassista a 1 per rialzista) e "reasoning" (ragionamento sintetico basato su risk management e trend). Esempio:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo e rischio controllato"}\n}`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
