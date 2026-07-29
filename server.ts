@@ -1166,8 +1166,7 @@ async function saveBotData(mode: 'paper' | 'live') {
       balance: botData[mode].balance,
       cash: botData[mode].cash,
       accountNumber: botData[mode].accountNumber || null,
-      dailyPnL: botData[mode].dailyPnL || [],
-      logs: botData[mode].logs || []
+      dailyPnL: botData[mode].dailyPnL || []
     }, { merge: true });
   } catch (err: any) {
     console.error(`[Firebase] Error saving bot data for ${mode}:`, err);
@@ -1337,12 +1336,10 @@ function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   if (mode === 'paper' || mode === 'system') {
     botData.paper.logs.unshift(logMsg);
     if (botData.paper.logs.length > 2000) botData.paper.logs = botData.paper.logs.slice(0, 2000);
-    saveBotData('paper').catch(err => console.error('[Firebase Error] Error saving paper logs:', err));
   }
   if (mode === 'live' || mode === 'system') {
     botData.live.logs.unshift(logMsg);
     if (botData.live.logs.length > 2000) botData.live.logs = botData.live.logs.slice(0, 2000);
-    saveBotData('live').catch(err => console.error('[Firebase Error] Error saving live logs:', err));
   }
 
   const targetMode = mode === 'system' ? 'paper' : mode;
@@ -2223,10 +2220,19 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
   }
 }
 
+let isTradingRunning = false;
+let isFastCheckRunning = false;
+
 let lastAlpacaRunTime = 0;
 
 async function executeTradingCycle(force: boolean = false) {
-  const anyActive = botStatus.active;
+  if (isTradingRunning) {
+    console.log('[Trading Cycle] Precedente ciclo ancora in esecuzione, salto il turno.');
+    return;
+  }
+  isTradingRunning = true;
+  try {
+    const anyActive = botStatus.active;
   if (!anyActive && !force) {
     addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
     return;
@@ -2274,6 +2280,9 @@ async function executeTradingCycle(force: boolean = false) {
 
       addLog('system', `[Alpaca] In attesa finestra di calcolo (tra ${minLeft}m ${secLeft}s). Mercato USA ${isMarketOpenUtc ? 'APERTO' : 'CHIUSO'}.`);
     }
+  }
+  } finally {
+    isTradingRunning = false;
   }
 }
 
@@ -3623,7 +3632,12 @@ Rispondi esclusivamente nel seguente formato JSON:
 
 
 async function executeAlpacaRealtimeCheck() {
-  const mode = botStatus.tradingMode || 'paper';
+  if (isFastCheckRunning) {
+    return;
+  }
+  isFastCheckRunning = true;
+  try {
+    const mode = botStatus.tradingMode || 'paper';
   const { apiKey, secretKey, isConfigured, baseUrl } = getAlpacaConfig(mode);
   if (!isConfigured) return;
 
@@ -3774,6 +3788,9 @@ async function executeAlpacaRealtimeCheck() {
     }
   } catch (error) {
     // Silenzioso per non inquinare i log nel loop veloce
+  }
+  } finally {
+    isFastCheckRunning = false;
   }
 }
 
