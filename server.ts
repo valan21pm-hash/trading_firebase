@@ -1856,6 +1856,40 @@ async function getAndUpdateHighestPrice(symbol: string, currentPrice: number, av
   return highestPrice;
 }
 
+const activeTrailingStatus: Record<string, { isActivated: boolean; lastLoggedPeak: number }> = {};
+
+function checkAndLogTrailingStopStatus(
+  mode: 'paper' | 'live',
+  symbol: string,
+  currentPrice: number,
+  avgEntryPrice: number,
+  highestPrice: number,
+  strategyName: string,
+  params: { tpPct: number; tsPct: number; slPct: number }
+) {
+  if (!avgEntryPrice || avgEntryPrice <= 0 || !currentPrice || currentPrice <= 0) return;
+
+  const highestProfitPct = ((highestPrice - avgEntryPrice) / avgEntryPrice) * 100;
+  const currentProfitPct = ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100;
+  const isActivated = highestProfitPct >= (params.tpPct - 0.0001);
+  const trailingStopPrice = highestPrice * (1 - params.tsPct / 100);
+
+  const prevStatus = activeTrailingStatus[symbol];
+
+  if (isActivated) {
+    if (!prevStatus || !prevStatus.isActivated) {
+      activeTrailingStatus[symbol] = {
+        isActivated: true,
+        lastLoggedPeak: highestPrice
+      };
+      addLog(mode, `[🎯 TARGET ATTIVATO] ${symbol} (Strategia ${strategyName}): Picco massimo +${highestProfitPct.toFixed(2)}% >= Target +${params.tpPct.toFixed(2)}%. Trailing Stop (${params.tsPct}%) ATTIVATO! Stop Loss portato a Break-Even ($${avgEntryPrice.toFixed(2)}). Soglia Trailing attuale: $${trailingStopPrice.toFixed(2)} (Prezzo attuale: $${currentPrice.toFixed(2)}, P&L attuale: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%).`);
+    } else if (highestPrice > (prevStatus.lastLoggedPeak || 0)) {
+      activeTrailingStatus[symbol].lastLoggedPeak = highestPrice;
+      addLog(mode, `[📈 TRAILING STOP AGGIORNATO] ${symbol}: Nuovo picco massimo $${highestPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%). Nuova soglia Trailing Stop alzata a $${trailingStopPrice.toFixed(2)} (Distante ${params.tsPct}% dal picco. Prezzo attuale: $${currentPrice.toFixed(2)}).`);
+    }
+  }
+}
+
 async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean) {
   const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
   const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
@@ -2035,6 +2069,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
       const peakPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
 
+      checkAndLogTrailingStopStatus(
+        mode as 'paper' | 'live',
+        symbol,
+        currentPrice,
+        avgEntryPrice,
+        peakPrice,
+        activeStrategy,
+        params
+      );
+
       const riskDecision = RiskManagementService.evaluateClosure({
         id: symbol,
         asset: symbol,
@@ -2070,8 +2114,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       } else if (isPreCloseWindow && profitAmt > 0) {
         shouldClose = true;
         closeReason = `Chiusura EOD (15 min alla fine): Profitto di $${profitAmt.toFixed(2)} garantito.`;
-      } else if (profitPct >= targetTpPct) {
-        addLog(mode as 'paper' | 'live', `[Strategia ${activeStrategy}] ${symbol} ha raggiunto la soglia di attivazione (+${(profitPct * 100).toFixed(2)}% >= ${(targetTpPct * 100).toFixed(2)}%). Trailing Stop (${params.tsPct}%) ATTIVO in inseguimento del picco massimo!`);
       }
 
       if (shouldClose) {
@@ -2100,6 +2142,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           });
           if (closeResponse.ok) {
             delete localHighestPrices[symbol];
+            delete activeTrailingStatus[symbol];
             addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
             closedSymbolsThisCycle.add(symbol);
           } else {
@@ -3759,6 +3802,16 @@ async function executeAlpacaRealtimeCheck() {
 
       const highestPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
 
+      checkAndLogTrailingStopStatus(
+        mode as 'paper' | 'live',
+        symbol,
+        currentPrice,
+        avgEntryPrice,
+        highestPrice,
+        activeStrategy,
+        params
+      );
+
       // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
       const positionObj = {
         id: symbol,
@@ -3786,6 +3839,7 @@ async function executeAlpacaRealtimeCheck() {
 
           if (closeResponse.ok) {
             delete localHighestPrices[symbol];
+            delete activeTrailingStatus[symbol];
             addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo (Risk Management)!`);
             if (db) {
                await db.collection('alpaca_positions').doc(symbol).update({
