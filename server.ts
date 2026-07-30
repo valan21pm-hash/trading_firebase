@@ -60,6 +60,7 @@ import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'fire
 import { getFirestore } from 'firebase-admin/firestore';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
+import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js";
 
 let db: any = null;
 let firebaseApp: any = null;
@@ -208,6 +209,95 @@ function getAi() {
   return aiClient;
 }
 
+// --- GOOGLE DRIVE SYNCHRONIZATION HELPERS ---
+async function triggerChiaviApiDriveSync() {
+  try {
+    const keysPayload = {
+      alpaca: {
+        paper: resolvedCredentials.paper,
+        live: resolvedCredentials.live,
+        fallback: localCredentialsFallback.alpaca
+      },
+      llm: LLMProviderService.getInstance().getConfigs()
+    };
+    await GoogleDriveService.syncChiaviApiToDrive(keysPayload);
+  } catch (err: any) {
+    console.error('[GoogleDrive Errore] Impossibile aggiornare ChiaviAPI.json:', err.message);
+  }
+}
+
+async function syncLogsToGoogleDrive() {
+  try {
+    const logsToSync: Array<any> = [];
+
+    if (botData?.paper?.logs) {
+      botData.paper.logs.forEach((msg: string) => {
+        logsToSync.push({ mode: 'paper', message: msg, timestamp: new Date().toISOString() });
+      });
+    }
+
+    if (botData?.live?.logs) {
+      botData.live.logs.forEach((msg: string) => {
+        logsToSync.push({ mode: 'live', message: msg, timestamp: new Date().toISOString() });
+      });
+    }
+
+    if (Array.isArray(logBuffer)) {
+      logBuffer.forEach((item: any) => {
+        if (item?.data) {
+          logsToSync.push({
+            mode: item.data.mode || 'system',
+            message: item.data.message || '',
+            timestamp: item.data.timestamp || new Date().toISOString()
+          });
+        }
+      });
+    }
+
+    if (logsToSync.length > 0) {
+      await GoogleDriveService.appendLogsToDrive(logsToSync);
+    }
+  } catch (err: any) {
+    console.error('[GoogleDrive Auto-Sync Errore]:', err.message);
+  }
+}
+
+// Schedulazione salvataggio log ogni 15 minuti in background (StoriaLOG.json)
+setInterval(() => {
+  syncLogsToGoogleDrive();
+}, 15 * 60 * 1000);
+
+// Caricamento automatico delle Chiavi API all'avvio del bot
+(async () => {
+  try {
+    const driveKeys = await GoogleDriveService.loadChiaviApiFromDrive();
+    if (driveKeys) {
+      console.log('[GoogleDrive Startup] Chiavi API trovate e caricate con successo da Drive!');
+      if (driveKeys.alpaca) {
+        if (driveKeys.alpaca.paper) resolvedCredentials.paper = driveKeys.alpaca.paper;
+        if (driveKeys.alpaca.live) resolvedCredentials.live = driveKeys.alpaca.live;
+        if (driveKeys.alpaca.fallback) {
+          localCredentialsFallback.alpaca = driveKeys.alpaca.fallback;
+          saveLocalCredentialsFallback(localCredentialsFallback);
+        }
+      }
+      if (driveKeys.llm) {
+        for (const [provider, config] of Object.entries(driveKeys.llm)) {
+          if (config && typeof config === 'object') {
+            LLMProviderService.getInstance().updateConfig(provider as any, config as any);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[GoogleDrive Startup] Caricamento iniziale ChiaviAPI.json ignorato:', err.message);
+  }
+
+  setTimeout(() => {
+    syncLogsToGoogleDrive();
+  }, 10000);
+})();
+
 
 
 
@@ -234,6 +324,9 @@ app.post('/api/trading/credentials', async (req, res) => {
     };
     console.log(`[Credentials Update] Alpaca ${modeKey} credentials updated dynamically in memory!`);
   }
+
+  // Synchronize credentials to Google Drive (ChiaviAPI.json)
+  triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
 
   if (!db) {
     return res.json({ success: true });
@@ -401,6 +494,9 @@ app.post('/api/llm/configs', async (req, res) => {
 
   service.updateConfig(provider, updateData);
 
+  // Synchronize keys to Google Drive (ChiaviAPI.json)
+  triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
+
   if (db) {
     try {
       const docRef = db.collection('settings').doc('llm');
@@ -438,6 +534,31 @@ app.post('/api/llm/preference', async (req, res) => {
 
   await saveBotStatus();
   res.json({ success: true, botStatus });
+});
+
+// --- GOOGLE DRIVE ENDPOINTS ---
+app.get('/api/drive/status', async (req, res) => {
+  res.json({
+    success: true,
+    folderId: GoogleDriveService.getFolderId(),
+    hasToken: !!GoogleDriveService.getUserAccessToken()
+  });
+});
+
+app.post('/api/drive/token', async (req, res) => {
+  const { accessToken } = req.body;
+  if (accessToken && typeof accessToken === 'string') {
+    GoogleDriveService.setUserAccessToken(accessToken);
+    syncLogsToGoogleDrive().catch(err => console.error('[GoogleDrive Token Sync Log Error]:', err));
+    triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Token Sync Key Error]:', err));
+    return res.json({ success: true, message: 'Token Google Drive salvato e sincronizzazione avviata' });
+  }
+  res.status(400).json({ success: false, error: 'Token mancante' });
+});
+
+app.post('/api/drive/sync-logs', async (req, res) => {
+  await syncLogsToGoogleDrive();
+  res.json({ success: true, message: 'Sincronizzazione log su Google Drive (StoriaLOG.json) completata' });
 });
 // -------------------------------------
 // -------------------------------------
@@ -2703,14 +2824,32 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
       }
     }
 
-    // Fallback automatico in-memory se Firestore ha riscontrato errori, quote superate o non ha ritornato dati
+    // Fallback automatico in-memory e Google Drive se Firestore ha riscontrato errori o non ha dati
     if (rangeLogicLogs.length === 0) {
-      console.log(`[Debriefing Periodico AI] Nessun log da Firestore o errore di quota. Uso del fallback in-memory per ${mode}...`);
+      console.log(`[Debriefing Periodico AI] Nessun log da Firestore. Controllo log in-memory e Google Drive (StoriaLOG.json) per ${mode}...`);
       const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];
       rangeLogicLogs = sourceLogs.filter(l => {
         return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
       });
-      console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log locali.`);
+
+      // Tenta recupero aggiuntivo da StoriaLOG.json su Google Drive
+      if (rangeLogicLogs.length === 0) {
+        try {
+          const driveData = await GoogleDriveService.readJsonFile<any>('StoriaLOG.json');
+          if (driveData) {
+            const logs = Array.isArray(driveData) ? driveData : (driveData.logs || []);
+            rangeLogicLogs = logs.filter((l: any) => {
+              const ts = typeof l === 'string' ? '' : (l.timestamp || '');
+              return ts >= startDate + 'T00:00:00.000Z' && ts <= endDate + 'T23:59:59.999Z';
+            });
+            console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log da StoriaLOG.json su Google Drive.`);
+          }
+        } catch (err: any) {
+          console.warn('[GoogleDrive] Avviso lettura StoriaLOG.json per debriefing:', err.message);
+        }
+      } else {
+        console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log locali.`);
+      }
     }
 
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0

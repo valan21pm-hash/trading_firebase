@@ -417,6 +417,50 @@ export function LLMSettings() {
           </span>
         </div>
 
+        {/* Sezione Google Drive Sync */}
+        <div className="border border-indigo-900/50 bg-indigo-950/20 rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-indigo-400" />
+              <h5 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
+                Google Drive Sync (Cartella ID: 1ZtwUz2SMUQg20nPWYf_KWHfljK5kya1_)
+              </h5>
+            </div>
+            <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] uppercase font-mono font-medium">
+              Attivo
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-300 space-y-1">
+            <p>• <strong className="text-white">StoriaLOG.json</strong>: Salvataggio automatico dei log ogni 15 minuti (append senza sovrascrivere).</p>
+            <p>• <strong className="text-white">ChiaviAPI.json</strong>: Salvataggio automatico ad ogni modifica chiavi e caricamento all'avvio bot.</p>
+          </div>
+          <button
+            onClick={async () => {
+              setBackupLoading(true);
+              setBackupError(null);
+              setBackupSuccess(null);
+              try {
+                const res = await fetch('/api/drive/sync-logs', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                  setBackupSuccess('Log salvati con successo su Google Drive (StoriaLOG.json)!');
+                } else {
+                  throw new Error(data.error || 'Errore di sincronizzazione');
+                }
+              } catch (err: any) {
+                setBackupError(err.message || 'Errore durante il salvataggio su Drive.');
+              } finally {
+                setBackupLoading(false);
+              }
+            }}
+            disabled={backupLoading}
+            className="w-full mt-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-md transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${backupLoading ? 'animate-spin' : ''}`} />
+            Sincronizza Ora Log su Google Drive (StoriaLOG.json)
+          </button>
+        </div>
+
         <p className="text-[11px] text-slate-400 leading-relaxed">
           I log operativi e decisionali (loop al bot) vengono salvati e aggregati continuamente sia in tempo reale su 
           Firestore (Firebase), sia localmente sul server in un file di backup persistente a intervalli di 30 secondi. 
