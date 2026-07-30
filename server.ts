@@ -293,9 +293,11 @@ setInterval(() => {
     console.warn('[GoogleDrive Startup] Caricamento iniziale ChiaviAPI.json ignorato:', err.message);
   }
 
+  // Subito all'avvio, garantiamo la creazione di ChiaviAPI.json e StoriaLOG.json
   setTimeout(() => {
-    syncLogsToGoogleDrive();
-  }, 10000);
+    triggerChiaviApiDriveSync().catch(err => console.error('[Startup Sync ChiaviAPI]:', err.message));
+    syncLogsToGoogleDrive().catch(err => console.error('[Startup Sync Log]:', err.message));
+  }, 2000);
 })();
 
 
@@ -558,7 +560,8 @@ app.post('/api/drive/token', async (req, res) => {
 
 app.post('/api/drive/sync-logs', async (req, res) => {
   await syncLogsToGoogleDrive();
-  res.json({ success: true, message: 'Sincronizzazione log su Google Drive (StoriaLOG.json) completata' });
+  await triggerChiaviApiDriveSync();
+  res.json({ success: true, message: 'Sincronizzazione log (StoriaLOG.json) e chiavi (ChiaviAPI.json) completata' });
 });
 // -------------------------------------
 // -------------------------------------
