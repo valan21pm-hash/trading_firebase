@@ -1812,6 +1812,50 @@ async function isAlpacaMarketOpen(baseUrl: string, apiKey: string, secretKey: st
   return timeInMinutes >= 810 && timeInMinutes <= 1260;
 }
 
+async function getAndUpdateHighestPrice(symbol: string, currentPrice: number, avgEntryPrice: number): Promise<number> {
+  let highestPrice = currentPrice;
+
+  if (localHighestPrices[symbol] !== undefined) {
+    highestPrice = Math.max(localHighestPrices[symbol], currentPrice);
+  } else {
+    if (db) {
+      try {
+        const docRef = db.collection('alpaca_positions').doc(symbol);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data && typeof data.highestPrice === 'number') {
+            highestPrice = Math.max(highestPrice, data.highestPrice);
+          }
+        }
+      } catch (e) {
+        // Silenzioso
+      }
+    }
+  }
+
+  if (avgEntryPrice > 0 && highestPrice < avgEntryPrice) {
+    highestPrice = avgEntryPrice;
+  }
+  if (currentPrice > highestPrice) {
+    highestPrice = currentPrice;
+  }
+
+  const previousPeak = localHighestPrices[symbol];
+  localHighestPrices[symbol] = highestPrice;
+
+  if (db && (previousPeak === undefined || highestPrice > previousPeak)) {
+    db.collection('alpaca_positions').doc(symbol).set({
+      symbol,
+      highestPrice,
+      updatedAt: new Date().toISOString(),
+      status: 'ACTIVE'
+    }, { merge: true }).catch(() => {});
+  }
+
+  return highestPrice;
+}
+
 async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean) {
   const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
   const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
@@ -1989,10 +2033,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const slDollar = costBasis * (params.slPct / 100);
       const tpDollar = costBasis * (params.tpPct / 100);
 
-      if (!localHighestPrices[symbol] || currentPrice > localHighestPrices[symbol]) {
-        localHighestPrices[symbol] = currentPrice;
-      }
-      const peakPrice = localHighestPrices[symbol];
+      const peakPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
 
       const riskDecision = RiskManagementService.evaluateClosure({
         id: symbol,
@@ -2008,6 +2049,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         defaultTP: tpDollar,
         trailingStop: params.tsPct,
         targetTpPct: params.tpPct,
+        slPct: params.slPct,
         isAlpaca: true
       });
 
@@ -2057,6 +2099,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             }
           });
           if (closeResponse.ok) {
+            delete localHighestPrices[symbol];
             addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
             closedSymbolsThisCycle.add(symbol);
           } else {
@@ -3710,41 +3753,11 @@ async function executeAlpacaRealtimeCheck() {
         defaultTP: tpDollar,
         trailingStop: trailingStopPercent,
         targetTpPct: params.tpPct,
+        slPct: params.slPct,
         isAlpaca: true
       };
 
-      // Recuperiamo/Aggiorniamo il massimo prezzo raggiunto (High Water Mark) per il trailing stop
-      if (!localHighestPrices[symbol] || currentPrice > localHighestPrices[symbol]) {
-        localHighestPrices[symbol] = currentPrice;
-      }
-      let highestPrice = Math.max(currentPrice, localHighestPrices[symbol]);
-
-      if (db) {
-        try {
-          const docRef = db.collection('alpaca_positions').doc(symbol);
-          const docSnap = await docRef.get();
-          if (docSnap.exists) {
-            const data = docSnap.data();
-            if (data && data.highestPrice && data.highestPrice > highestPrice) {
-              highestPrice = data.highestPrice;
-              localHighestPrices[symbol] = highestPrice;
-            }
-          }
-          // Sincronizza lo stato corrente su Firestore incluso il massimo prezzo storico di picco e la strategia attiva
-          await docRef.set({
-            symbol,
-            currentValue,
-            unrealizedPL,
-            quantity: qty,
-            highestPrice,
-            activeStrategy,
-            updatedAt: new Date().toISOString(),
-            status: 'ACTIVE'
-          }, { merge: true });
-        } catch (e) {
-          // Silenzioso
-        }
-      }
+      const highestPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
 
       // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
       const positionObj = {
@@ -3772,6 +3785,7 @@ async function executeAlpacaRealtimeCheck() {
           });
 
           if (closeResponse.ok) {
+            delete localHighestPrices[symbol];
             addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo (Risk Management)!`);
             if (db) {
                await db.collection('alpaca_positions').doc(symbol).update({
