@@ -137,35 +137,138 @@ export class GoogleSheetsService {
     }
   }
 
+  private static derivePredicateFromRule(rule: string): string {
+    const r = rule.toLowerCase();
+    
+    if (rule.includes('f(') && rule.includes('=')) {
+      return rule;
+    }
+
+    const conds: string[] = [];
+
+    if (r.includes('60 minut') || r.includes('dt < 60') || r.includes('holding period')) {
+      if (r.includes('spy') || r.includes('voo')) {
+        conds.push("dt < 60 per ['SPY', 'VOO']");
+      } else {
+        conds.push("dt < 60");
+      }
+    } else if (r.includes('minut') || r.includes('dt <')) {
+      const match = r.match(/(\d+)\s*minut/);
+      if (match) conds.push(`dt < ${match[1]}`);
+    }
+
+    if (r.includes('sentiment') && (r.includes('0.00') || r.includes('0') || r.includes('zero'))) {
+      if (r.includes('sell') || r.includes('vendit')) {
+        conds.push("(s == 0.00 and sig == 'SELL')");
+      } else {
+        conds.push("s == 0.00");
+      }
+    }
+
+    if (r.includes('0.2') || r.includes('-0.2')) {
+      conds.push("abs(s) <= 0.2");
+    }
+
+    if (conds.length > 0) {
+      return `f(dt, s, sig) = 0 se ${conds.join(' or ')}; altrimenti 1`;
+    }
+
+    return 'f(dt, s, sig) = 1 (EXECUTE)';
+  }
+
+  public static async appendFeedbackRuleToSheet(rule: string, targetSheetId: string = FEEDBACK_SHEET_ID): Promise<boolean> {
+    try {
+      const sheets = this.getSheetsClient();
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
+
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: targetSheetId,
+        range: `${sheetName}!A1:B1`,
+      });
+
+      const rows = response.data.values;
+      if (!rows || rows.length === 0) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: targetSheetId,
+          range: `${sheetName}!A1:B1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [['Regole di Feedback (Loops di Correzione)', 'Predicato di Esecuzione (Logica Operativa)']],
+          },
+        });
+      }
+
+      const predicate = this.derivePredicateFromRule(rule);
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: targetSheetId,
+        range: `${sheetName}!A:B`,
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: {
+          values: [[rule, predicate]],
+        },
+      });
+
+      return true;
+    } catch (err: any) {
+      const errMsg = this.formatError(err, targetSheetId);
+      console.error('[GoogleSheetsService] Errore in appendFeedbackRuleToSheet:', errMsg);
+      throw new Error(errMsg);
+    }
+  }
+
   public static async exportFeedbackRulesToSheet(rules: string[], targetSheetId: string = FEEDBACK_SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
       const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
       
-      const values = [['Regole di Feedback (Loops di Correzione)', 'Predicato di Esecuzione (Logica Operativa)']];
-      for (const rule of rules) {
-        let predicate = 'f(dt, s, sig) = 0 se dt < 60; 0 se dt < 30 and s == 0.00 and sig == "SELL"; altrimenti 1';
-        if (rule.includes('f(dt, s, sig)')) {
-          predicate = 'f(dt, s, sig) = 0 se dt < 60; 0 se dt < 30 and s == 0.00 and sig == "SELL"; altrimenti 1';
-        } else if (rule.includes('==') || rule.includes('<') || rule.includes('>')) {
-          predicate = rule;
-        }
-        values.push([rule, predicate]);
-      }
-
-      await sheets.spreadsheets.values.clear({
+      const response = await sheets.spreadsheets.values.get({
         spreadsheetId: targetSheetId,
         range: `${sheetName}!A:B`,
       });
 
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: targetSheetId,
-        range: `${sheetName}!A1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values,
-        },
-      });
+      const rows = response.data.values || [];
+      const existingRules = new Set<string>();
+
+      if (rows.length === 0) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: targetSheetId,
+          range: `${sheetName}!A1:B1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [['Regole di Feedback (Loops di Correzione)', 'Predicato di Esecuzione (Logica Operativa)']],
+          },
+        });
+      } else {
+        const startIndex = (rows[0] && rows[0][0] && (rows[0][0].toLowerCase().includes('regol') || rows[0][0].toLowerCase().includes('loop'))) ? 1 : 0;
+        for (let i = startIndex; i < rows.length; i++) {
+          if (rows[i] && rows[i][0]) {
+            existingRules.add(rows[i][0].trim());
+          }
+        }
+      }
+
+      const newRows: string[][] = [];
+      for (const rule of rules) {
+        if (rule && rule.trim().length > 0 && !existingRules.has(rule.trim())) {
+          const predicate = this.derivePredicateFromRule(rule);
+          newRows.push([rule.trim(), predicate]);
+        }
+      }
+
+      if (newRows.length > 0) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: targetSheetId,
+          range: `${sheetName}!A:B`,
+          valueInputOption: 'USER_ENTERED',
+          insertDataOption: 'INSERT_ROWS',
+          requestBody: {
+            values: newRows,
+          },
+        });
+      }
+
       return true;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
