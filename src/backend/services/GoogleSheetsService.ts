@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import fs from 'fs';
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU';
+const LOG_SHEET_ID = process.env.GOOGLE_LOG_SHEET_ID || '1fPJP4OwOwRO92qadCARR62gfDOZTZlS47YouRY2_sxU';
 
 export class GoogleSheetsService {
   private static userAccessToken: string | null = null;
@@ -61,18 +62,18 @@ export class GoogleSheetsService {
     }
   }
 
-  private static formatError(err: any): string {
+  private static formatError(err: any, sheetId: string = SHEET_ID): string {
     const msg = err?.message || String(err);
     if (msg.includes('Google Sheets API has not been used') || msg.includes('disabled')) {
       return `L'API Google Sheets è disabilitata per il progetto GCP. Visita https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=289516009831 per abilitarla.`;
     }
     if (msg.includes('The caller does not have permission') || msg.includes('403')) {
-      return `Permessi insufficienti sul Foglio Google (1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU). Assicurati che il foglio sia condiviso in lettura/scrittura o effettua il login con Google.`;
+      return `Permessi insufficienti sul Foglio Google (${sheetId}). Assicurati che il foglio sia condiviso in lettura/scrittura o effettua il login con Google.`;
     }
     return msg;
   }
 
-  public static async appendLogsToSheet(payload: any, targetSheetId: string = SHEET_ID): Promise<boolean> {
+  public static async appendLogsToSheet(payload: any, targetSheetId: string = LOG_SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
       
@@ -100,7 +101,7 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in appendLogsToSheet:', this.formatError(err));
+      console.error('[GoogleSheetsService] Errore in appendLogsToSheet:', this.formatError(err, targetSheetId));
       return false;
     }
   }
@@ -129,7 +130,7 @@ export class GoogleSheetsService {
       }
       return rules;
     } catch (err: any) {
-      const errMsg = this.formatError(err);
+      const errMsg = this.formatError(err, targetSheetId);
       console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', errMsg);
       throw new Error(errMsg);
     }
@@ -160,7 +161,7 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      const errMsg = this.formatError(err);
+      const errMsg = this.formatError(err, targetSheetId);
       console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', errMsg);
       throw new Error(errMsg);
     }
@@ -198,7 +199,7 @@ export class GoogleSheetsService {
       }
       return keys;
     } catch (err: any) {
-      const errMsg = this.formatError(err);
+      const errMsg = this.formatError(err, targetSheetId);
       console.error('[GoogleSheetsService] Errore in syncKeysFromSheet:', errMsg);
       throw new Error(errMsg);
     }
@@ -229,7 +230,7 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      const errMsg = this.formatError(err);
+      const errMsg = this.formatError(err, targetSheetId);
       console.error('[GoogleSheetsService] Errore in exportKeysToSheet:', errMsg);
       throw new Error(errMsg);
     }
