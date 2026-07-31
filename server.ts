@@ -1986,6 +1986,7 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
 
     const simpleRows = keysTable.map(item => [item["Tipo Chiave"], item["Valore Chiave"]]);
 
+    // 1. Invio batch completo
     await sendToGoogleSheets({
       eventType: 'backup_credentials',
       sheetName: 'API KEYS',
@@ -2006,6 +2007,22 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
         }
       }
     });
+
+    // 2. Invio riga per riga per garantire il popolamento su qualsiasi versione di Google Apps Script (appendRow standard)
+    for (const item of keysTable) {
+      await sendToGoogleSheets({
+        eventType: 'key_entry',
+        sheetName: 'API KEYS',
+        symbol: item["Tipo Chiave"],
+        action: 'VALUE',
+        data: {
+          sheetName: 'API KEYS',
+          keyType: item["Tipo Chiave"],
+          keyValue: item["Valore Chiave"],
+          message: `${item["Tipo Chiave"]}: ${item["Valore Chiave"]}`
+        }
+      }).catch(() => {});
+    }
 
     console.log('[Google Sheets] Backup credenziali inviato con successo su Google Sheets (scheda API KEYS)');
     return true;
