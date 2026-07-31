@@ -3,6 +3,7 @@ import fs from 'fs';
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU';
 const LOG_SHEET_ID = process.env.GOOGLE_LOG_SHEET_ID || '1fPJP4OwOwRO92qadCARR62gfDOZTZlS47YouRY2_sxU';
+const FEEDBACK_SHEET_ID = process.env.GOOGLE_FEEDBACK_SHEET_ID || '1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc';
 
 export class GoogleSheetsService {
   private static userAccessToken: string | null = null;
@@ -106,7 +107,7 @@ export class GoogleSheetsService {
     }
   }
 
-  public static async syncFeedbackRulesFromSheet(targetSheetId: string = SHEET_ID): Promise<string[] | null> {
+  public static async syncFeedbackRulesFromSheet(targetSheetId: string = FEEDBACK_SHEET_ID): Promise<string[] | null> {
     try {
       const sheets = this.getSheetsClient();
       const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
@@ -136,7 +137,7 @@ export class GoogleSheetsService {
     }
   }
 
-  public static async exportFeedbackRulesToSheet(rules: string[], targetSheetId: string = SHEET_ID): Promise<boolean> {
+  public static async exportFeedbackRulesToSheet(rules: string[], targetSheetId: string = FEEDBACK_SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
       const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
