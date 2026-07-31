@@ -1758,54 +1758,56 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
 }
 
 let trendingStocksCache: { date: string; symbols: string[] } | null = null;
+let lastScanSlotInfo: { date: string; slot: 'market_open' | 'mid_session' | 'none' } = { date: '', slot: 'none' };
+let activeDynamicIndicesCache: string[] = [
+  'NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM',
+  'JPM', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'V', 'MA', 'PYPL',
+  'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX',
+  'LLY', 'UNH', 'JNJ', 'PFE', 'ABBV', 'MRK',
+  'XOM', 'CVX', 'COP', 'SLB', 'FCX', 'NEM',
+  'BA', 'CAT', 'GE', 'HON', 'UPS',
+  'PLTR', 'COIN', 'SHOP', 'UBER', 'RBLX', 'HOOD', 'SQ', 'ROKU', 'ABNB', 'SNOW'
+];
 
 async function getDynamicTrendingStocks(): Promise<string[]> {
-  const today = new Date().toISOString().split('T')[0];
-  if (trendingStocksCache && trendingStocksCache.date === today) {
-    console.log(`[Dynamic Discovery] Restituisco i ticker dalla cache giornaliera: ${trendingStocksCache.symbols.join(', ')}`);
-    return trendingStocksCache.symbols;
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const utcHours = now.getUTCHours();
+  const utcMinutes = now.getUTCMinutes();
+  const timeInMinutes = utcHours * 60 + utcMinutes;
+
+  // SCHEDULE: Slot (a) Apertura del mercato (~14:15 - 15:15 UTC / 09:15 - 10:15 EST), Slot (b) Metà sessione (~17:15 - 18:15 UTC / 12:15 - 13:15 EST).
+  const isMarketOpenSlot = timeInMinutes >= 1410 && timeInMinutes <= 1515;
+  const isMidSessionSlot = timeInMinutes >= 1020 && timeInMinutes <= 1110;
+
+  let currentSlot: 'market_open' | 'mid_session' | 'none' = 'none';
+  if (isMarketOpenSlot) currentSlot = 'market_open';
+  else if (isMidSessionSlot) currentSlot = 'mid_session';
+
+  // Non ripetere la scansione se lo slot corrente è già stato scansionato oggi o se siamo fuori dai due orari fissi
+  if (lastScanSlotInfo.date === today && lastScanSlotInfo.slot === currentSlot && currentSlot !== 'none') {
+    console.log(`[Dynamic Discovery - Schedule] Slot '${currentSlot}' già scansionato oggi. Mantengo la lista attiva corrente.`);
+    return activeDynamicIndicesCache;
   }
 
-  // Check Firestore for today's trending stocks
-  if (db) {
-    try {
-      const cacheDoc = await db.collection('trending_stocks').doc(`daily_${today}`).get();
-      if (cacheDoc.exists) {
-        const data = cacheDoc.data();
-        if (data.symbols && Array.isArray(data.symbols)) {
-          console.log(`[Dynamic Discovery] Restituisco i ticker dalla cache Firestore: ${data.symbols.join(', ')}`);
-          trendingStocksCache = { date: today, symbols: data.symbols };
-          return data.symbols;
-        }
-      }
-    } catch (e) {
-      console.warn('[Firestore Cache] Error checking trending stocks cache:', e);
-    }
+  if (currentSlot === 'none' && trendingStocksCache && trendingStocksCache.date === today) {
+    console.log(`[Dynamic Discovery - Schedule] Fuori dagli orari fissi di slot (Apertura / Metà sessione). Restituisco gli indici attivi correnti.`);
+    return activeDynamicIndicesCache;
   }
 
   if (checkQuotaExceeded()) {
-    console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback estesi per tutto il mercato.');
-    return [
-      // Technology & Semiconductors
-      'NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM',
-      // Financials
-      'JPM', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'V', 'MA', 'PYPL',
-      // Consumer Discretionary & Staples
-      'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX',
-      // Healthcare & Biotech
-      'LLY', 'UNH', 'JNJ', 'PFE', 'ABBV', 'MRK',
-      // Energy & Materials
-      'XOM', 'CVX', 'COP', 'SLB', 'FCX', 'NEM',
-      // Industrials & Aerospace
-      'BA', 'CAT', 'GE', 'HON', 'UPS',
-      // Growth, Fintech & Crypto Proxies
-      'PLTR', 'COIN', 'SHOP', 'UBER', 'RBLX', 'HOOD', 'SQ', 'ROKU', 'ABNB', 'SNOW'
-    ];
+    console.log('[Dynamic Discovery] Quota superata. Ritorno i ticker di fallback correnti.');
+    return activeDynamicIndicesCache;
   }
+
   try {
-    const prompt = `Identifica da 35 a 50 azioni statunitensi leader di mercato che coprono l'intero spettro economico e tutti i settori GICS (Tecnologia, Semiconduttori, Software, Finanziario, Banche, Assicurazioni, Salute/Biotech, Energia, Petrolifero, Industriale/Aerospazio, Consumer Discretionary, Consumer Staples, Retail, Materiali, Utilities, Immobiliare, Fintech e Crypto proxies). Seleziona ticker reali ad altissima capitalizzazione e liquidità (es. NVDA, AAPL, MSFT, AMD, INTC, QCOM, AVGO, MU, SMCI, ARM, CRM, ORCL, ADBE, CSCO, IBM, JPM, BAC, WFC, MS, GS, BLK, V, MA, PYPL, TSLA, AMZN, NFLX, DIS, WMT, COST, NKE, MCD, SBUX, LLY, UNH, JNJ, PFE, ABBV, MRK, XOM, CVX, COP, SLB, FCX, NEM, BA, CAT, GE, HON, UPS, PLTR, COIN, SHOP, UBER, RBLX, HOOD, SQ, ROKU, ABNB, SNOW) che mostrano momentum, trend o opportunità su tutto il mercato.
-Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in maiuscolo. Esempio di output:
-["NVDA", "AAPL", "MSFT", "TSLA", "META", "AMD", "JPM", "BAC", "XOM", "UNH"]`;
+    const prompt = `[NEWS_ANALYSIS & DYNAMIC_FILTER]
+Raccogli e analizza le notizie finanziarie correnti, i catalizzatori attivi, la volatilità e la direzionalità dei mercati globali e degli indici/azioni statunitensi.
+Valuta se gli indici predefiniti (SPY, QQQ, VTI, GLD, ecc.) mostrano opportunità inferiori rispetto ad altri mercati o settori rilevati nelle notizie odierne.
+Se trovi indici o mercati migliori, aggiorna il target di monitoraggio; altrimenti mantieni la base corrente.
+[EXECUTION]
+Restituisci RIGIDAMENTE un array JSON di stringhe contenente da 35 a 50 ticker in maiuscolo (es. ["NVDA", "AAPL", "SPY", "QQQ", "MSFT", "TSLA", "JPM", "GLD", ...]) da monitorare per lo slot corrente (${currentSlot}).
+Rispondi SOLO con l'array JSON.`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
@@ -1819,39 +1821,34 @@ Rispondi RIGIDAMENTE con un array JSON di stringhe contenente solo i ticker in m
         const symbols = parsed.map(s => s.trim().toUpperCase());
         const filteredSymbols = symbols.filter(s => /^[A-Z]{1,6}$/.test(s));
         if (filteredSymbols.length > 0) {
+          activeDynamicIndicesCache = filteredSymbols;
           trendingStocksCache = { date: today, symbols: filteredSymbols };
+          if (currentSlot !== 'none') {
+            lastScanSlotInfo = { date: today, slot: currentSlot };
+          }
           
-          // Save to Firestore
           if (db) {
-            db.collection('trending_stocks').doc(`daily_${today}`).set({
+            db.collection('trending_stocks').doc(`slot_${today}_${currentSlot}`).set({
               symbols: filteredSymbols,
+              slot: currentSlot,
               timestamp: new Date().toISOString()
             }).catch(() => {});
           }
 
+          console.log(`[Dynamic Discovery - Execution] Scansione slot '${currentSlot}' completata. Trovati ${filteredSymbols.length} indici/asset dinamici.`);
           return filteredSymbols;
         }
       }
     }
   } catch (error: any) {
     const message = error.message || String(error);
-    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
-      console.warn(`[Dynamic Discovery] API Quota Exceeded (429/RESOURCE_EXHAUSTED).`);
+    if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
-    } else {
-      console.error('[Dynamic Discovery] Errore nel recupero dei ticker dinamici:', error);
     }
   }
-  return [
-    'NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM',
-    'JPM', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'V', 'MA', 'PYPL',
-    'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX',
-    'LLY', 'UNH', 'JNJ', 'PFE', 'ABBV', 'MRK',
-    'XOM', 'CVX', 'COP', 'SLB', 'FCX', 'NEM',
-    'BA', 'CAT', 'GE', 'HON', 'UPS',
-    'PLTR', 'COIN', 'SHOP', 'UBER', 'RBLX', 'HOOD', 'SQ', 'ROKU', 'ABNB', 'SNOW'
-  ];
+
+  return activeDynamicIndicesCache;
 }
 
 async function getMarketMinutesToClose(baseUrl: string, apiKey: string, secretKey: string): Promise<number | null> {
