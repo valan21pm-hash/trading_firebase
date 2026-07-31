@@ -759,6 +759,20 @@ function AccountPanel({
 }) {
   if (!account) return null;
 
+  const [isAccountCollapsed, setIsAccountCollapsed] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`alpaca_${type}_isAccountCollapsed`);
+    return saved !== null ? saved === 'true' : false;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`alpaca_${type}_isAccountCollapsed`, String(isAccountCollapsed));
+  }, [isAccountCollapsed, type]);
+
+  const initialCapital = (account.dailyPnL && account.dailyPnL.length > 0) ? account.dailyPnL[0].balance : (type === 'paper' ? 100.00 : 50.00);
+  const currentBalance = account.balance ?? 0;
+  const pnlDiff = currentBalance - initialCapital;
+  const pnlPercent = initialCapital > 0 ? (pnlDiff / initialCapital) * 100 : 0;
+
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem(`alpaca_${type}_wrapLogs`);
     return saved !== null ? saved === 'true' : true;
@@ -913,37 +927,55 @@ function AccountPanel({
 
   return (
     <div className={`flex-1 border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white shadow-sm`}>
-      <div className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center`}>
+      <div 
+        className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center cursor-pointer select-none`}
+        onClick={() => setIsAccountCollapsed(!isAccountCollapsed)}
+      >
         <div className="flex items-center gap-3">
             <h2 className={`font-semibold ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
               {type === 'live' ? <TrendingUp className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
               {title}
+              {isAccountCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4" />}
             </h2>
             <span className={`px-2 py-1 text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
               {isActive ? 'ATTIVO' : 'FERMO'}
             </span>
         </div>
-        <button
-            onClick={() => onToggle(type)}
-            className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-            isActive
-                ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                : type === 'live' ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-            }`}
-        >
-            {isActive ? (
-            <><Square className="w-4 h-4 fill-current" /> Ferma Bot {type === 'live' ? 'Live' : 'Paper'}</>
-            ) : (
-            <><Play className="w-4 h-4 fill-current" /> Avvia Bot {type === 'live' ? 'Live' : 'Paper'}</>
-            )}
-        </button>
+        <div className="flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
+          <div className="text-xs text-slate-600 hidden md:flex items-center gap-2">
+            <span>Iniziale: <strong className="text-slate-900">${initialCapital.toFixed(2)}</strong></span>
+            <span className={`px-1.5 py-0.5 rounded font-bold ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+            </span>
+          </div>
+          <button
+              onClick={() => onToggle(type)}
+              className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+              isActive
+                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                  : type === 'live' ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+          >
+              {isActive ? (
+              <><Square className="w-4 h-4 fill-current" /> Ferma Bot {type === 'live' ? 'Live' : 'Paper'}</>
+              ) : (
+              <><Play className="w-4 h-4 fill-current" /> Avvia Bot {type === 'live' ? 'Live' : 'Paper'}</>
+              )}
+          </button>
+        </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        <div className="flex justify-between items-center">
-          <div className="text-sm text-gray-500">Saldo Equity</div>
-          <div className="text-2xl font-bold text-gray-900">${(account.balance ?? 0).toFixed(2)}</div>
-        </div>
+      <div className={`p-4 space-y-6 ${isAccountCollapsed ? 'hidden' : ''}`}>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <div className="text-sm text-gray-500">Saldo Equity & Performance</div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-xs text-gray-500">Iniziale: <span className="font-semibold text-gray-800">${initialCapital.toFixed(2)}</span></div>
+              <div className={`text-xs font-bold px-2 py-1 rounded-md ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}% ({(pnlDiff >= 0 ? '+' : '') + '$' + pnlDiff.toFixed(2)})
+              </div>
+              <div className="text-2xl font-bold text-gray-900">${currentBalance.toFixed(2)}</div>
+            </div>
+          </div>
 
         <div className="flex justify-between items-start text-sm">
           <div className="text-gray-500 font-medium">Broker</div>
@@ -1260,8 +1292,6 @@ function AccountPanel({
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
-          <GeminiSignalsTicker />
-          <AlpacaMonitorModule />
             <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Posizioni Aperte</h3>
             <div className="space-y-2">
               {account.positions.map((pos, i) => {
@@ -1464,7 +1494,6 @@ function AccountPanel({
             })()}
           </div>
         </div>
-
       </div>
     </div>
   );
