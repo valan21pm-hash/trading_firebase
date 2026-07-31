@@ -58,6 +58,7 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from "@google/genai";
 import { initializeApp as initFirebaseApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { GoogleSheetsService } from './src/backend/services/GoogleSheetsService.js';
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
 import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js";
@@ -1949,14 +1950,18 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
       ...(payload.data || {})
     };
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bodyObj),
-      redirect: 'follow'
-    });
+      redirect: 'follow',
+      signal: controller.signal
+    }).finally(() => clearTimeout(timeoutId));
   } catch (err: any) {
-    console.error('[Google Sheets Webhook Error]', err.message);
+    console.error('[Google Sheets Webhook Error]', err?.message || err);
   }
 }
 
@@ -1969,63 +1974,23 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
     const liveApiKey = resolvedCredentials.live?.apiKey || process.env.VITE_ALPACA_LIVE_API_KEY || '';
     const liveSecretKey = resolvedCredentials.live?.secretKey || process.env.VITE_ALPACA_LIVE_SECRET_KEY || '';
 
-    const keysTable: Array<{ "Tipo Chiave": string; "Valore Chiave": string }> = [
-      { "Tipo Chiave": "Alpaca Paper API Key", "Valore Chiave": paperApiKey },
-      { "Tipo Chiave": "Alpaca Paper Secret Key", "Valore Chiave": paperSecretKey },
-      { "Tipo Chiave": "Alpaca Live API Key", "Valore Chiave": liveApiKey },
-      { "Tipo Chiave": "Alpaca Live Secret Key", "Valore Chiave": liveSecretKey },
-    ];
+    const keysTable: Record<string, string> = {
+      "Alpaca Paper API Key": paperApiKey,
+      "Alpaca Paper Secret Key": paperSecretKey,
+      "Alpaca Live API Key": liveApiKey,
+      "Alpaca Live Secret Key": liveSecretKey,
+    };
 
     for (const [provider, cfg] of Object.entries(llmConfigs)) {
       const pName = provider.toUpperCase();
-      keysTable.push({
-        "Tipo Chiave": `API ${pName}`,
-        "Valore Chiave": cfg?.apiKey || ''
-      });
+      keysTable[`API ${pName}`] = cfg?.apiKey || '';
     }
 
-    const simpleRows = keysTable.map(item => [item["Tipo Chiave"], item["Valore Chiave"]]);
-
-    // 1. Invio batch completo
-    await sendToGoogleSheets({
-      eventType: 'backup_credentials',
-      sheetName: 'API KEYS',
-      symbol: 'KEYS',
-      action: 'KEYS',
-      data: {
-        sheetName: 'API KEYS',
-        columns: ["Tipo Chiave", "Valore Chiave"],
-        headers: ["Tipo Chiave", "Valore Chiave"],
-        table: keysTable,
-        rows: simpleRows,
-        values: simpleRows,
-        llm: llmConfigs,
-        alpaca: {
-          paper: resolvedCredentials.paper,
-          live: resolvedCredentials.live,
-          fallback: localCredentialsFallback?.alpaca || {}
-        }
-      }
-    });
-
-    // 2. Invio riga per riga per garantire il popolamento su qualsiasi versione di Google Apps Script (appendRow standard)
-    for (const item of keysTable) {
-      await sendToGoogleSheets({
-        eventType: 'key_entry',
-        sheetName: 'API KEYS',
-        symbol: item["Tipo Chiave"],
-        action: 'VALUE',
-        data: {
-          sheetName: 'API KEYS',
-          keyType: item["Tipo Chiave"],
-          keyValue: item["Valore Chiave"],
-          message: `${item["Tipo Chiave"]}: ${item["Valore Chiave"]}`
-        }
-      }).catch(() => {});
+    const result = await GoogleSheetsService.exportKeysToSheet(keysTable);
+    if (result) {
+      console.log('[Google Sheets] Backup credenziali inviato con successo su Google Sheets');
     }
-
-    console.log('[Google Sheets] Backup credenziali inviato con successo su Google Sheets (scheda API KEYS)');
-    return true;
+    return result;
   } catch (err: any) {
     console.error('[Google Sheets Error] Errore esportazione credenziali:', err.message);
     return false;
@@ -2034,18 +1999,40 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
 
 app.post('/api/sheets/sync', async (req, res) => {
   try {
-    await sendToGoogleSheets({
-      eventType: 'sync_recovery_request',
-      sheetName: 'API KEYS',
-      symbol: 'KEYS',
-      action: 'KEYS',
-      data: { message: 'User requested sync/recovery from Google Sheets' }
-    });
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      GoogleSheetsService.setUserAccessToken(token);
+    }
+
+    const keys = await GoogleSheetsService.syncKeysFromSheet();
+    if (keys) {
+      // Update local keys from the Google Sheet
+      const llmConfigs = LLMProviderService.getInstance().getConfigs();
+      for (const [provider, config] of Object.entries(llmConfigs)) {
+        const keyName = `API ${provider.toUpperCase()}`;
+        if (keys[keyName]) {
+          LLMProviderService.getInstance().updateConfig(provider as any, { apiKey: keys[keyName] });
+        }
+      }
+
+      if (keys['Alpaca Paper API Key']) resolvedCredentials.paper.apiKey = keys['Alpaca Paper API Key'];
+      if (keys['Alpaca Paper Secret Key']) resolvedCredentials.paper.secretKey = keys['Alpaca Paper Secret Key'];
+      if (keys['Alpaca Live API Key']) resolvedCredentials.live.apiKey = keys['Alpaca Live API Key'];
+      if (keys['Alpaca Live Secret Key']) resolvedCredentials.live.secretKey = keys['Alpaca Live Secret Key'];
+
+      if (resolvedCredentials.paper.apiKey && resolvedCredentials.paper.secretKey) resolvedCredentials.paper.isConfigured = true;
+      if (resolvedCredentials.live.apiKey && resolvedCredentials.live.secretKey) resolvedCredentials.live.isConfigured = true;
+    }
+
     if (db) {
       await loadStateFromFirestore();
       await autoDetectCredentials(); // Also reload Alpaca credentials on sync
     }
+    
+    // Now push back to sheets in case anything was missing from sheets but present locally
     await exportCredentialsToGoogleSheets();
+    
     res.json({
       success: true,
       message: 'Sincronizzazione con Google Sheets e ricaricamento stato completati con successo!',
@@ -2058,9 +2045,15 @@ app.post('/api/sheets/sync', async (req, res) => {
 
 app.post('/api/sheets/backup-credentials', async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      GoogleSheetsService.setUserAccessToken(token);
+    }
+
     const ok = await exportCredentialsToGoogleSheets();
     if (ok) {
-      res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!' });
+      res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets!' });
     } else {
       res.status(500).json({ success: false, error: 'Impossibile inviare i dati a Google Sheets' });
     }

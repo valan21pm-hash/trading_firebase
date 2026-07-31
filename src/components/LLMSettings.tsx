@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, CheckCircle2, AlertCircle, Save, Table, Eye, EyeOff, RefreshCw, Key } from 'lucide-react';
+import { initAuth, googleSignIn, getAccessToken } from '../auth';
+import { User } from 'firebase/auth';
 
 interface ProviderConfig {
   provider: string;
@@ -59,12 +61,38 @@ export function LLMSettings() {
   const [sheetsExportLoading, setSheetsExportLoading] = useState(false);
   const [sheetsSyncMsg, setSheetsSyncMsg] = useState<string | null>(null);
 
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  useEffect(() => {
+    initAuth(
+      (u, t) => { setNeedsAuth(false); setToken(t); setUser(u); },
+      () => setNeedsAuth(true)
+    );
+  }, []);
+
   const handleExportToSheets = async () => {
     setSheetsExportLoading(true);
     setSheetsSyncMsg(null);
     setBackupError(null);
     try {
-      const res = await fetch('/api/sheets/backup-credentials', { method: 'POST' });
+      let currentToken = token;
+      if (needsAuth || !currentToken) {
+        setIsLoggingIn(true);
+        const result = await googleSignIn();
+        if (result) {
+          currentToken = result.accessToken;
+          setToken(currentToken);
+          setNeedsAuth(false);
+        }
+        setIsLoggingIn(false);
+      }
+      const res = await fetch('/api/sheets/backup-credentials', { 
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${currentToken}` }
+      });
       const data = await res.json();
       if (data.success) {
         setSheetsSyncMsg(data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
@@ -83,7 +111,21 @@ export function LLMSettings() {
     setSheetsSyncMsg(null);
     setBackupError(null);
     try {
-      const res = await fetch('/api/sheets/sync', { method: 'POST' });
+      let currentToken = token;
+      if (needsAuth || !currentToken) {
+        setIsLoggingIn(true);
+        const result = await googleSignIn();
+        if (result) {
+          currentToken = result.accessToken;
+          setToken(currentToken);
+          setNeedsAuth(false);
+        }
+        setIsLoggingIn(false);
+      }
+      const res = await fetch('/api/sheets/sync', { 
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${currentToken}` }
+      });
       const data = await res.json();
       if (data.success) {
         setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata!');
