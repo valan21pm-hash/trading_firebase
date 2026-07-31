@@ -1981,19 +1981,35 @@ app.post('/api/sheets/sync', async (req, res) => {
 
     const keys = await GoogleSheetsService.syncKeysFromSheet();
     if (keys) {
+      const getKey = (aliases: string[]): string | undefined => {
+        for (const [k, v] of Object.entries(keys)) {
+          const normK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+          for (const alias of aliases) {
+            const normA = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (normK === normA) return v;
+          }
+        }
+        return undefined;
+      };
+
       // Update local keys from the Google Sheet
       const llmConfigs = LLMProviderService.getInstance().getConfigs();
       for (const [provider, config] of Object.entries(llmConfigs)) {
-        const keyName = `API ${provider.toUpperCase()}`;
-        if (keys[keyName]) {
-          LLMProviderService.getInstance().updateConfig(provider as any, { apiKey: keys[keyName] });
+        const val = getKey([`API ${provider}`, `${provider} API Key`, `${provider} Key`, provider]);
+        if (val) {
+          LLMProviderService.getInstance().updateConfig(provider as any, { apiKey: val });
         }
       }
 
-      if (keys['Alpaca Paper API Key']) resolvedCredentials.paper.apiKey = keys['Alpaca Paper API Key'];
-      if (keys['Alpaca Paper Secret Key']) resolvedCredentials.paper.secretKey = keys['Alpaca Paper Secret Key'];
-      if (keys['Alpaca Live API Key']) resolvedCredentials.live.apiKey = keys['Alpaca Live API Key'];
-      if (keys['Alpaca Live Secret Key']) resolvedCredentials.live.secretKey = keys['Alpaca Live Secret Key'];
+      const paperApiKey = getKey(['Alpaca Paper API Key', 'ALPACA_PAPER_API_KEY', 'Paper API Key']);
+      const paperSecretKey = getKey(['Alpaca Paper Secret Key', 'ALPACA_PAPER_SECRET_KEY', 'Paper Secret Key']);
+      const liveApiKey = getKey(['Alpaca Live API Key', 'ALPACA_LIVE_API_KEY', 'Live API Key']);
+      const liveSecretKey = getKey(['Alpaca Live Secret Key', 'ALPACA_LIVE_SECRET_KEY', 'Live Secret Key']);
+
+      if (paperApiKey) resolvedCredentials.paper.apiKey = paperApiKey;
+      if (paperSecretKey) resolvedCredentials.paper.secretKey = paperSecretKey;
+      if (liveApiKey) resolvedCredentials.live.apiKey = liveApiKey;
+      if (liveSecretKey) resolvedCredentials.live.secretKey = liveSecretKey;
 
       if (resolvedCredentials.paper.apiKey && resolvedCredentials.paper.secretKey) resolvedCredentials.paper.isConfigured = true;
       if (resolvedCredentials.live.apiKey && resolvedCredentials.live.secretKey) resolvedCredentials.live.isConfigured = true;

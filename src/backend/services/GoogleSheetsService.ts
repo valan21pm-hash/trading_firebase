@@ -1,8 +1,7 @@
 import { google } from 'googleapis';
 import fs from 'fs';
 
-const SHEET_ID = '1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU';
-const LOG_SHEET_ID = '1fPJP4OwOwRO92qadCARR62gfDOZTZlS47YouRY2_sxU';
+const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU';
 
 export class GoogleSheetsService {
   private static userAccessToken: string | null = null;
@@ -45,18 +44,34 @@ export class GoogleSheetsService {
   }
 
   private static async getFirstSheetName(spreadsheetId: string = SHEET_ID): Promise<string> {
-    const sheets = this.getSheetsClient();
-    const res = await sheets.spreadsheets.get({ spreadsheetId });
-    return res.data.sheets?.[0]?.properties?.title || 'Foglio1';
+    try {
+      const sheets = this.getSheetsClient();
+      const res = await sheets.spreadsheets.get({ spreadsheetId });
+      return res.data.sheets?.[0]?.properties?.title || 'Foglio1';
+    } catch (e: any) {
+      console.warn(`[GoogleSheetsService] Impossibile recuperare il nome del primo foglio per ${spreadsheetId}:`, e?.message || e);
+      return 'Foglio1';
+    }
   }
 
-  public static async appendLogsToSheet(payload: any): Promise<boolean> {
+  private static formatError(err: any): string {
+    const msg = err?.message || String(err);
+    if (msg.includes('Google Sheets API has not been used') || msg.includes('disabled')) {
+      return `L'API Google Sheets è disabilitata per il progetto GCP. Visita https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=289516009831 per abilitarla.`;
+    }
+    if (msg.includes('The caller does not have permission') || msg.includes('403')) {
+      return `Permessi insufficienti sul Foglio Google (1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU). Assicurati che il foglio sia condiviso in lettura/scrittura o effettua il login con Google.`;
+    }
+    return msg;
+  }
+
+  public static async appendLogsToSheet(payload: any, targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
       
       let sheetNameVal = payload.sheetName || (payload.data && payload.data.sheetName);
       if (!sheetNameVal) {
-        sheetNameVal = await this.getFirstSheetName(LOG_SHEET_ID);
+        sheetNameVal = await this.getFirstSheetName(targetSheetId);
       }
       
       const row = [
@@ -69,7 +84,7 @@ export class GoogleSheetsService {
       ];
 
       await sheets.spreadsheets.values.append({
-        spreadsheetId: LOG_SHEET_ID,
+        spreadsheetId: targetSheetId,
         range: `${sheetNameVal}!A:F`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
@@ -78,17 +93,17 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in appendLogsToSheet:', err.message);
+      console.error('[GoogleSheetsService] Errore in appendLogsToSheet:', this.formatError(err));
       return false;
     }
   }
 
-  public static async syncFeedbackRulesFromSheet(): Promise<string[] | null> {
+  public static async syncFeedbackRulesFromSheet(targetSheetId: string = SHEET_ID): Promise<string[] | null> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName('1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc');
+      const sheetName = await this.getFirstSheetName(targetSheetId);
       const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: '1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc',
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A:A`,
       });
 
@@ -98,39 +113,37 @@ export class GoogleSheetsService {
       }
 
       const rules: string[] = [];
-      // Skip header
-      for (let i = 1; i < rows.length; i++) {
+      const startIndex = (rows[0] && rows[0][0] && rows[0][0].toLowerCase().includes('regol')) ? 1 : 0;
+      for (let i = startIndex; i < rows.length; i++) {
         const row = rows[i];
-        if (row[0] && row[0].trim().length > 0) {
+        if (row && row[0] && row[0].trim().length > 0) {
           rules.push(row[0].trim());
         }
       }
       return rules;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', err.message);
+      console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', this.formatError(err));
       return null;
     }
   }
 
-  public static async exportFeedbackRulesToSheet(rules: string[]): Promise<boolean> {
+  public static async exportFeedbackRulesToSheet(rules: string[], targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName('1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc');
+      const sheetName = await this.getFirstSheetName(targetSheetId);
       
       const values = [['Regole di Feedback (Loops di Correzione)']];
       for (const rule of rules) {
         values.push([rule]);
       }
 
-      // Clear existing content
       await sheets.spreadsheets.values.clear({
-        spreadsheetId: '1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc',
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A:A`,
       });
 
-      // Update with new content
       await sheets.spreadsheets.values.update({
-        spreadsheetId: '1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc',
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A1`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
@@ -139,17 +152,17 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', err.message);
+      console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', this.formatError(err));
       return false;
     }
   }
 
-  public static async syncKeysFromSheet(): Promise<Record<string, string> | null> {
+  public static async syncKeysFromSheet(targetSheetId: string = SHEET_ID): Promise<Record<string, string> | null> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName();
+      const sheetName = await this.getFirstSheetName(targetSheetId);
       const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A:B`,
       });
 
@@ -159,39 +172,46 @@ export class GoogleSheetsService {
       }
 
       const keys: Record<string, string> = {};
-      // Skip header (assuming row 0 is header)
-      for (let i = 1; i < rows.length; i++) {
+      const isHeaderRow = rows[0] && (
+        (rows[0][0] || '').toLowerCase().includes('nome') || 
+        (rows[0][0] || '').toLowerCase().includes('key') ||
+        (rows[0][0] || '').toLowerCase().includes('chiave')
+      );
+      const startIndex = isHeaderRow ? 1 : 0;
+
+      for (let i = startIndex; i < rows.length; i++) {
         const row = rows[i];
-        if (row[0] && row[1]) {
-          keys[row[0]] = row[1];
+        if (row && row[0] && row[1]) {
+          const rawKey = String(row[0]).trim();
+          const rawVal = String(row[1]).trim();
+          keys[rawKey] = rawVal;
         }
       }
       return keys;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in syncKeysFromSheet:', err.message);
-      return null;
+      const errMsg = this.formatError(err);
+      console.error('[GoogleSheetsService] Errore in syncKeysFromSheet:', errMsg);
+      throw new Error(errMsg);
     }
   }
 
-  public static async exportKeysToSheet(keysObj: Record<string, string>): Promise<boolean> {
+  public static async exportKeysToSheet(keysObj: Record<string, string>, targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName();
+      const sheetName = await this.getFirstSheetName(targetSheetId);
       
       const values = [['Nome Chiave', 'Valore Chiave']];
       for (const [key, value] of Object.entries(keysObj)) {
         values.push([key, value]);
       }
 
-      // Clear existing content
       await sheets.spreadsheets.values.clear({
-        spreadsheetId: SHEET_ID,
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A:B`,
       });
 
-      // Update with new content
       await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
+        spreadsheetId: targetSheetId,
         range: `${sheetName}!A1`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
@@ -200,8 +220,10 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in exportKeysToSheet:', err.message);
-      return false;
+      const errMsg = this.formatError(err);
+      console.error('[GoogleSheetsService] Errore in exportKeysToSheet:', errMsg);
+      throw new Error(errMsg);
     }
   }
 }
+
