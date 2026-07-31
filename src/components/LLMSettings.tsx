@@ -81,26 +81,41 @@ export function LLMSettings() {
       let currentToken = token;
       if (needsAuth || !currentToken) {
         setIsLoggingIn(true);
-        const result = await googleSignIn();
-        if (result) {
-          currentToken = result.accessToken;
-          setToken(currentToken);
-          setNeedsAuth(false);
+        try {
+          const result = await googleSignIn();
+          if (result) {
+            currentToken = result.accessToken;
+            setToken(currentToken);
+            setNeedsAuth(false);
+          }
+        } catch (popupErr: any) {
+          console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with server-side export:', popupErr.message);
+        } finally {
+          setIsLoggingIn(false);
         }
-        setIsLoggingIn(false);
       }
+
+      const headers: Record<string, string> = {};
+      if (currentToken) {
+        headers['Authorization'] = `Bearer ${currentToken}`;
+      }
+
       const res = await fetch('/api/sheets/backup-credentials', { 
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${currentToken}` }
+        headers
       });
       const data = await res.json();
       if (data.success) {
         setSheetsSyncMsg(data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
       } else {
-        throw new Error(data.error || 'Errore durante l\'esportazione');
+        throw new Error(data.error || 'Errore durante l\'esportazione server');
       }
     } catch (err: any) {
-      setBackupError('Errore esportazione Sheets: ' + (err.message || 'Impossibile inviare dati'));
+      if (err.message && err.message.includes('unauthorized-domain')) {
+        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è tra i domini autorizzati in Firebase Console. Aggiungi '${window.location.hostname}' in Firebase Console > Authentication > Settings > Authorized Domains.`);
+      } else {
+        setBackupError('Errore esportazione Sheets: ' + (err.message || 'Impossibile inviare dati'));
+      }
     } finally {
       setSheetsExportLoading(false);
     }
@@ -114,27 +129,42 @@ export function LLMSettings() {
       let currentToken = token;
       if (needsAuth || !currentToken) {
         setIsLoggingIn(true);
-        const result = await googleSignIn();
-        if (result) {
-          currentToken = result.accessToken;
-          setToken(currentToken);
-          setNeedsAuth(false);
+        try {
+          const result = await googleSignIn();
+          if (result) {
+            currentToken = result.accessToken;
+            setToken(currentToken);
+            setNeedsAuth(false);
+          }
+        } catch (popupErr: any) {
+          console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with server-side sync:', popupErr.message);
+        } finally {
+          setIsLoggingIn(false);
         }
-        setIsLoggingIn(false);
       }
+
+      const headers: Record<string, string> = {};
+      if (currentToken) {
+        headers['Authorization'] = `Bearer ${currentToken}`;
+      }
+
       const res = await fetch('/api/sheets/sync', { 
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${currentToken}` }
+        headers
       });
       const data = await res.json();
       if (data.success) {
-        setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata!');
+        setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata con successo!');
         await loadAllCredentials();
       } else {
-        throw new Error(data.error || 'Errore sincronizzazione');
+        throw new Error(data.error || 'Errore sincronizzazione server');
       }
     } catch (err: any) {
-      setBackupError('Errore sincronizzazione Sheets: ' + (err.message || 'Impossibile completare'));
+      if (err.message && err.message.includes('unauthorized-domain')) {
+        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è registrato tra i domini autorizzati. Registra '${window.location.hostname}' nella console Firebase in Authentication > Settings > Authorized Domains.`);
+      } else {
+        setBackupError('Errore sincronizzazione Sheets: ' + (err.message || 'Impossibile completare la sincronizzazione'));
+      }
     } finally {
       setSheetsSyncLoading(false);
     }
