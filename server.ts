@@ -3114,7 +3114,7 @@ app.post('/api/feedback', async (req, res) => {
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule addition:', err));
     
     try {
-      await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules);
+      await GoogleSheetsService.appendFeedbackRuleToSheet(rule);
     } catch (err: any) {
       console.error('[GoogleSheets Auto-Export Feedback Error]:', err.message);
     }
