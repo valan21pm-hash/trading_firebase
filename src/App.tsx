@@ -211,10 +211,10 @@ const downloadOperationsPDF = (mode: 'paper' | 'live', positions: any[], activit
       doc.setFontSize(9);
       doc.setTextColor(30, 41, 59);
 
-      const qty = parseFloat(pos.qty).toFixed(4);
-      const avgPrice = parseFloat(pos.avg_entry_price).toFixed(2);
-      const currentPrice = parseFloat(pos.current_price).toFixed(2);
-      const mktVal = parseFloat(pos.market_value).toFixed(2);
+      const qty = parseFloat(pos.qty || '0').toFixed(4);
+      const avgPrice = parseFloat(pos.avg_entry_price || '0').toFixed(2);
+      const currentPrice = parseFloat(pos.current_price || '0').toFixed(2);
+      const mktVal = parseFloat(pos.market_value || '0').toFixed(2);
       const pl = parseFloat(pos.unrealized_pl || '0');
       const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
 
@@ -592,9 +592,9 @@ const downloadPDFWithOperations = (
       doc.setFontSize(9);
       doc.setTextColor(30, 41, 59);
 
-      const qty = parseFloat(pos.qty).toFixed(4);
-      const avgPrice = parseFloat(pos.avg_entry_price).toFixed(2);
-      const currentPrice = parseFloat(pos.current_price).toFixed(2);
+      const qty = parseFloat(pos.qty || '0').toFixed(4);
+      const avgPrice = parseFloat(pos.avg_entry_price || '0').toFixed(2);
+      const currentPrice = parseFloat(pos.current_price || '0').toFixed(2);
       const pl = parseFloat(pos.unrealized_pl || '0');
       const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
 
@@ -720,8 +720,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: item.stroke || item.color }} />
               {item.name}:
             </span>
-            <span className={`font-mono font-semibold ${item.value >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}$
+            <span className={`font-mono font-semibold ${(item.value ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {(item.value ?? 0) >= 0 ? '+' : ''}{(item.value ?? 0).toFixed(2)}$
             </span>
           </div>
         ))}
@@ -1129,23 +1129,23 @@ function AccountPanel({
             <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-gray-100/80 text-center">
               <div>
                 <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Realizzato</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1].realized ?? 0).toFixed(2)}$
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0).toFixed(2)}$
                 </div>
               </div>
               <div>
                 <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1].unrealized ?? 0).toFixed(2)}$
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0).toFixed(2)}$
                 </div>
               </div>
               <div>
                 <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Totale Netto</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1].pnl ?? 0).toFixed(2)}$
+                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0) >= 0 ? '+' : ''}
+                  {(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0).toFixed(2)}$
                 </div>
               </div>
             </div>
@@ -2196,15 +2196,19 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium">
                         {operationsData.positions.map((pos, idx) => {
+                          const qtyVal = parseFloat(pos.qty || '0');
+                          const avgVal = parseFloat(pos.avg_entry_price || '0');
+                          const currVal = parseFloat(pos.current_price || '0');
+                          const mktVal = parseFloat(pos.market_value || '0');
                           const pl = parseFloat(pos.unrealized_pl || '0');
                           const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
                           return (
                             <tr key={idx} className="hover:bg-slate-100/30 text-slate-700">
                               <td className="p-3 font-bold text-slate-900">{pos.symbol}</td>
-                              <td className="p-3 text-right font-mono">{parseFloat(pos.qty).toFixed(4)}</td>
-                              <td className="p-3 text-right font-mono">${parseFloat(pos.avg_entry_price).toFixed(2)}</td>
-                              <td className="p-3 text-right font-mono">${parseFloat(pos.current_price).toFixed(2)}</td>
-                              <td className="p-3 text-right font-mono font-semibold">${parseFloat(pos.market_value).toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono">{qtyVal.toFixed(4)}</td>
+                              <td className="p-3 text-right font-mono">${avgVal.toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono">${currVal.toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono font-semibold">${mktVal.toFixed(2)}</td>
                               <td className={`p-3 text-right font-mono font-bold ${
                                 pl > 0 ? 'text-green-600' : pl < 0 ? 'text-red-600' : 'text-slate-500'
                               }`}>
@@ -2254,7 +2258,9 @@ export default function App() {
                           .slice(0, 10)
                           .map((fill, idx) => {
                             const isBuy = (fill.side || '').toUpperCase() === 'BUY';
-                            const amt = (parseFloat(fill.qty) * parseFloat(fill.price)).toFixed(2);
+                            const fillQty = parseFloat(fill.qty || '0');
+                            const fillPrice = parseFloat(fill.price || '0');
+                            const amt = (fillQty * fillPrice).toFixed(2);
                             return (
                               <tr key={idx} className="hover:bg-slate-100/30">
                                 <td className="p-3 text-slate-500 font-mono">
@@ -2268,8 +2274,8 @@ export default function App() {
                                     {isBuy ? 'ACQUISTO' : 'VENDITA'}
                                   </span>
                                 </td>
-                                <td className="p-3 text-right font-mono">{parseFloat(fill.qty).toFixed(4)}</td>
-                                <td className="p-3 text-right font-mono">${parseFloat(fill.price).toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono">{fillQty.toFixed(4)}</td>
+                                <td className="p-3 text-right font-mono">${fillPrice.toFixed(2)}</td>
                                 <td className="p-3 text-right font-mono font-semibold">${amt}</td>
                               </tr>
                             );
@@ -2892,9 +2898,10 @@ export default function App() {
                       </div>
                       <div className="flex items-end justify-between h-9 gap-1 bg-slate-100/50 p-1 rounded-lg">
                         {performanceMetrics.pnlHistory.map((day: any, dIdx: number) => {
-                          const maxAbsPnL = Math.max(...performanceMetrics.pnlHistory.map((x: any) => Math.abs(x.pnl))) || 1;
-                          const heightPercent = Math.max(15, Math.min(100, (Math.abs(day.pnl) / maxAbsPnL) * 100));
-                          const isPositive = day.pnl >= 0;
+                          const maxAbsPnL = Math.max(...performanceMetrics.pnlHistory.map((x: any) => Math.abs(x.pnl || 0))) || 1;
+                          const dayPnL = day.pnl || 0;
+                          const heightPercent = Math.max(15, Math.min(100, (Math.abs(dayPnL) / maxAbsPnL) * 100));
+                          const isPositive = dayPnL >= 0;
                           return (
                             <div 
                               key={dIdx}
@@ -2902,7 +2909,7 @@ export default function App() {
                               className={`flex-1 rounded-sm transition-all duration-300 ${
                                 isPositive ? 'bg-emerald-400 hover:bg-emerald-500' : 'bg-rose-400 hover:bg-rose-500'
                               }`}
-                              title={`${day.date}: ${isPositive ? '+' : ''}$${day.pnl.toFixed(2)}`}
+                              title={`${day.date}: ${isPositive ? '+' : ''}$${dayPnL.toFixed(2)}`}
                             />
                           );
                         })}

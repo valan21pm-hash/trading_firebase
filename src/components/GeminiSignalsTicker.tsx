@@ -52,7 +52,7 @@ export const GeminiSignalsTicker: React.FC = () => {
                 sig.action === 'BUY' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
                 sig.action === 'SELL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
                 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
-              }`}>{sig.action} ({sig.confidence.toFixed(0)}%)</span>
+              }`}>{sig.action} ({(sig.confidence ?? 0).toFixed(0)}%)</span>
             </div>
             <p className="text-xs text-slate-400 truncate" title={sig.reasoning}>{sig.reasoning}</p>
           </div>

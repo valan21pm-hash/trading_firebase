@@ -68,10 +68,10 @@ export const AlpacaMonitorModule: React.FC = () => {
                 return (
                   <tr key={pos.symbol} className="hover:bg-slate-800/30 transition-colors">
                     <td className="p-3 font-semibold text-white">{pos.symbol}</td>
-                    <td className="p-3">{pos.quantity}</td>
-                    <td className="p-3">{pos.currentValue.toFixed(2)}€</td>
-                    <td className={`p-3 font-mono font-bold ${pos.unrealizedPL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {pos.unrealizedPL >= 0 ? `+${pos.unrealizedPL.toFixed(2)}` : pos.unrealizedPL.toFixed(2)}€
+                    <td className="p-3">{pos.quantity ?? 0}</td>
+                    <td className="p-3">{(pos.currentValue ?? 0).toFixed(2)}€</td>
+                    <td className={`p-3 font-mono font-bold ${(pos.unrealizedPL ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {(pos.unrealizedPL ?? 0) >= 0 ? `+${(pos.unrealizedPL ?? 0).toFixed(2)}` : (pos.unrealizedPL ?? 0).toFixed(2)}€
                     </td>
                     <td className="p-3">
                       <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded">In Osservazione</span>

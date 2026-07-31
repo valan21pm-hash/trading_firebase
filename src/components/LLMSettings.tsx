@@ -56,7 +56,47 @@ export function LLMSettings() {
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
   const [sheetsSyncLoading, setSheetsSyncLoading] = useState(false);
+  const [sheetsExportLoading, setSheetsExportLoading] = useState(false);
   const [sheetsSyncMsg, setSheetsSyncMsg] = useState<string | null>(null);
+
+  const handleExportToSheets = async () => {
+    setSheetsExportLoading(true);
+    setSheetsSyncMsg(null);
+    setBackupError(null);
+    try {
+      const res = await fetch('/api/sheets/backup-credentials', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSheetsSyncMsg(data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
+      } else {
+        throw new Error(data.error || 'Errore durante l\'esportazione');
+      }
+    } catch (err: any) {
+      setBackupError('Errore esportazione Sheets: ' + (err.message || 'Impossibile inviare dati'));
+    } finally {
+      setSheetsExportLoading(false);
+    }
+  };
+
+  const handleSyncFromSheets = async () => {
+    setSheetsSyncLoading(true);
+    setSheetsSyncMsg(null);
+    setBackupError(null);
+    try {
+      const res = await fetch('/api/sheets/sync', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata!');
+        await loadAllCredentials();
+      } else {
+        throw new Error(data.error || 'Errore sincronizzazione');
+      }
+    } catch (err: any) {
+      setBackupError('Errore sincronizzazione Sheets: ' + (err.message || 'Impossibile completare'));
+    } finally {
+      setSheetsSyncLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadAllCredentials();
@@ -528,6 +568,42 @@ export function LLMSettings() {
           <div className="text-[11px] text-slate-300 space-y-1">
             <p>• <strong className="text-white">StoriaLOG.json</strong>: Salvataggio automatico dei log ogni 15 minuti (append senza sovrascrivere).</p>
             <p>• <strong className="text-white">ChiaviAPI.json</strong>: Salvataggio automatico ad ogni modifica chiavi e caricamento all'avvio bot.</p>
+          </div>
+        </div>
+
+        {/* Sezione Google Sheets Sync / Export */}
+        <div className="border border-emerald-900/50 bg-emerald-950/20 rounded-lg p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Table className="w-4 h-4 text-emerald-400" />
+              <h5 className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                Google Sheets Integration (Scheda: API KEYS)
+              </h5>
+            </div>
+            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] uppercase font-mono font-medium">
+              Sincronizzato
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-300 leading-relaxed">
+            Esporta automaticamente o sincronizza a due colonne (<strong>Tipo Chiave</strong>, <strong>Valore Chiave</strong>) tutte le credenziali Alpaca Paper, Live e i provider LLM (Gemini, Mistral, Anthropic, DeepSeek, Groq) nel foglio Google Sheets dedicato nella scheda <strong>API KEYS</strong>.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              onClick={handleExportToSheets}
+              disabled={sheetsExportLoading || sheetsSyncLoading}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 shadow cursor-pointer border-none disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${sheetsExportLoading ? 'animate-spin' : ''}`} />
+              {sheetsExportLoading ? 'ESPORTAZIONE IN CORSO...' : 'ESPORTA ORA CHIAVI SU GOOGLE SHEETS'}
+            </button>
+            <button
+              onClick={handleSyncFromSheets}
+              disabled={sheetsSyncLoading || sheetsExportLoading}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 shadow cursor-pointer border-none disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${sheetsSyncLoading ? 'animate-spin' : ''}`} />
+              {sheetsSyncLoading ? 'SINCRONIZZAZIONE IN CORSO...' : 'RECUPERA / SINCRONIZZA DA GOOGLE SHEETS'}
+            </button>
           </div>
         </div>
 

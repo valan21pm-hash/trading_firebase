@@ -362,8 +362,9 @@ app.post('/api/trading/credentials', async (req, res) => {
     console.log(`[Credentials Update] Alpaca ${modeKey} credentials updated dynamically in memory!`);
   }
 
-  // Synchronize credentials to Google Drive (ChiaviAPI.json)
+  // Synchronize credentials to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
   triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
+  exportCredentialsToGoogleSheets().catch(err => console.error('[GoogleSheets Auto-Export Error]:', err));
 
   if (!db) {
     return res.json({ success: true });
@@ -581,8 +582,9 @@ app.post('/api/llm/configs', async (req, res) => {
 
   service.updateConfig(provider, updateData);
 
-  // Synchronize keys to Google Drive (ChiaviAPI.json)
+  // Synchronize keys to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
   triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
+  exportCredentialsToGoogleSheets().catch(err => console.error('[GoogleSheets Auto-Export Error]:', err));
 
   if (db) {
     try {
@@ -1931,16 +1933,26 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
 async function sendToGoogleSheets(payload: { eventType: string; mode?: string; symbol?: string; action?: string; sheetName?: string; data: any }) {
   const url = 'https://script.google.com/macros/s/AKfycbxHvCVIH5ttVJzvgkqXHq2srws1c1Ghm4UXb4NqtVFHRrJQDH07khXgMDdrWpLd9IKGwg/exec';
   try {
+    const sheetNameVal = payload.sheetName || (payload.data && payload.data.sheetName) || 'API KEYS';
+    const bodyObj: Record<string, any> = {
+      timestamp: new Date().toISOString(),
+      symbol: payload.symbol || 'KEYS',
+      action: payload.action || 'KEYS',
+      sheetName: sheetNameVal,
+      sheet_name: sheetNameVal,
+      sheet: sheetNameVal,
+      tabName: sheetNameVal,
+      tab: sheetNameVal,
+      eventType: payload.eventType || 'backup_credentials',
+      type: payload.eventType || 'backup_credentials',
+      ...payload,
+      ...(payload.data || {})
+    };
+
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        timestamp: new Date().toISOString(),
-        symbol: payload.symbol || 'KEYS',
-        action: payload.action || 'KEYS',
-        sheetName: payload.sheetName || 'API KEYS',
-        ...payload
-      }),
+      body: JSON.stringify(bodyObj),
       redirect: 'follow'
     });
   } catch (err: any) {
@@ -1948,30 +1960,7 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
   }
 }
 
-app.post('/api/sheets/sync', async (req, res) => {
-  try {
-    await sendToGoogleSheets({
-      eventType: 'sync_recovery_request',
-      sheetName: 'API KEYS',
-      symbol: 'KEYS',
-      action: 'KEYS',
-      data: { message: 'User requested sync/recovery from Google Sheets' }
-    });
-    if (db) {
-      await loadStateFromFirestore();
-      await autoDetectCredentials(); // Also reload Alpaca credentials on sync
-    }
-    res.json({
-      success: true,
-      message: 'Sincronizzazione con Google Sheets e ricaricamento stato completati con successo!',
-      userFeedbackRules: botStatus.userFeedbackRules || []
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post('/api/sheets/backup-credentials', async (req, res) => {
+async function exportCredentialsToGoogleSheets(): Promise<boolean> {
   try {
     const llmConfigs = LLMProviderService.getInstance().getConfigs();
     
@@ -2005,8 +1994,10 @@ app.post('/api/sheets/backup-credentials', async (req, res) => {
       data: {
         sheetName: 'API KEYS',
         columns: ["Tipo Chiave", "Valore Chiave"],
+        headers: ["Tipo Chiave", "Valore Chiave"],
         table: keysTable,
         rows: simpleRows,
+        values: simpleRows,
         llm: llmConfigs,
         alpaca: {
           paper: resolvedCredentials.paper,
@@ -2016,7 +2007,46 @@ app.post('/api/sheets/backup-credentials', async (req, res) => {
       }
     });
 
-    res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!' });
+    console.log('[Google Sheets] Backup credenziali inviato con successo su Google Sheets (scheda API KEYS)');
+    return true;
+  } catch (err: any) {
+    console.error('[Google Sheets Error] Errore esportazione credenziali:', err.message);
+    return false;
+  }
+}
+
+app.post('/api/sheets/sync', async (req, res) => {
+  try {
+    await sendToGoogleSheets({
+      eventType: 'sync_recovery_request',
+      sheetName: 'API KEYS',
+      symbol: 'KEYS',
+      action: 'KEYS',
+      data: { message: 'User requested sync/recovery from Google Sheets' }
+    });
+    if (db) {
+      await loadStateFromFirestore();
+      await autoDetectCredentials(); // Also reload Alpaca credentials on sync
+    }
+    await exportCredentialsToGoogleSheets();
+    res.json({
+      success: true,
+      message: 'Sincronizzazione con Google Sheets e ricaricamento stato completati con successo!',
+      userFeedbackRules: botStatus.userFeedbackRules || []
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/sheets/backup-credentials', async (req, res) => {
+  try {
+    const ok = await exportCredentialsToGoogleSheets();
+    if (ok) {
+      res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!' });
+    } else {
+      res.status(500).json({ success: false, error: 'Impossibile inviare i dati a Google Sheets' });
+    }
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
