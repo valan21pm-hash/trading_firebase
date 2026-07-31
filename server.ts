@@ -304,6 +304,41 @@ setInterval(() => {
 
 
 
+app.get('/api/trading/credentials', async (req, res) => {
+  try {
+    let firestoreData: any = null;
+    if (db) {
+      try {
+        const docRef = db.collection('broker_credentials').doc('config');
+        const doc = await runWithTimeout(docRef.get(), 800, { exists: false, data: () => null });
+        if (doc && doc.exists) {
+          firestoreData = doc.data();
+        }
+      } catch (e: any) {
+        console.warn('[Credentials GET] Error reading Firestore credentials:', e.message);
+      }
+    }
+
+    const paperApiKey = resolvedCredentials.paper?.apiKey || localCredentialsFallback?.alpaca?.paper?.apiKey || firestoreData?.alpaca?.paper?.apiKey || process.env.VITE_ALPACA_PAPER_API_KEY || '';
+    const paperSecretKey = resolvedCredentials.paper?.secretKey || localCredentialsFallback?.alpaca?.paper?.secretKey || firestoreData?.alpaca?.paper?.secretKey || process.env.VITE_ALPACA_PAPER_SECRET_KEY || '';
+    const liveApiKey = resolvedCredentials.live?.apiKey || localCredentialsFallback?.alpaca?.real?.apiKey || localCredentialsFallback?.alpaca?.live?.apiKey || firestoreData?.alpaca?.real?.apiKey || firestoreData?.alpaca?.live?.apiKey || process.env.VITE_ALPACA_LIVE_API_KEY || '';
+    const liveSecretKey = resolvedCredentials.live?.secretKey || localCredentialsFallback?.alpaca?.real?.secretKey || localCredentialsFallback?.alpaca?.live?.secretKey || firestoreData?.alpaca?.real?.secretKey || firestoreData?.alpaca?.live?.secretKey || process.env.VITE_ALPACA_LIVE_SECRET_KEY || '';
+
+    res.json({
+      success: true,
+      config: {
+        alpaca: {
+          paper: { apiKey: paperApiKey, secretKey: paperSecretKey },
+          real: { apiKey: liveApiKey, secretKey: liveSecretKey },
+          live: { apiKey: liveApiKey, secretKey: liveSecretKey }
+        }
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/trading/credentials', async (req, res) => {
   const { broker, env, credentials } = req.body;
   if (!broker || !env || !credentials) {
@@ -408,23 +443,72 @@ app.post('/api/feedback/reload', async (req, res) => {
 app.get('/api/backup/export', (req, res) => {
   try {
     const data = {
+      exportedAt: new Date().toISOString(),
+      credentials: {
+        paper: resolvedCredentials.paper,
+        live: resolvedCredentials.live,
+        fallback: localCredentialsFallback.alpaca
+      },
+      llmConfigs: LLMProviderService.getInstance().getConfigs(),
+      botStatus: botStatus,
+      userFeedbackRules: botStatus.userFeedbackRules || [],
       paperDailyLogicLogs: botData.paper.dailyLogicLogs || [],
       liveDailyLogicLogs: botData.live.dailyLogicLogs || [],
       paperLogs: botData.paper.logs || [],
       liveLogs: botData.live.logs || []
     };
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename=trading_bot_logs_backup.json');
+    res.setHeader('Content-Disposition', 'attachment; filename=trading_bot_full_backup.json');
     res.send(JSON.stringify(data, null, 2));
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.post('/api/backup/import', express.json({ limit: '50mb' }), (req, res) => {
+app.post('/api/backup/import', express.json({ limit: '50mb' }), async (req, res) => {
   try {
-    const { paperDailyLogicLogs, liveDailyLogicLogs, paperLogs, liveLogs } = req.body;
+    const { credentials, llmConfigs, botStatus: importedBotStatus, userFeedbackRules, paperDailyLogicLogs, liveDailyLogicLogs, paperLogs, liveLogs } = req.body;
     
+    // 1. Ripristino Credenziali API Alpaca
+    if (credentials) {
+      if (credentials.paper) {
+        resolvedCredentials.paper = { ...resolvedCredentials.paper, ...credentials.paper };
+      }
+      if (credentials.live) {
+        resolvedCredentials.live = { ...resolvedCredentials.live, ...credentials.live };
+      }
+      if (credentials.fallback) {
+        localCredentialsFallback.alpaca = credentials.fallback;
+        saveLocalCredentialsFallback(localCredentialsFallback);
+      }
+      triggerChiaviApiDriveSync().catch(() => {});
+    }
+
+    // 2. Ripristino Configurazione LLM
+    if (llmConfigs && typeof llmConfigs === 'object') {
+      const service = LLMProviderService.getInstance();
+      for (const [provider, cfg] of Object.entries(llmConfigs)) {
+        if (cfg && (cfg as any).apiKey) {
+          service.updateConfig(provider as any, { apiKey: (cfg as any).apiKey, model: (cfg as any).model });
+        }
+      }
+    }
+
+    // 3. Ripristino Stato Bot / Loop
+    if (importedBotStatus && typeof importedBotStatus === 'object') {
+      Object.assign(botStatus, importedBotStatus);
+      GoogleDriveService.saveJsonFile('Loop.json', {
+        botStatus,
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+    }
+
+    // 4. Ripristino Regole Feedback Utente
+    if (userFeedbackRules && Array.isArray(userFeedbackRules)) {
+      botStatus.userFeedbackRules = userFeedbackRules;
+    }
+
+    // 5. Unione dei Log Operativi e Logica Decisionale
     if (paperDailyLogicLogs) {
       botData.paper.dailyLogicLogs = mergeLogicLogs(botData.paper.dailyLogicLogs || [], paperDailyLogicLogs).slice(-3000);
     }
@@ -439,10 +523,11 @@ app.post('/api/backup/import', express.json({ limit: '50mb' }), (req, res) => {
     }
     
     saveLogsToBackupFile();
+    syncLogsToGoogleDrive().catch(() => {});
     
     res.json({
       success: true,
-      message: 'Backup importato e unito con successo!',
+      message: 'Backup completo (Chiavi API, Loop, Stato e Log) importato e sincronizzato con successo!',
       counts: {
         paperLogicLogs: botData.paper.dailyLogicLogs?.length || 0,
         liveLogicLogs: botData.live.dailyLogicLogs?.length || 0,
@@ -1843,7 +1928,7 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
   return basePrices[symbol] || 100.0;
 }
 
-async function sendToGoogleSheets(payload: { eventType: string; mode?: string; symbol?: string; action?: string; data: any }) {
+async function sendToGoogleSheets(payload: { eventType: string; mode?: string; symbol?: string; action?: string; sheetName?: string; data: any }) {
   const url = 'https://script.google.com/macros/s/AKfycbxHvCVIH5ttVJzvgkqXHq2srws1c1Ghm4UXb4NqtVFHRrJQDH07khXgMDdrWpLd9IKGwg/exec';
   try {
     await fetch(url, {
@@ -1851,6 +1936,9 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         timestamp: new Date().toISOString(),
+        symbol: payload.symbol || 'KEYS',
+        action: payload.action || 'KEYS',
+        sheetName: payload.sheetName || 'API KEYS',
         ...payload
       }),
       redirect: 'follow'
@@ -1864,6 +1952,9 @@ app.post('/api/sheets/sync', async (req, res) => {
   try {
     await sendToGoogleSheets({
       eventType: 'sync_recovery_request',
+      sheetName: 'API KEYS',
+      symbol: 'KEYS',
+      action: 'KEYS',
       data: { message: 'User requested sync/recovery from Google Sheets' }
     });
     if (db) {
@@ -1883,18 +1974,49 @@ app.post('/api/sheets/sync', async (req, res) => {
 app.post('/api/sheets/backup-credentials', async (req, res) => {
   try {
     const llmConfigs = LLMProviderService.getInstance().getConfigs();
-    const alpacaConfigs = localCredentialsFallback?.alpaca || {};
     
+    const paperApiKey = resolvedCredentials.paper?.apiKey || process.env.VITE_ALPACA_PAPER_API_KEY || '';
+    const paperSecretKey = resolvedCredentials.paper?.secretKey || process.env.VITE_ALPACA_PAPER_SECRET_KEY || '';
+    const liveApiKey = resolvedCredentials.live?.apiKey || process.env.VITE_ALPACA_LIVE_API_KEY || '';
+    const liveSecretKey = resolvedCredentials.live?.secretKey || process.env.VITE_ALPACA_LIVE_SECRET_KEY || '';
+
+    const keysTable: Array<{ "Tipo Chiave": string; "Valore Chiave": string }> = [
+      { "Tipo Chiave": "Alpaca Paper API Key", "Valore Chiave": paperApiKey },
+      { "Tipo Chiave": "Alpaca Paper Secret Key", "Valore Chiave": paperSecretKey },
+      { "Tipo Chiave": "Alpaca Live API Key", "Valore Chiave": liveApiKey },
+      { "Tipo Chiave": "Alpaca Live Secret Key", "Valore Chiave": liveSecretKey },
+    ];
+
+    for (const [provider, cfg] of Object.entries(llmConfigs)) {
+      const pName = provider.toUpperCase();
+      keysTable.push({
+        "Tipo Chiave": `API ${pName}`,
+        "Valore Chiave": cfg?.apiKey || ''
+      });
+    }
+
+    const simpleRows = keysTable.map(item => [item["Tipo Chiave"], item["Valore Chiave"]]);
+
     await sendToGoogleSheets({
       eventType: 'backup_credentials',
+      sheetName: 'API KEYS',
+      symbol: 'KEYS',
+      action: 'KEYS',
       data: {
-        message: 'Backup of all API Keys',
+        sheetName: 'API KEYS',
+        columns: ["Tipo Chiave", "Valore Chiave"],
+        table: keysTable,
+        rows: simpleRows,
         llm: llmConfigs,
-        alpaca: alpacaConfigs
+        alpaca: {
+          paper: resolvedCredentials.paper,
+          live: resolvedCredentials.live,
+          fallback: localCredentialsFallback?.alpaca || {}
+        }
       }
     });
 
-    res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets!' });
+    res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -2257,7 +2379,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         }).catch(err => console.error('[Google Sheets Error]', err));
 
         try {
-          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}`, {
+          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}?cancel_orders=true`, {
             method: 'DELETE',
             headers: {
               'APCA-API-KEY-ID': apiKey,
@@ -3478,6 +3600,135 @@ app.get('/api/operations', async (req, res) => {
   });
 });
 
+app.get('/api/closed-positions', async (req, res) => {
+  const mode = (req.query.mode as 'paper' | 'live') || 'paper';
+  const startDateStr = req.query.startDate as string;
+  const endDateStr = req.query.endDate as string;
+  const symbolFilter = (req.query.symbol as string || '').toUpperCase().trim();
+  const conf = getAlpacaConfig(mode);
+
+  try {
+    let closedTrades: any[] = [];
+
+    // 1. Dati da Alpaca Activities (FILL side === sell)
+    if (conf.isConfigured) {
+      try {
+        const actResponse = await fetch(`${conf.baseUrl}/account/activities?activity_types=FILL`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        if (actResponse.ok) {
+          const fills = await actResponse.json();
+          if (Array.isArray(fills)) {
+            const sellFills = fills.filter((f: any) => (f.side || '').toLowerCase() === 'sell');
+            for (const f of sellFills) {
+              const qty = parseFloat(f.qty || '0');
+              const price = parseFloat(f.price || '0');
+              const timestamp = f.transaction_time || f.timestamp || new Date().toISOString();
+              closedTrades.push({
+                id: f.id || `fill_${timestamp}_${f.symbol}`,
+                symbol: f.symbol,
+                action: 'VENDITA',
+                qty,
+                price,
+                totalValue: (qty * price).toFixed(2),
+                timestamp,
+                reason: f.type || 'Esecuzione Ordine di Vendita (Alpaca)',
+                source: 'Alpaca Fill'
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Closed Positions Alpaca error]', err.message);
+      }
+    }
+
+    // 2. Dati da Firestore (se disponibile, alpaca_positions dove status == 'CLOSED')
+    if (db) {
+      try {
+        const snap = await db.collection('alpaca_positions').where('status', '==', 'CLOSED').get();
+        snap.forEach(doc => {
+          const data = doc.data();
+          const timestamp = data.closedAt || data.updatedAt || new Date().toISOString();
+          closedTrades.push({
+            id: `fs_${doc.id}_${timestamp}`,
+            symbol: data.symbol || doc.id,
+            action: 'CHIUSURA POSIZIONE',
+            qty: data.qty || 1,
+            price: data.highestPrice || 0,
+            totalValue: data.currentValue || 0,
+            timestamp,
+            reason: data.closureReason || 'Chiusura automatica da Risk Management',
+            source: 'Firestore'
+          });
+        });
+      } catch (e: any) {
+        console.warn('[Closed Positions Firestore error]', e.message);
+      }
+    }
+
+    // 3. Dati dai Log di logica decisionale (dailyLogicLogs con action === 'SELL')
+    const logicLogs = botData[mode]?.dailyLogicLogs || [];
+    for (const log of logicLogs) {
+      if ((log.action || '').toUpperCase() === 'SELL') {
+        const timestamp = log.timestamp || new Date().toISOString();
+        closedTrades.push({
+          id: `log_${timestamp}_${log.symbol}`,
+          symbol: log.symbol,
+          action: 'SEGNALE CHIUSURA IA',
+          qty: 0,
+          price: parseFloat(log.price || '0'),
+          totalValue: 0,
+          timestamp,
+          reason: log.reasoning || log.reason || 'Chiusura da analisi sentiment IA',
+          source: 'IA Decision Log'
+        });
+      }
+    }
+
+    // Deduplicazione
+    const uniqueMap = new Map<string, any>();
+    for (const trade of closedTrades) {
+      const dateKey = (trade.timestamp || '').substring(0, 10);
+      const key = `${trade.symbol}_${dateKey}_${trade.action}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, trade);
+      }
+    }
+    let result = Array.from(uniqueMap.values());
+
+    // Filtro per simbolo se specificato
+    if (symbolFilter) {
+      result = result.filter(t => (t.symbol || '').toUpperCase().includes(symbolFilter));
+    }
+
+    // Filtro per intervallo di date
+    if (startDateStr) {
+      const startMs = new Date(`${startDateStr}T00:00:00`).getTime();
+      result = result.filter(t => new Date(t.timestamp).getTime() >= startMs);
+    }
+    if (endDateStr) {
+      const endMs = new Date(`${endDateStr}T23:59:59.999`).getTime();
+      result = result.filter(t => new Date(t.timestamp).getTime() <= endMs);
+    }
+
+    // Ordinamento decrescente per data/ora
+    result.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    res.json({
+      success: true,
+      mode,
+      totalCount: result.length,
+      closedTrades: result
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/report/download', async (req, res) => {
   const startDateStr = req.query.startDate as string;
   const endDateStr = req.query.endDate as string;
@@ -3586,7 +3837,7 @@ app.post('/api/close-position', async (req, res) => {
 
     // 2. Chiudi la posizione su Alpaca
     addLog(mode as 'paper' | 'live', `[Manuale] Chiusura della posizione di ${symbol} su Alpaca...`);
-    const closeRes = await fetch(`${conf.baseUrl}/positions/${symbol}`, {
+    const closeRes = await fetch(`${conf.baseUrl}/positions/${symbol}?cancel_orders=true`, {
       method: 'DELETE',
       headers: {
         'APCA-API-KEY-ID': conf.apiKey,
@@ -3673,7 +3924,7 @@ app.post('/api/panic-liquidate', async (req, res) => {
               }).catch(() => {});
 
               // Chiudi la posizione
-              const singleClose = await fetch(`${conf.baseUrl}/positions/${symbol}`, {
+              const singleClose = await fetch(`${conf.baseUrl}/positions/${symbol}?cancel_orders=true`, {
                 method: 'DELETE',
                 headers: {
                   'APCA-API-KEY-ID': conf.apiKey,
@@ -3971,7 +4222,7 @@ async function executeAlpacaRealtimeCheck() {
         addLog(mode as 'paper' | 'live', `[Rischio Alpaca] Chiusura posizione per ${symbol}. Motivo: ${decision.reason}`);
         
         try {
-          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}`, {
+          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}?cancel_orders=true`, {
             method: 'DELETE',
             headers: {
               'APCA-API-KEY-ID': apiKey,

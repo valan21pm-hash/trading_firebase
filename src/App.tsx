@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -817,9 +817,10 @@ function AccountPanel({
     setSaveStatus(null);
     try {
       const res = await fetch('/api/trading/credentials');
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        const alpacaCreds = data.config?.alpaca?.[type === 'live' ? 'real' : 'paper'] || {};
+        const alpacaCreds = data.config?.alpaca?.[type === 'live' ? 'real' : 'paper'] || data.config?.alpaca?.[type === 'live' ? 'live' : 'paper'] || {};
         setAlpacaApiKey(alpacaCreds.apiKey || alpacaCreds.username || '');
         setAlpacaSecretKey(alpacaCreds.secretKey || alpacaCreds.password || '');
       }
@@ -951,10 +952,13 @@ function AccountPanel({
             </div>
             <div className="flex gap-2 justify-end mt-1">
               <button
-                onClick={handleOpenCredsForm}
+                onClick={() => {
+                  setShowLlmSettings(!showLlmSettings);
+                  setShowSettingsForm(false);
+                }}
                 className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer p-0"
               >
-                [Configura Chiavi]
+                [Configura Chiavi & LLM]
               </button>
               <span className="text-gray-300">|</span>
               <button
@@ -963,75 +967,9 @@ function AccountPanel({
               >
                 [Parametri Bot & Rischio]
               </button>
-              <span className="text-gray-300">|</span>
-              <button
-                onClick={() => {
-                  setShowLlmSettings(!showLlmSettings);
-                  setShowAlpacaCredsForm(false);
-                  setShowSettingsForm(false);
-                }}
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline bg-transparent border-none cursor-pointer p-0"
-              >
-                [Impostazioni LLM]
-              </button>
             </div>
           </div>
         </div>
-
-        {showAlpacaCredsForm && (
-          <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-3 mt-2 animate-in fade-in duration-200">
-            <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-indigo-400 uppercase">Configurazione Alpaca {type === 'live' ? 'Reale' : 'Paper'}</h4>
-              <span className="text-[10px] text-slate-400">Salvate nel Cloud</span>
-            </div>
-            
-            <div className="space-y-3 text-xs text-left">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1 text-left">API Key ID</label>
-                <input
-                  type="text"
-                  placeholder="Es. PKXXXXXXXXXXXXXXXXXX"
-                  value={alpacaApiKey}
-                  onChange={(e) => setAlpacaApiKey(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-indigo-500 outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1 text-left">Secret Key</label>
-                <input
-                  type="password"
-                  placeholder="La tua Secret Key..."
-                  value={alpacaSecretKey}
-                  onChange={(e) => setAlpacaSecretKey(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-indigo-500 outline-none"
-                />
-              </div>
-
-              {saveStatus && (
-                <div className={`p-2.5 rounded-lg text-xs font-sans ${saveStatus.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
-                  {saveStatus.message}
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleSaveAlpacaCreds}
-                  disabled={savingAlpacaCreds || !alpacaApiKey.trim() || !alpacaSecretKey.trim()}
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold py-2 rounded-lg text-xs transition cursor-pointer border-none"
-                >
-                  {savingAlpacaCreds ? 'Salvataggio...' : 'SALVA'}
-                </button>
-                <button
-                  onClick={() => setShowAlpacaCredsForm(false)}
-                  disabled={savingAlpacaCreds}
-                  className="flex-1 bg-slate-800 text-slate-400 font-bold py-2 rounded-lg text-xs hover:bg-slate-700 transition cursor-pointer border-none"
-                >
-                  CHIUDI
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {showSettingsForm && (
           <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-4 mt-2 animate-in fade-in duration-200">
@@ -1562,6 +1500,72 @@ export default function App() {
   const [isAlpacaFillsCollapsed, setIsAlpacaFillsCollapsed] = useState(true);
   const [isMomentumCollapsed, setIsMomentumCollapsed] = useState(true);
 
+  // Stato per la Sezione Operazioni Chiuse con Filtro Data
+  const [closedTrades, setClosedTrades] = useState<any[]>([]);
+  const [closedLoading, setClosedLoading] = useState(false);
+  const [closedStartDate, setClosedStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [closedEndDate, setClosedEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [closedSymbolFilter, setClosedSymbolFilter] = useState('');
+
+  const fetchClosedPositions = async () => {
+    setClosedLoading(true);
+    try {
+      const params = new URLSearchParams({
+        mode: selectedTab,
+        startDate: closedStartDate,
+        endDate: closedEndDate,
+        symbol: closedSymbolFilter
+      });
+      const res = await fetch(`/api/closed-positions?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setClosedTrades(data.closedTrades || []);
+        }
+      }
+    } catch (err: any) {
+      console.error("Errore recupero operazioni chiuse:", err);
+    } finally {
+      setClosedLoading(false);
+    }
+  };
+
+  const handleImportBackupJSON = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      showToast('Caricamento ed elaborazione del file di backup in corso...', 'info', 'Backup JSON');
+      const text = await file.text();
+      const json = JSON.parse(text);
+
+      const res = await fetch('/api/backup/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(json)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        showToast('Backup completo (Chiavi API, Loop, Stato e Log) importato con successo!', 'success', 'Ripristino Backup');
+        fetchStatus();
+        fetchOperations();
+        fetchClosedPositions();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Errore durante l'importazione: ${err.message || 'File non valido'}`, 'error', 'Ripristino Backup');
+      }
+    } catch (err: any) {
+      showToast(`File JSON non valido: ${err.message}`, 'error', 'Ripristino Backup');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportStartDate, setReportStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().split('T')[0]);
@@ -1805,7 +1809,8 @@ export default function App() {
 
   useEffect(() => {
     fetchOperations();
-  }, [selectedTab]);
+    fetchClosedPositions();
+  }, [selectedTab, closedStartDate, closedEndDate]);
 
   const handleGenerateRangeDebrief = async () => {
     setRangeLoading(true);
@@ -2045,20 +2050,14 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => setShowReportModal(true)}
-              className="flex items-center gap-2 px-4.5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 active:scale-95 transition-all cursor-pointer"
-            >
-              <FileDown className="w-4 h-4" />
-              Scarica Report Logs
-            </button>
+
             {/* Bottone di Panico / Panic Button */}
             <button
               onClick={() => setShowPanicConfirm(true)}
-              className="flex items-center gap-2 px-4.5 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer border-none"
+              className="flex items-center gap-2 px-3.5 py-2 bg-red-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer border-none"
             >
-              <Flame className="w-4 h-4 animate-pulse" />
-              PANIC BUTTON (LIQUIDA TUTTO)
+              <Flame className="w-3.5 h-3.5 animate-pulse" />
+              PANIC BUTTON
             </button>
 
             <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
@@ -2163,23 +2162,7 @@ export default function App() {
                 <RotateCcw className={`w-3.5 h-3.5 ${operationsLoading ? 'animate-spin' : ''}`} />
                 Aggiorna
               </button>
-              <button
-                onClick={() => {
-                  if (operationsData) {
-                    downloadOperationsPDF(
-                      selectedTab,
-                      operationsData.positions || [],
-                      operationsData.activities || [],
-                      operationsData.dailyLogicLogs || []
-                    );
-                  }
-                }}
-                disabled={!operationsData || operationsLoading}
-                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition shadow-sm cursor-pointer disabled:opacity-50"
-              >
-                <FileDown className="w-3.5 h-3.5" />
-                Scarica PDF Operazioni
-              </button>
+
             </div>
           </div>
 
@@ -2374,6 +2357,199 @@ export default function App() {
           )}
         </div>
 
+        {/* SEZIONE OPERAZIONI CHIUSE (CON FILTRO PER DATA) */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                Storico Operazioni Chiuse
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Visualizza e analizza tutte le posizioni liquidate e le vendite eseguite dal Bot con motivazione dettagliata e filtro temporale.
+              </p>
+            </div>
+
+            {/* Controlli Filtro Data e Simbolo */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-slate-500 font-medium">Da:</span>
+                <input 
+                  type="date" 
+                  value={closedStartDate} 
+                  onChange={(e) => setClosedStartDate(e.target.value)}
+                  className="bg-transparent border-none text-slate-800 font-semibold focus:outline-none cursor-pointer"
+                />
+                <span className="text-slate-500 font-medium ml-1">A:</span>
+                <input 
+                  type="date" 
+                  value={closedEndDate} 
+                  onChange={(e) => setClosedEndDate(e.target.value)}
+                  className="bg-transparent border-none text-slate-800 font-semibold focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              {/* Preset Rapidi Date */}
+              <div className="flex gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    setClosedStartDate(today);
+                    setClosedEndDate(today);
+                  }}
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                >
+                  Oggi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const end = new Date();
+                    const start = new Date();
+                    start.setDate(end.getDate() - 7);
+                    setClosedStartDate(start.toISOString().split('T')[0]);
+                    setClosedEndDate(end.toISOString().split('T')[0]);
+                  }}
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                >
+                  7G
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const end = new Date();
+                    const start = new Date();
+                    start.setDate(end.getDate() - 30);
+                    setClosedStartDate(start.toISOString().split('T')[0]);
+                    setClosedEndDate(end.toISOString().split('T')[0]);
+                  }}
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                >
+                  30G
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClosedStartDate('');
+                    setClosedEndDate('');
+                  }}
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                >
+                  Tutti
+                </button>
+              </div>
+
+              {/* Input Ricerca Simbolo */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Simbolo (es. AAPL)..."
+                  value={closedSymbolFilter}
+                  onChange={(e) => setClosedSymbolFilter(e.target.value.toUpperCase())}
+                  className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 placeholder:font-normal placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchClosedPositions}
+                disabled={closedLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-2xs disabled:opacity-50"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${closedLoading ? 'animate-spin' : ''}`} />
+                Filtra
+              </button>
+            </div>
+          </div>
+
+          {/* Sommario Metriche Periodo */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Operazioni Chiuse</span>
+              <p className="text-lg font-bold text-slate-900 font-mono mt-0.5">{closedTrades.length}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Modalità Attuale</span>
+              <p className="text-sm font-bold text-indigo-700 font-mono mt-1 uppercase">{selectedTab === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Intervallo Date</span>
+              <p className="text-xs font-semibold text-slate-700 font-mono mt-1">
+                {closedStartDate ? closedStartDate : 'Inizio'} → {closedEndDate ? closedEndDate : 'Oggi'}
+              </p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Simbolo Filtrato</span>
+              <p className="text-sm font-bold text-slate-800 font-mono mt-1">{closedSymbolFilter || 'TUTTI'}</p>
+            </div>
+          </div>
+
+          {/* Tabella Dati Operazioni Chiuse */}
+          {closedLoading ? (
+            <div className="text-center py-12 text-slate-400 text-xs flex flex-col items-center gap-2">
+              <RotateCcw className="w-5 h-5 animate-spin text-emerald-600" />
+              Caricamento operazioni chiuse nel periodo selezionato...
+            </div>
+          ) : closedTrades.length > 0 ? (
+            <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
+                    <th className="p-3">Data / Ora Chiusura</th>
+                    <th className="p-3">Simbolo</th>
+                    <th className="p-3">Azione</th>
+                    <th className="p-3 text-right">Quantità</th>
+                    <th className="p-3 text-right">Prezzo Uscita</th>
+                    <th className="p-3 text-right">Controvalore Totale</th>
+                    <th className="p-3">Motivazione Chiusura / Origine</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {closedTrades.map((trade, idx) => (
+                    <tr key={trade.id || idx} className="hover:bg-slate-100/40 transition-colors">
+                      <td className="p-3 text-slate-500 font-mono whitespace-nowrap">
+                        {new Date(trade.timestamp).toLocaleString('it-IT')}
+                      </td>
+                      <td className="p-3 font-bold text-slate-900 font-mono text-sm">{trade.symbol}</td>
+                      <td className="p-3">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200/60">
+                          {trade.action || 'VENDITA'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right font-mono font-medium">
+                        {trade.qty > 0 ? trade.qty.toFixed(4) : 'N/D'}
+                      </td>
+                      <td className="p-3 text-right font-mono font-semibold text-slate-900">
+                        {trade.price > 0 ? `$${trade.price.toFixed(2)}` : 'N/D'}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-slate-900">
+                        {trade.totalValue > 0 ? `$${parseFloat(trade.totalValue).toFixed(2)}` : 'N/D'}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex flex-col gap-0.5 max-w-sm">
+                          <span className="text-slate-800 font-semibold text-xs leading-tight">
+                            {trade.reason || 'Chiusura posizione'}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            Origine: {trade.source || 'Sistema'}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
+              Nessuna operazione chiusa registrata nel periodo selezionato ({closedStartDate || 'Inizio'} - {closedEndDate || 'Oggi'}).
+            </div>
+          )}
+        </div>
+
         {/* Debriefing Giornaliero AI */}
         <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
@@ -2409,21 +2585,7 @@ export default function App() {
                     <Activity className="w-4 h-4 text-slate-400" />
                     Rapporto della Riunione di Fine Giornata
                   </h3>
-                  <button
-                    onClick={() => downloadPDFWithOperations(
-                      'Rapporto Debriefing Giornaliero AI',
-                      `Analizzato il: ${new Date(status.latestDailyDebrief!.timestamp).toLocaleString('it-IT')}`,
-                      status.latestDailyDebrief!.analysis,
-                      status.latestDailyDebrief!.suggestedRule,
-                      operationsData?.positions || [],
-                      operationsData?.activities || [],
-                      operationsData?.dailyLogicLogs || []
-                    )}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-xs font-medium transition cursor-pointer"
-                  >
-                    <FileDown className="w-3.5 h-3.5" />
-                    <span>Esporta PDF</span>
-                  </button>
+
                 </div>
                 <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
                   <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
@@ -2791,21 +2953,7 @@ export default function App() {
                     <Activity className="w-4 h-4 text-slate-400" />
                     Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
                   </h3>
-                  <button
-                    onClick={() => downloadPDFWithOperations(
-                      'Rapporto Valutazione Periodica AI',
-                      `Periodo: dal ${rangeStartDate} al ${rangeEndDate}`,
-                      rangeDebrief.analysis,
-                      rangeDebrief.suggestedRule,
-                      operationsData?.positions || [],
-                      operationsData?.activities || [],
-                      operationsData?.dailyLogicLogs || []
-                    )}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-lg text-xs font-medium transition cursor-pointer"
-                  >
-                    <FileDown className="w-3.5 h-3.5" />
-                    <span>Esporta PDF</span>
-                  </button>
+
                 </div>
                 <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
                   <ReactMarkdown>{rangeDebrief.analysis}</ReactMarkdown>
@@ -3053,33 +3201,7 @@ export default function App() {
                <MessageSquare className="w-5 h-5 text-gray-500" />
                Loop di Correzione (Invia Regole al Bot)
              </div>
-              <button 
-                onClick={async () => {
-                  try {
-                    const res = await fetch("/api/feedback/reload", { method: "POST" });
-                    const data = await res.json();
-                    if (res.ok && data.success) {
-                      showToast(data.message || "Regole sincronizzate!", "success", "Sincronizzazione");
-                      fetchStatus();
-                    } else {
-                      showToast(data.error || "Errore durante la sincronizzazione.", "error", "Sincronizzazione");
-                    }
-                  } catch (e) {
-                    showToast("Errore di connessione.", "error", "Sincronizzazione");
-                  }
-                }}
-                className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded mr-2"
-                title="Ricarica regole da Firebase"
-              >
-                🔄 Reimporta
-              </button>
-              <button 
-                onClick={fetchStatus}
-                className="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded"
-                title="Ricarica regole dal Database"
-              >
-                🔄 Sincronizza Cloud
-              </button>
+
            </h2>
            <form onSubmit={async (e) => {
              e.preventDefault();

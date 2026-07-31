@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, CheckCircle2, AlertCircle, Download, Upload, RefreshCw } from 'lucide-react';
+import { Settings, CheckCircle2, AlertCircle, Save, Table, Eye, EyeOff, RefreshCw, Key } from 'lucide-react';
 
 interface ProviderConfig {
   provider: string;
@@ -11,189 +11,180 @@ interface ProviderConfig {
 export function LLMSettings() {
   const providers = ['gemini', 'mistral', 'anthropic', 'deepseek', 'groq'];
 
+  // LLM Configs
   const [configs, setConfigs] = useState<Record<string, ProviderConfig>>({});
   const [preferredProvider, setPreferredProvider] = useState<string>('gemini');
   const [failoverEnabled, setFailoverEnabled] = useState<boolean>(true);
   const [providerOrder, setProviderOrder] = useState<string[]>(providers);
+  const [orderInput, setOrderInput] = useState<string>('');
 
-  
+  // Editable keys for LLMs
+  const [llmKeys, setLlmKeys] = useState<Record<string, string>>({
+    gemini: '',
+    mistral: '',
+    anthropic: '',
+    deepseek: '',
+    groq: ''
+  });
+  const [llmModels, setLlmModels] = useState<Record<string, string>>({
+    gemini: '',
+    mistral: '',
+    anthropic: '',
+    deepseek: '',
+    groq: ''
+  });
+
+  // Editable keys for Alpaca
+  const [alpacaPaperKey, setAlpacaPaperKey] = useState('');
+  const [alpacaPaperSecret, setAlpacaPaperSecret] = useState('');
+  const [alpacaLiveKey, setAlpacaLiveKey] = useState('');
+  const [alpacaLiveSecret, setAlpacaLiveSecret] = useState('');
+
+  // Password visibility state
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+
+  const toggleShowSecret = (fieldKey: string) => {
+    setShowSecrets(prev => ({ ...prev, [fieldKey]: !prev[fieldKey] }));
+  };
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
-  // Form states for adding/editing keys
-  const [selectedProvider, setSelectedProvider] = useState<string>('mistral');
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [modelInput, setModelInput] = useState('');
-  const [orderInput, setOrderInput] = useState<string>('');
-
-  // Backup states and handlers
+  // Backup & Sheets state
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
-
   const [sheetsSyncLoading, setSheetsSyncLoading] = useState(false);
   const [sheetsSyncMsg, setSheetsSyncMsg] = useState<string | null>(null);
 
-  const [sheetsExportLoading, setSheetsExportLoading] = useState(false);
-
-  const handleSyncSheets = async () => {
-    setSheetsSyncLoading(true);
-    setSheetsSyncMsg(null);
-    try {
-      const res = await fetch('/api/sheets/sync', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setSheetsSyncMsg('Sincronizzazione e recupero da Google Sheets / Cloud completati con successo!');
-      } else {
-        throw new Error(data.error || 'Errore di sincronizzazione');
-      }
-    } catch (err: any) {
-      setSheetsSyncMsg('Errore: ' + (err.message || 'Impossibile sincronizzare'));
-    } finally {
-      setSheetsSyncLoading(false);
-    }
-  };
-
-  const handleExportToSheets = async () => {
-    setSheetsExportLoading(true);
-    setSheetsSyncMsg(null);
-    try {
-      const res = await fetch('/api/sheets/backup-credentials', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setSheetsSyncMsg('Chiavi API esportate con successo su Google Sheets!');
-      } else {
-        throw new Error(data.error || 'Errore durante l\'esportazione');
-      }
-    } catch (err: any) {
-      setSheetsSyncMsg('Errore esportazione: ' + (err.message || 'Impossibile completare l\'azione'));
-    } finally {
-      setSheetsExportLoading(false);
-    }
-  };
-
-  const handleExport = async () => {
-    setBackupLoading(true);
-    setBackupError(null);
-    setBackupSuccess(null);
-    try {
-      const res = await fetch('/api/backup/export');
-      if (!res.ok) throw new Error('Errore durante il download del backup');
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `trading_bot_logs_backup_${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setBackupSuccess('Backup esportato con successo!');
-    } catch (err: any) {
-      setBackupError(err.message || 'Errore durante l\'esportazione.');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
-
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setBackupLoading(true);
-    setBackupError(null);
-    setBackupSuccess(null);
-    
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const text = event.target?.result as string;
-        const parsed = JSON.parse(text);
-        
-        const response = await fetch('/api/backup/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed)
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-          setBackupSuccess(`Backup importato con successo! Uniti: ${result.counts.paperLogicLogs} log Paper e ${result.counts.liveLogicLogs} log Live.`);
-        } else {
-          throw new Error(result.error || 'Errore sconosciuto');
-        }
-      } catch (err: any) {
-        setBackupError('File non valido: ' + (err.message || 'Controlla la struttura del JSON.'));
-      } finally {
-        setBackupLoading(false);
-        e.target.value = '';
-      }
-    };
-    reader.readAsText(file);
-  };
-
   useEffect(() => {
-    fetchConfigs();
+    loadAllCredentials();
   }, []);
 
-  const fetchConfigs = async () => {
+  const loadAllCredentials = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/llm/configs');
-      const data = await res.json();
-      if (data.success) {
-        setConfigs(data.configs || {});
-        setPreferredProvider(data.preferredProvider || 'gemini');
-        setFailoverEnabled(data.failoverEnabled ?? true);
-        if (data.providerOrder) {
-          setProviderOrder(data.providerOrder);
-          setOrderInput(data.providerOrder.join(', '));
-        } else {
-          setOrderInput(providers.join(', '));
+      
+      // Load Alpaca keys
+      const credsRes = await fetch('/api/trading/credentials');
+      if (credsRes.ok) {
+        const credsData = await credsRes.json();
+        const paper = credsData.config?.alpaca?.paper || {};
+        const real = credsData.config?.alpaca?.real || credsData.config?.alpaca?.live || {};
+        setAlpacaPaperKey(paper.apiKey || paper.username || '');
+        setAlpacaPaperSecret(paper.secretKey || paper.password || '');
+        setAlpacaLiveKey(real.apiKey || real.username || '');
+        setAlpacaLiveSecret(real.secretKey || real.password || '');
+      }
+
+      // Load LLM Configs
+      const llmRes = await fetch('/api/llm/configs');
+      if (llmRes.ok) {
+        const data = await llmRes.json();
+        if (data.success) {
+          setConfigs(data.configs || {});
+          setPreferredProvider(data.preferredProvider || 'gemini');
+          setFailoverEnabled(data.failoverEnabled ?? true);
+          if (data.providerOrder) {
+            setProviderOrder(data.providerOrder);
+            setOrderInput(data.providerOrder.join(', '));
+          } else {
+            setOrderInput(providers.join(', '));
+          }
+
+          // Set default model inputs if present
+          const newModels: Record<string, string> = {};
+          providers.forEach(p => {
+            newModels[p] = data.configs?.[p]?.model || '';
+          });
+          setLlmModels(prev => ({ ...prev, ...newModels }));
         }
       }
     } catch (e) {
-      console.error('Failed to fetch LLM configs:', e);
+      console.error('Failed to load credentials:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpdateProvider = async () => {
-    if (!selectedProvider) return;
-    
+  const handleSaveAllKeys = async () => {
     try {
       setSaving(true);
       setStatusMsg(null);
-      
-      const payload: any = { provider: selectedProvider };
-      if (apiKeyInput.trim()) payload.apiKey = apiKeyInput;
-      if (modelInput.trim()) payload.model = modelInput;
 
-      const res = await fetch('/api/llm/configs', {
+      // 1. Save Alpaca Paper
+      if (alpacaPaperKey.trim() || alpacaPaperSecret.trim()) {
+        await fetch('/api/trading/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            broker: 'alpaca',
+            env: 'paper',
+            credentials: { apiKey: alpacaPaperKey.trim(), secretKey: alpacaPaperSecret.trim() }
+          })
+        });
+      }
+
+      // 2. Save Alpaca Live
+      if (alpacaLiveKey.trim() || alpacaLiveSecret.trim()) {
+        await fetch('/api/trading/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            broker: 'alpaca',
+            env: 'real',
+            credentials: { apiKey: alpacaLiveKey.trim(), secretKey: alpacaLiveSecret.trim() }
+          })
+        });
+      }
+
+      // 3. Save LLM Keys
+      for (const p of providers) {
+        const keyVal = llmKeys[p]?.trim();
+        const modelVal = llmModels[p]?.trim();
+        if (keyVal || modelVal) {
+          const payload: any = { provider: p };
+          if (keyVal) payload.apiKey = keyVal;
+          if (modelVal) payload.model = modelVal;
+
+          await fetch('/api/llm/configs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+      }
+
+      // 4. Save LLM Preferences
+      await fetch('/api/llm/preference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ preferredProvider, failoverEnabled, providerOrder })
       });
-      const data = await res.json();
-      
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: 'Configurazione aggiornata con successo!' });
-        setApiKeyInput('');
-        setModelInput('');
-        await fetchConfigs();
-      } else {
-        setStatusMsg({ type: 'error', text: data.error || 'Errore nell\'aggiornamento.' });
+
+      // 5. Automatic Sheet Backup
+      try {
+        await fetch('/api/sheets/backup-credentials', { method: 'POST' });
+      } catch (err) {
+        console.warn('Sheets backup sync skipped:', err);
       }
-    } catch (e) {
-      setStatusMsg({ type: 'error', text: 'Errore di connessione al server.' });
+
+      setStatusMsg({ type: 'success', text: 'Tutte le chiavi API (Alpaca & LLM) salvate e sincronizzate con successo!' });
+      
+      // Clear key inputs to preserve security, reload config
+      setLlmKeys({ gemini: '', mistral: '', anthropic: '', deepseek: '', groq: '' });
+      await loadAllCredentials();
+
+    } catch (e: any) {
+      setStatusMsg({ type: 'error', text: 'Errore nel salvataggio delle chiavi: ' + (e.message || 'Errore di connessione') });
     } finally {
       setSaving(false);
-      setTimeout(() => setStatusMsg(null), 3000);
+      setTimeout(() => setStatusMsg(null), 4000);
     }
   };
 
-  const handleSavePreferences = async () => {
+  const handleSavePreferencesOnly = async () => {
     try {
       setSaving(true);
       setStatusMsg(null);
@@ -206,7 +197,7 @@ export function LLMSettings() {
       const data = await res.json();
       
       if (data.success) {
-        setStatusMsg({ type: 'success', text: 'Preferenze aggiornate con successo!' });
+        setStatusMsg({ type: 'success', text: 'Preferenze LLM aggiornate con successo!' });
       } else {
         setStatusMsg({ type: 'error', text: data.error || 'Errore nell\'aggiornamento.' });
       }
@@ -219,55 +210,253 @@ export function LLMSettings() {
   };
 
   if (loading) {
-    return <div className="text-xs text-slate-400">Caricamento configurazioni LLM...</div>;
+    return <div className="text-xs text-slate-400 p-4">Caricamento tabella chiavi in corso...</div>;
   }
 
   return (
     <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-5 animate-in fade-in duration-200 mt-2">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2">
-          <Settings className="w-4 h-4 text-indigo-400" />
-          <h4 className="text-xs font-bold text-indigo-400 uppercase">Configurazione Multi-LLM</h4>
+          <Key className="w-4 h-4 text-indigo-400" />
+          <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+            Gestione Unificata Chiavi API & LLM
+          </h4>
         </div>
-        <button 
-          onClick={async () => {
-            setLoading(true);
-            try {
-              const res = await fetch('/api/llm/sync', { method: 'POST' });
-              if (res.ok) {
-                setStatusMsg({ type: 'success', text: 'Chiavi API e configurazioni reimportate!' });
-                await fetchConfigs();
-              }
-            } catch (e) {
-              setStatusMsg({ type: 'error', text: 'Errore di reimportazione' });
-            } finally {
-              setLoading(false);
-              setTimeout(() => setStatusMsg(null), 3000);
-            }
-          }}
-          className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded transition-colors flex items-center gap-1"
+        <button
+          onClick={handleSaveAllKeys}
+          disabled={saving}
+          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-md cursor-pointer border-none disabled:opacity-50"
         >
-          🔄 Reimporta Chiavi/Config
+          <Save className="w-3.5 h-3.5" />
+          {saving ? 'SALVATAGGIO...' : 'SALVA TUTTE LE CHIAVI'}
         </button>
       </div>
 
       {statusMsg && (
-        <div className={`p-2 rounded-md text-xs flex items-center gap-1.5 ${statusMsg.type === 'success' ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-800' : 'bg-rose-950/40 text-rose-300 border border-rose-800'}`}>
-          {statusMsg.type === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-          {statusMsg.text}
+        <div className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${statusMsg.type === 'success' ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800' : 'bg-rose-950/60 text-rose-300 border border-rose-800'}`}>
+          {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          <span className="font-medium">{statusMsg.text}</span>
         </div>
       )}
 
+      {/* 2-COLUMN SHEET TABLE */}
+      <div className="bg-slate-950/80 rounded-xl border border-slate-800 overflow-hidden shadow-xl">
+        <div className="bg-slate-900/90 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Table className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">
+              Tabella Credenziali (Struttura Google Sheets / Cloud)
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono">Scheda: API KEYS</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
+              <tr>
+                <th className="px-4 py-3 w-1/3 border-r border-slate-800">
+                  COLONNA 1: NOME CHIAVE
+                </th>
+                <th className="px-4 py-3 w-2/3">
+                  COLONNA 2: CODICE / VALORE CHIAVE
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 text-xs">
+              
+              {/* ALPACA PAPER API KEY */}
+              <tr className="hover:bg-slate-900/40 transition-colors">
+                <td className="px-4 py-2.5 font-bold text-indigo-300 border-r border-slate-800/80">
+                  Alpaca Paper API Key ID
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showSecrets['paperKey'] ? 'text' : 'password'}
+                      value={alpacaPaperKey}
+                      onChange={(e) => setAlpacaPaperKey(e.target.value)}
+                      placeholder="PKXXXXXXXXXXXXXXXXXX"
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-emerald-300 font-mono focus:border-indigo-500 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => toggleShowSecret('paperKey')}
+                      className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer border-none bg-transparent"
+                      title="Mostra/Nascondi"
+                    >
+                      {showSecrets['paperKey'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              {/* ALPACA PAPER SECRET KEY */}
+              <tr className="hover:bg-slate-900/40 transition-colors">
+                <td className="px-4 py-2.5 font-bold text-indigo-300 border-r border-slate-800/80">
+                  Alpaca Paper Secret Key
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showSecrets['paperSecret'] ? 'text' : 'password'}
+                      value={alpacaPaperSecret}
+                      onChange={(e) => setAlpacaPaperSecret(e.target.value)}
+                      placeholder="Inserisci Secret Key Paper..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-emerald-300 font-mono focus:border-indigo-500 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => toggleShowSecret('paperSecret')}
+                      className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer border-none bg-transparent"
+                      title="Mostra/Nascondi"
+                    >
+                      {showSecrets['paperSecret'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              {/* ALPACA LIVE API KEY */}
+              <tr className="hover:bg-slate-900/40 transition-colors">
+                <td className="px-4 py-2.5 font-bold text-amber-300 border-r border-slate-800/80">
+                  Alpaca Live API Key ID
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showSecrets['liveKey'] ? 'text' : 'password'}
+                      value={alpacaLiveKey}
+                      onChange={(e) => setAlpacaLiveKey(e.target.value)}
+                      placeholder="AKXXXXXXXXXXXXXXXXXX"
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => toggleShowSecret('liveKey')}
+                      className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer border-none bg-transparent"
+                      title="Mostra/Nascondi"
+                    >
+                      {showSecrets['liveKey'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              {/* ALPACA LIVE SECRET KEY */}
+              <tr className="hover:bg-slate-900/40 transition-colors">
+                <td className="px-4 py-2.5 font-bold text-amber-300 border-r border-slate-800/80">
+                  Alpaca Live Secret Key
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showSecrets['liveSecret'] ? 'text' : 'password'}
+                      value={alpacaLiveSecret}
+                      onChange={(e) => setAlpacaLiveSecret(e.target.value)}
+                      placeholder="Inserisci Secret Key Live..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => toggleShowSecret('liveSecret')}
+                      className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer border-none bg-transparent"
+                      title="Mostra/Nascondi"
+                    >
+                      {showSecrets['liveSecret'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              {/* LLM PROVIDER ROWS */}
+              {providers.map((p) => {
+                const conf = configs[p];
+                const isGemini = p === 'gemini';
+                const hasKey = conf?.hasKey || isGemini;
+                const pLabel = p.toUpperCase();
+
+                return (
+                  <tr key={p} className="hover:bg-slate-900/40 transition-colors">
+                    <td className="px-4 py-2.5 font-bold text-slate-200 border-r border-slate-800/80 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span>API {pLabel}</span>
+                        {preferredProvider === p && (
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[8px] uppercase font-bold border border-indigo-500/30">
+                            Primario
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-[9px] font-normal flex items-center gap-1 ${hasKey ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {hasKey ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {hasKey ? 'Attivo' : 'Mancante'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="flex-1 flex items-center gap-2">
+                          <input
+                            type={showSecrets[p] ? 'text' : 'password'}
+                            value={llmKeys[p] || ''}
+                            onChange={(e) => setLlmKeys({ ...llmKeys, [p]: e.target.value })}
+                            placeholder={conf?.maskedKey ? `Configurato: ${conf.maskedKey}` : `Inserisci API Key ${pLabel}...`}
+                            className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => toggleShowSecret(p)}
+                            className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer border-none bg-transparent"
+                            title="Mostra/Nascondi"
+                          >
+                            {showSecrets[p] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+
+                        {/* Modello Configurato */}
+                        <div className="sm:w-1/3">
+                          <input
+                            type="text"
+                            value={llmModels[p] || ''}
+                            onChange={(e) => setLlmModels({ ...llmModels, [p]: e.target.value })}
+                            placeholder={conf?.model || 'Modello default'}
+                            className="w-full bg-slate-900/90 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:border-indigo-500 outline-none text-right sm:text-left"
+                            title="Modello AI utilizzato per questo provider"
+                          />
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-slate-900/80 p-3 border-t border-slate-800 flex justify-end">
+          <button
+            onClick={handleSaveAllKeys}
+            disabled={saving}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-2 shadow-md cursor-pointer border-none disabled:opacity-50"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'SALVATAGGIO...' : 'SALVA TUTTE LE CHIAVI IN TABELLA'}
+          </button>
+        </div>
+      </div>
+
       {/* Preferences Section */}
-      <div className="space-y-3 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-        <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Preferenze Generali</h5>
+      <div className="space-y-3 bg-slate-800/40 p-3.5 rounded-xl border border-slate-800">
+        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+          Preferenze Cascata & Failover Multi-LLM
+        </h5>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Provider Preferito (Primario)</label>
+            <label className="text-[10px] text-slate-400 block mb-1 font-semibold">Provider Preferito (Primario)</label>
             <select
               value={preferredProvider}
               onChange={(e) => setPreferredProvider(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
             >
               {providers.map(p => (
                 <option key={p} value={p}>{p.toUpperCase()}</option>
@@ -275,7 +464,7 @@ export function LLMSettings() {
             </select>
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Ordine di Cascata (virgola sep.)</label>
+            <label className="text-[10px] text-slate-400 block mb-1 font-semibold">Ordine di Cascata (separato da virgola)</label>
             <input
               type="text"
               value={orderInput}
@@ -284,127 +473,33 @@ export function LLMSettings() {
                 const order = e.target.value.split(',').map(s => s.trim().toLowerCase()).filter(s => providers.includes(s));
                 if (order.length > 0) setProviderOrder(order);
               }}
-              placeholder="es. mistral, gemini, anthropic"
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none font-mono"
+              placeholder="es. gemini, mistral, anthropic"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:border-indigo-500 outline-none font-mono"
             />
           </div>
           <div className="flex items-end">
-            <label className="flex items-center gap-2 cursor-pointer pb-1.5">
+            <label className="flex items-center gap-2 cursor-pointer pb-2">
               <input 
                 type="checkbox" 
                 checked={failoverEnabled}
                 onChange={(e) => setFailoverEnabled(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900 bg-slate-800"
+                className="w-4 h-4 rounded border-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900 bg-slate-900"
               />
-              <span className="text-xs text-slate-300">Abilita Failover Automatico (Cascata)</span>
+              <span className="text-xs text-slate-300 font-medium">Abilita Failover Automatico (Cascata)</span>
             </label>
           </div>
         </div>
         <button
-          onClick={handleSavePreferences}
+          onClick={handleSavePreferencesOnly}
           disabled={saving}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
+          className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg transition-colors cursor-pointer border-none"
         >
-          Salva Preferenze
+          Salva Preferenze Cascata
         </button>
       </div>
 
-      {/* API Keys Configuration */}
-      <div className="space-y-3">
-        <h5 className="text-[10px] font-bold text-slate-400 uppercase">Gestione Chiavi API & Modelli</h5>
-        
-        <form onSubmit={(e) => e.preventDefault()} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_1.5fr_auto] gap-2 items-end">
-          <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Provider</label>
-            <select
-              value={selectedProvider}
-              onChange={(e) => {
-                setSelectedProvider(e.target.value);
-                setModelInput(configs[e.target.value]?.model || '');
-                setApiKeyInput('');
-              }}
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
-            >
-              {providers.filter(p => p !== 'gemini').map(p => (
-                <option key={p} value={p}>{p.toUpperCase()}</option>
-              ))}
-              <option value="gemini">GEMINI (Env Default)</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-400 block mb-1">API Key {configs[selectedProvider]?.hasKey ? '(Configurata)' : ''}</label>
-            <input
-              type="password"
-              placeholder={configs[selectedProvider]?.hasKey ? "Lascia vuoto per non modificare" : "Inserisci API Key..."}
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none font-mono"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Modello (Opzionale)</label>
-            <input
-              type="text"
-              placeholder={configs[selectedProvider]?.model || 'Modello default'}
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none font-mono"
-            />
-          </div>
-          <div>
-            <button
-              onClick={handleUpdateProvider}
-              disabled={saving}
-              className="w-full bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
-            >
-              Aggiorna
-            </button>
-          </div>
-        </form>
-      </div>
-      
-      {/* Status Table */}
-      <div className="bg-slate-950/50 rounded-lg border border-slate-800 overflow-hidden">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase text-[9px]">
-            <tr>
-              <th className="px-3 py-2">Provider</th>
-              <th className="px-3 py-2">Stato</th>
-              <th className="px-3 py-2">Modello Configurato</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/50">
-            {providers.map(p => {
-              const conf = configs[p];
-              const isGemini = p === 'gemini';
-              // Per Gemini, se non c'è una chiave specifica ma c'è quella d'ambiente, lo consideriamo attivo (viene gestito lato backend)
-              const hasKey = conf?.hasKey || isGemini;
-              
-              return (
-                <tr key={p}>
-                  <td className="px-3 py-2 font-medium capitalize flex items-center gap-1.5">
-                    {p} 
-                    {preferredProvider === p && <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[8px] uppercase">Primario</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    {hasKey ? (
-                      <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Attivo</span>
-                    ) : (
-                      <span className="text-slate-500 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Mancante</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-slate-400 font-mono text-[10px]">
-                    {conf?.model || 'Default System'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
       {/* Sezione Gestione Backup dei Log */}
-      <div className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 mt-4 space-y-4">
+      <div className="border border-slate-800 bg-slate-900/40 rounded-xl p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-indigo-400" />
@@ -434,31 +529,6 @@ export function LLMSettings() {
             <p>• <strong className="text-white">StoriaLOG.json</strong>: Salvataggio automatico dei log ogni 15 minuti (append senza sovrascrivere).</p>
             <p>• <strong className="text-white">ChiaviAPI.json</strong>: Salvataggio automatico ad ogni modifica chiavi e caricamento all'avvio bot.</p>
           </div>
-          <button
-            onClick={async () => {
-              setBackupLoading(true);
-              setBackupError(null);
-              setBackupSuccess(null);
-              try {
-                const res = await fetch('/api/drive/sync-logs', { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
-                  setBackupSuccess('Log salvati con successo su Google Drive (StoriaLOG.json)!');
-                } else {
-                  throw new Error(data.error || 'Errore di sincronizzazione');
-                }
-              } catch (err: any) {
-                setBackupError(err.message || 'Errore durante il salvataggio su Drive.');
-              } finally {
-                setBackupLoading(false);
-              }
-            }}
-            disabled={backupLoading}
-            className="w-full mt-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-md transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${backupLoading ? 'animate-spin' : ''}`} />
-            Sincronizza Ora Log su Google Drive (StoriaLOG.json)
-          </button>
         </div>
 
         <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -467,47 +537,6 @@ export function LLMSettings() {
           Se Firebase dovesse esaurire le quote di lettura, il bot utilizzerà automaticamente i dati locali 
           senza interrompere l'analisi dei debriefing settimanali.
         </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-          <button
-            onClick={handleExportToSheets}
-            disabled={sheetsExportLoading}
-            className="sm:col-span-2 flex items-center justify-center gap-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 hover:border-blue-500/50 text-blue-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${sheetsExportLoading ? 'animate-spin' : ''}`} />
-            Esporta Tutte le Chiavi (LLM & Alpaca) su Google Sheets
-          </button>
-          
-          <button
-            onClick={handleExport}
-            disabled={backupLoading}
-            className="flex items-center justify-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 hover:border-indigo-500/50 text-indigo-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50 animate-pulse-subtle"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Esporta Backup Log (JSON)
-          </button>
-
-          <label className="flex items-center justify-center gap-2 bg-slate-800/60 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all cursor-pointer disabled:opacity-50 text-center">
-            <Upload className="w-3.5 h-3.5" />
-            Importa Backup Log (JSON)
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImport}
-              disabled={backupLoading}
-              className="hidden"
-            />
-          </label>
-
-          <button
-            onClick={handleSyncSheets}
-            disabled={sheetsSyncLoading}
-            className="sm:col-span-2 flex items-center justify-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 hover:border-emerald-500/50 text-emerald-200 text-xs font-medium px-4 py-2.5 rounded-md transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${sheetsSyncLoading ? 'animate-spin' : ''}`} />
-            Sincronizza / Recupera da Google Sheets (Chiavi & Regole)
-          </button>
-        </div>
 
         {sheetsSyncMsg && (
           <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-emerald-400 text-xs">
@@ -537,3 +566,4 @@ export function LLMSettings() {
     </div>
   );
 }
+
