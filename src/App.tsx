@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence } from 'motion/react';
 import type { BotStateResponse, BotStatus, AccountData } from './types';
+import { getAccessToken } from './auth';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 import { LLMSettings } from './components/LLMSettings';
@@ -3325,11 +3326,14 @@ export default function App() {
                 return;
               }
               try {
+                const token = await getAccessToken();
+                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
                 const res = await fetch('/api/feedback', {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/json' },
-               body: JSON.stringify({ rule })
-             });
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({ rule })
+                });
              if (res.ok) {
                   showToast('Nuova regola correttiva salvata ed attiva con successo!', 'success', 'Regole AI');
                   e.currentTarget.reset();
@@ -3359,7 +3363,10 @@ export default function App() {
                    <button
                      onClick={async () => {
                        try {
-                         const res = await fetch('/api/feedback/sync-sheets', { method: 'POST' });
+                         const token = await getAccessToken();
+                         const headers: Record<string, string> = {};
+                         if (token) headers['Authorization'] = `Bearer ${token}`;
+                         const res = await fetch('/api/feedback/sync-sheets', { method: 'POST', headers });
                          const data = await res.json();
                          if (data.success) {
                            showToast(data.message, 'success', 'Google Sheets');
@@ -3378,7 +3385,10 @@ export default function App() {
                    <button
                      onClick={async () => {
                        try {
-                         const res = await fetch('/api/feedback/export-sheets', { method: 'POST' });
+                         const token = await getAccessToken();
+                         const headers: Record<string, string> = {};
+                         if (token) headers['Authorization'] = `Bearer ${token}`;
+                         const res = await fetch('/api/feedback/export-sheets', { method: 'POST', headers });
                          const data = await res.json();
                          if (data.success) {
                            showToast(data.message, 'success', 'Google Sheets');
@@ -3402,9 +3412,12 @@ export default function App() {
                      <button
                        onClick={async () => {
                          try {
+                           const token = await getAccessToken();
+                           const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                           if (token) headers['Authorization'] = `Bearer ${token}`;
                            const res = await fetch('/api/feedback/delete', {
                              method: 'POST',
-                             headers: { 'Content-Type': 'application/json' },
+                             headers,
                              body: JSON.stringify({ index: i })
                            });
                            if (res.ok) {

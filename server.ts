@@ -3095,6 +3095,11 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 
 // API Routes
 app.post('/api/feedback', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    GoogleSheetsService.setUserAccessToken(token);
+  }
   const { rule } = req.body;
   if (rule && typeof rule === 'string') {
     if (!botStatus.userFeedbackRules) {
@@ -3121,6 +3126,11 @@ app.post('/api/feedback', async (req, res) => {
 });
 
 app.post('/api/feedback/delete', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    GoogleSheetsService.setUserAccessToken(token);
+  }
   const { index } = req.body;
   if (!botStatus.userFeedbackRules) {
     botStatus.userFeedbackRules = [];
@@ -3144,6 +3154,11 @@ app.post('/api/feedback/delete', async (req, res) => {
 
 app.post('/api/feedback/sync-sheets', async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      GoogleSheetsService.setUserAccessToken(token);
+    }
     const rules = await GoogleSheetsService.syncFeedbackRulesFromSheet();
     if (rules && Array.isArray(rules)) {
       botStatus.userFeedbackRules = rules;
@@ -3161,6 +3176,11 @@ app.post('/api/feedback/sync-sheets', async (req, res) => {
 
 app.post('/api/feedback/export-sheets', async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      GoogleSheetsService.setUserAccessToken(token);
+    }
     const success = await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules || []);
     if (success) {
       addLog('system', `[Feedback Utente] Esportate regole su Google Sheets.`);

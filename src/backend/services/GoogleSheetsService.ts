@@ -43,14 +43,21 @@ export class GoogleSheetsService {
     return google.sheets({ version: 'v4', auth });
   }
 
-  private static async getFirstSheetName(spreadsheetId: string = SHEET_ID): Promise<string> {
+  private static async getFirstSheetName(spreadsheetId: string = SHEET_ID, preferredNames: string[] = []): Promise<string> {
     try {
       const sheets = this.getSheetsClient();
       const res = await sheets.spreadsheets.get({ spreadsheetId });
-      return res.data.sheets?.[0]?.properties?.title || 'Foglio1';
+      const sheetList = res.data.sheets || [];
+      if (preferredNames.length > 0) {
+        for (const pref of preferredNames) {
+          const found = sheetList.find(s => s.properties?.title?.toLowerCase() === pref.toLowerCase());
+          if (found?.properties?.title) return found.properties.title;
+        }
+      }
+      return sheetList[0]?.properties?.title || 'Foglio1';
     } catch (e: any) {
-      console.warn(`[GoogleSheetsService] Impossibile recuperare il nome del primo foglio per ${spreadsheetId}:`, e?.message || e);
-      return 'Foglio1';
+      console.warn(`[GoogleSheetsService] Impossibile recuperare il nome del foglio per ${spreadsheetId}:`, e?.message || e);
+      return preferredNames[0] || 'Foglio1';
     }
   }
 
@@ -71,7 +78,7 @@ export class GoogleSheetsService {
       
       let sheetNameVal = payload.sheetName || (payload.data && payload.data.sheetName);
       if (!sheetNameVal) {
-        sheetNameVal = await this.getFirstSheetName(targetSheetId);
+        sheetNameVal = await this.getFirstSheetName(targetSheetId, ['Logs', 'StoriaLOG', 'LOGS']);
       }
       
       const row = [
@@ -101,7 +108,7 @@ export class GoogleSheetsService {
   public static async syncFeedbackRulesFromSheet(targetSheetId: string = SHEET_ID): Promise<string[] | null> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: targetSheetId,
         range: `${sheetName}!A:A`,
@@ -122,15 +129,16 @@ export class GoogleSheetsService {
       }
       return rules;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', this.formatError(err));
-      return null;
+      const errMsg = this.formatError(err);
+      console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', errMsg);
+      throw new Error(errMsg);
     }
   }
 
   public static async exportFeedbackRulesToSheet(rules: string[], targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
       
       const values = [['Regole di Feedback (Loops di Correzione)']];
       for (const rule of rules) {
@@ -152,15 +160,16 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', this.formatError(err));
-      return false;
+      const errMsg = this.formatError(err);
+      console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', errMsg);
+      throw new Error(errMsg);
     }
   }
 
   public static async syncKeysFromSheet(targetSheetId: string = SHEET_ID): Promise<Record<string, string> | null> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['Chiavi', 'Keys', 'Credentials']);
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: targetSheetId,
         range: `${sheetName}!A:B`,
@@ -198,7 +207,7 @@ export class GoogleSheetsService {
   public static async exportKeysToSheet(keysObj: Record<string, string>, targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['Chiavi', 'Keys', 'Credentials']);
       
       const values = [['Nome Chiave', 'Valore Chiave']];
       for (const [key, value] of Object.entries(keysObj)) {
