@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -1125,31 +1125,66 @@ function AccountPanel({
           </div>
 
           {/* Quick Metrics */}
-          {account.dailyPnL && account.dailyPnL.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-gray-100/80 text-center">
-              <div>
-                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Realizzato</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.realized ?? 0).toFixed(2)}$
+          {account.dailyPnL && account.dailyPnL.length > 0 && (() => {
+            const lastDay = account.dailyPnL[account.dailyPnL.length - 1];
+            const prevDay = account.dailyPnL.length > 1 ? account.dailyPnL[account.dailyPnL.length - 2] : null;
+
+            const totalRealized = lastDay?.realized ?? 0;
+            const totalUnrealized = lastDay?.unrealized ?? 0;
+            const totalPnL = lastDay?.pnl ?? 0;
+
+            const dailyRealized = prevDay ? (totalRealized - (prevDay.realized ?? 0)) : totalRealized;
+            const dailyUnrealized = totalUnrealized;
+            const dailyTotalPnL = dailyRealized + dailyUnrealized;
+
+            return (
+              <div className="mt-4 pt-3 border-t border-gray-100/80 space-y-3">
+                {/* Riga 1: Totale Cumulativo (Storico) */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {totalRealized >= 0 ? '+' : ''}{totalRealized.toFixed(2)}$
+                    </div>
+                  </div>
+                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {totalUnrealized >= 0 ? '+' : ''}{totalUnrealized.toFixed(2)}$
+                    </div>
+                  </div>
+                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}$
+                    </div>
+                  </div>
+                </div>
+
+                {/* Riga 2: Giornaliero (Oggi fino a questo momento) */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Realizzato</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {dailyRealized >= 0 ? '+' : ''}{dailyRealized.toFixed(2)}$
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Non Realizzato</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {dailyUnrealized >= 0 ? '+' : ''}{dailyUnrealized.toFixed(2)}$
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale Netto Giornaliero</div>
+                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {dailyTotalPnL >= 0 ? '+' : ''}{dailyTotalPnL.toFixed(2)}$
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.unrealized ?? 0).toFixed(2)}$
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">PnL Totale Netto</div>
-                <div className={`text-sm font-bold font-mono mt-0.5 ${(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0) >= 0 ? '+' : ''}
-                  {(account.dailyPnL[account.dailyPnL.length - 1]?.pnl ?? 0).toFixed(2)}$
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Asset in Gestione */}
@@ -1496,9 +1531,14 @@ export default function App() {
   const [momentumAssets, setMomentumAssets] = useState<MomentumAsset[]>([]);
   const [momentumLoading, setMomentumLoading] = useState(false);
 
-  const [isOperationsCollapsed, setIsOperationsCollapsed] = useState(true);
-  const [isAlpacaFillsCollapsed, setIsAlpacaFillsCollapsed] = useState(true);
-  const [isMomentumCollapsed, setIsMomentumCollapsed] = useState(true);
+  const [isOperationsCollapsed, setIsOperationsCollapsed] = useState(false);
+  const [isAlpacaFillsCollapsed, setIsAlpacaFillsCollapsed] = useState(false);
+  const [isMomentumCollapsed, setIsMomentumCollapsed] = useState(false);
+  const [isClosedOperationsCollapsed, setIsClosedOperationsCollapsed] = useState(false);
+  const [isDailyDebriefCollapsed, setIsDailyDebriefCollapsed] = useState(false);
+  const [isPeriodicDebriefCollapsed, setIsPeriodicDebriefCollapsed] = useState(false);
+  const [isMotivationCollapsed, setIsMotivationCollapsed] = useState(false);
+  const [isFeedbackCollapsed, setIsFeedbackCollapsed] = useState(false);
 
   // Stato per la Sezione Operazioni Chiuse con Filtro Data
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
@@ -2366,13 +2406,17 @@ export default function App() {
         {/* SEZIONE OPERAZIONI CHIUSE (CON FILTRO PER DATA) */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
-            <div>
+            <div 
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1" 
+              onClick={() => setIsClosedOperationsCollapsed(!isClosedOperationsCollapsed)}
+            >
               <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                Storico Operazioni Chiuse
+                <span>Storico Operazioni Chiuse</span>
+                {isClosedOperationsCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-emerald-600" />}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Visualizza e analizza tutte le posizioni liquidate e le vendite eseguite dal Bot con motivazione dettagliata e filtro temporale.
+                Visualizza e analizza tutte le posizioni liquidate e le vendite eseguite dal Bot con motivazione dettagliata e filtro temporale. Clicca per espandere/comprimere.
               </p>
             </div>
 
@@ -2470,12 +2514,25 @@ export default function App() {
               </button>
             </div>
           </div>
+          {!isClosedOperationsCollapsed && (() => {
+            const periodSaldoPnL = closedTrades.reduce((acc, t) => {
+              const val = typeof t.pnl === 'number' ? t.pnl : (t.pnl ? parseFloat(t.pnl) : 0);
+              return acc + val;
+            }, 0);
 
+            return (
+            <>
           {/* Sommario Metriche Periodo */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-4">
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
               <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Operazioni Chiuse</span>
               <p className="text-lg font-bold text-slate-900 font-mono mt-0.5">{closedTrades.length}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Saldo PnL Periodo</span>
+              <p className={`text-lg font-bold font-mono mt-0.5 ${periodSaldoPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {periodSaldoPnL >= 0 ? '+' : ''}${periodSaldoPnL.toFixed(2)}
+              </p>
             </div>
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
               <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Modalità Attuale</span>
@@ -2507,6 +2564,7 @@ export default function App() {
                     <th className="p-3">Data / Ora Chiusura</th>
                     <th className="p-3">Simbolo</th>
                     <th className="p-3">Azione</th>
+                    <th className="p-3 text-right">Profitto / Perdita</th>
                     <th className="p-3 text-right">Quantità</th>
                     <th className="p-3 text-right">Prezzo Uscita</th>
                     <th className="p-3 text-right">Controvalore Totale</th>
@@ -2514,7 +2572,10 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {closedTrades.map((trade, idx) => (
+                  {closedTrades.map((trade, idx) => {
+                    const pnlVal = typeof trade.pnl === 'number' ? trade.pnl : (trade.pnl ? parseFloat(trade.pnl) : 0);
+                    const isPos = pnlVal >= 0;
+                    return (
                     <tr key={trade.id || idx} className="hover:bg-slate-100/40 transition-colors">
                       <td className="p-3 text-slate-500 font-mono whitespace-nowrap">
                         {new Date(trade.timestamp).toLocaleString('it-IT')}
@@ -2523,6 +2584,15 @@ export default function App() {
                       <td className="p-3">
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200/60">
                           {trade.action || 'VENDITA'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-md text-xs font-bold inline-flex items-center gap-0.5 ${
+                          isPos 
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80' 
+                            : 'bg-rose-50 text-rose-700 border border-rose-200/80'
+                        }`}>
+                          {isPos ? '+' : ''}${pnlVal.toFixed(2)}
                         </span>
                       </td>
                       <td className="p-3 text-right font-mono font-medium">
@@ -2545,7 +2615,8 @@ export default function App() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2554,18 +2625,25 @@ export default function App() {
               Nessuna operazione chiusa registrata nel periodo selezionato ({closedStartDate || 'Inizio'} - {closedEndDate || 'Oggi'}).
             </div>
           )}
+            </>
+            );
+          })()}
         </div>
 
         {/* Debriefing Giornaliero AI */}
         <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
-            <div>
+            <div
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1"
+              onClick={() => setIsDailyDebriefCollapsed(!isDailyDebriefCollapsed)}
+            >
               <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <Brain className="w-5 h-5 text-indigo-600" />
-                Debriefing Giornaliero Assistito da AI
+                <span>Debriefing Giornaliero Assistito da AI</span>
+                {isDailyDebriefCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Simula una riunione di fine giornata con Gemini 3.5 per analizzare decisioni, correlazioni e ottenere regole ottimizzate.
+                Simula una riunione di fine giornata con Gemini 3.5 per analizzare decisioni, correlazioni e ottenere regole ottimizzate. Clicca per espandere/comprimere.
               </p>
             </div>
             <button
@@ -2582,6 +2660,8 @@ export default function App() {
             </button>
           </div>
 
+          {!isDailyDebriefCollapsed && (
+            <>
           {status?.latestDailyDebrief ? (
             <div className="space-y-4">
               {/* Output Analisi */}
@@ -2655,22 +2735,30 @@ export default function App() {
               </div>
             )
           )}
+            </>
+          )}
         </div>
 
         {/* Valutazioni su Periodi Multi-giorno con Selezione Intervalli */}
         <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
-            <div>
+            <div
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1"
+              onClick={() => setIsPeriodicDebriefCollapsed(!isPeriodicDebriefCollapsed)}
+            >
               <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-indigo-600" />
-                Valutazione & Ottimizzazione Periodica (AI)
+                <span>Valutazione & Ottimizzazione Periodica (AI)</span>
+                {isPeriodicDebriefCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Valuta le performance e ottimizza la strategia su intervalli di tempo superiori al singolo giorno. Seleziona date e conto di riferimento.
+                Valuta le performance e ottimizza la strategia su intervalli di tempo superiori al singolo giorno. Seleziona date e conto di riferimento. Clicca per espandere/comprimere.
               </p>
             </div>
           </div>
 
+          {!isPeriodicDebriefCollapsed && (
+            <>
           {/* Selezione Rapida Periodo */}
           <div className="flex flex-wrap gap-2 mb-4">
             <span className="text-xs font-semibold text-slate-500 self-center mr-2 uppercase tracking-wider font-mono">Periodo Rapido:</span>
@@ -3018,18 +3106,28 @@ export default function App() {
               </div>
             )
           )}
+            </>
+          )}
         </div>
 
         {/* Daily Report Motivation */}
         {status?.latestDailyReport && (
           <div className="bg-purple-50 p-6 rounded-2xl shadow-sm border border-purple-100 mt-6 mb-6">
-            <h2 className="text-lg font-medium text-purple-900 mb-3 flex items-center gap-2">
-              <Activity className="w-5 h-5" />
-              Report Motivazionale di Fine Giornata
-            </h2>
-            <div className="bg-white p-4 rounded-lg border border-purple-200 whitespace-pre-wrap font-sans text-sm text-purple-800 shadow-inner">
-              {status.latestDailyReport}
+            <div
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity"
+              onClick={() => setIsMotivationCollapsed(!isMotivationCollapsed)}
+            >
+              <h2 className="text-lg font-medium text-purple-900 mb-3 flex items-center gap-2">
+                <Activity className="w-5 h-5" />
+                <span className="flex-1">Report Motivazionale di Fine Giornata</span>
+                {isMotivationCollapsed ? <ChevronDown className="w-4 h-4 text-purple-400" /> : <ChevronUp className="w-4 h-4 text-purple-600" />}
+              </h2>
             </div>
+            {!isMotivationCollapsed && (
+              <div className="bg-white p-4 rounded-lg border border-purple-200 whitespace-pre-wrap font-sans text-sm text-purple-800 shadow-inner">
+                {status.latestDailyReport}
+              </div>
+            )}
           </div>
         )}
 
@@ -3203,13 +3301,21 @@ export default function App() {
 
         {/* Feedback Form */}
         <div className="bg-gray-50 p-6 rounded-2xl shadow-sm border border-gray-200 mt-6">
-           <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center justify-between">
-             <div className="flex items-center gap-2">
-               <MessageSquare className="w-5 h-5 text-gray-500" />
-               Loop di Correzione (Invia Regole al Bot)
-             </div>
-
-           </h2>
+           <div 
+             className="cursor-pointer select-none hover:opacity-85 transition-opacity mb-3" 
+             onClick={() => setIsFeedbackCollapsed(!isFeedbackCollapsed)}
+           >
+             <h2 className="text-lg font-medium text-gray-900 flex items-center justify-between">
+               <div className="flex items-center gap-2">
+                 <MessageSquare className="w-5 h-5 text-gray-500" />
+                 <span>Loop di Correzione (Invia Regole al Bot)</span>
+               </div>
+               {isFeedbackCollapsed ? <ChevronDown className="w-5 h-5 text-gray-400" /> : <ChevronUp className="w-5 h-5 text-gray-600" />}
+             </h2>
+           </div>
+           
+           {!isFeedbackCollapsed && (
+             <>
            <form onSubmit={async (e) => {
              e.preventDefault();
              const formData = new FormData(e.currentTarget);
@@ -3246,11 +3352,51 @@ export default function App() {
                Invia Regola
              </button>
            </form>
-           {status?.userFeedbackRules && status.userFeedbackRules.length > 0 && (
-             <div className="mt-4">
-               <h3 className="text-sm font-medium text-gray-700 mb-2">Regole Attive:</h3>
+           <div className="mt-4">
+             <div className="flex items-center justify-between mb-2">
+               <h3 className="text-sm font-medium text-gray-700">Regole Attive:</h3>
+               <div className="flex gap-2">
+                   <button
+                     onClick={async () => {
+                       try {
+                         const res = await fetch('/api/feedback/sync-sheets', { method: 'POST' });
+                         const data = await res.json();
+                         if (data.success) {
+                           showToast(data.message, 'success', 'Google Sheets');
+                           fetchStatus();
+                         } else {
+                           showToast(`Errore: ${data.error}`, 'error', 'Google Sheets');
+                         }
+                       } catch (err: any) {
+                         showToast(`Errore di rete: ${err.message}`, 'error', 'Google Sheets');
+                       }
+                     }}
+                     className="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-700 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                   >
+                     <RefreshCw className="w-3 h-3" /> Sincronizza da Sheets
+                   </button>
+                   <button
+                     onClick={async () => {
+                       try {
+                         const res = await fetch('/api/feedback/export-sheets', { method: 'POST' });
+                         const data = await res.json();
+                         if (data.success) {
+                           showToast(data.message, 'success', 'Google Sheets');
+                         } else {
+                           showToast(`Errore: ${data.error}`, 'error', 'Google Sheets');
+                         }
+                       } catch (err: any) {
+                         showToast(`Errore di rete: ${err.message}`, 'error', 'Google Sheets');
+                       }
+                     }}
+                     className="text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                   >
+                     <Save className="w-3 h-3" /> Esporta su Sheets
+                   </button>
+                 </div>
+               </div>
                <ul className="space-y-2 text-xs text-gray-600">
-                 {status.userFeedbackRules.map((r, i) => (
+                 {(status?.userFeedbackRules || []).map((r, i) => (
                    <li key={i} className="flex items-center justify-between bg-gray-100 p-2 rounded-md">
                      <span className="flex-1 break-words mr-2">{r}</span>
                      <button
@@ -3281,6 +3427,7 @@ export default function App() {
                  ))}
                </ul>
              </div>
+             </>
            )}
         </div>
 

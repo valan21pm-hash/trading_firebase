@@ -1932,36 +1932,10 @@ async function getLatestPrice(symbol: string, apiKey: string, secretKey: string)
 }
 
 async function sendToGoogleSheets(payload: { eventType: string; mode?: string; symbol?: string; action?: string; sheetName?: string; data: any }) {
-  const url = 'https://script.google.com/macros/s/AKfycbxHvCVIH5ttVJzvgkqXHq2srws1c1Ghm4UXb4NqtVFHRrJQDH07khXgMDdrWpLd9IKGwg/exec';
   try {
-    const sheetNameVal = payload.sheetName || (payload.data && payload.data.sheetName) || 'API KEYS';
-    const bodyObj: Record<string, any> = {
-      timestamp: new Date().toISOString(),
-      symbol: payload.symbol || 'KEYS',
-      action: payload.action || 'KEYS',
-      sheetName: sheetNameVal,
-      sheet_name: sheetNameVal,
-      sheet: sheetNameVal,
-      tabName: sheetNameVal,
-      tab: sheetNameVal,
-      eventType: payload.eventType || 'backup_credentials',
-      type: payload.eventType || 'backup_credentials',
-      ...payload,
-      ...(payload.data || {})
-    };
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyObj),
-      redirect: 'follow',
-      signal: controller.signal
-    }).finally(() => clearTimeout(timeoutId));
+    await GoogleSheetsService.appendLogsToSheet(payload);
   } catch (err: any) {
-    console.error('[Google Sheets Webhook Error]', err?.message || err);
+    console.error('[Google Sheets Error]', err?.message || err);
   }
 }
 
@@ -2444,6 +2418,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         } else {
           addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment favorevole: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche.`);
         }
+
+        addLogicLog(mode, {
+          timestamp: new Date().toISOString(),
+          symbol,
+          action: 'HOLD',
+          reasoning: `Sentiment score: ${sentimentScore.toFixed(2)} - ${sentimentReasoning}`
+        });
         sendToGoogleSheets({
           eventType: 'trade_action',
           mode,
@@ -2534,7 +2515,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         for (const order of ordersToSubmit) {
           if (currentBuyingPower < order.amount) {
             addLog(mode as 'paper' | 'live', `[Mercato] Salto acquisto per ${order.symbol}: potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${order.amount.toFixed(2)}).`);
-            continue;
+            addLogicLog(mode, {
+            timestamp: new Date().toISOString(),
+            symbol: order.symbol,
+            action: 'SKIP',
+            reasoning: `Potere d'acquisto insufficiente ($ ${currentBuyingPower.toFixed(2)} rimasti, richiesti $ ${order.amount.toFixed(2)})`
+          });
+          continue;
           }
 
           addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${order.symbol}: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
@@ -3091,7 +3078,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
 });
 
 // API Routes
-app.post('/api/feedback', (req, res) => {
+app.post('/api/feedback', async (req, res) => {
   const { rule } = req.body;
   if (rule && typeof rule === 'string') {
     if (!botStatus.userFeedbackRules) {
@@ -3104,13 +3091,20 @@ app.post('/api/feedback', (req, res) => {
       data: { rule }
     }).catch(err => console.error('[Google Sheets Error]', err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule addition:', err));
-    res.json({ success: true, message: 'Regola aggiunta con successo.' });
+    
+    try {
+      await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules);
+    } catch (err: any) {
+      console.error('[GoogleSheets Auto-Export Feedback Error]:', err.message);
+    }
+
+    res.json({ success: true, message: 'Regola aggiunta con successo e sincronizzata.' });
   } else {
     res.status(400).json({ success: false, message: 'Regola non valida.' });
   }
 });
 
-app.post('/api/feedback/delete', (req, res) => {
+app.post('/api/feedback/delete', async (req, res) => {
   const { index } = req.body;
   if (!botStatus.userFeedbackRules) {
     botStatus.userFeedbackRules = [];
@@ -3119,9 +3113,48 @@ app.post('/api/feedback/delete', (req, res) => {
     const deletedRule = botStatus.userFeedbackRules.splice(index, 1)[0];
     addLog('system', `[Feedback Utente] Rimossa regola: ${deletedRule}`);
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule deletion:', err));
+    
+    try {
+      await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules);
+    } catch (err: any) {
+      console.error('[GoogleSheets Auto-Export Feedback Error]:', err.message);
+    }
+
     res.json({ success: true, message: 'Regola rimossa con successo.', userFeedbackRules: botStatus.userFeedbackRules });
   } else {
     res.status(400).json({ success: false, message: 'Indice non valido.' });
+  }
+});
+
+app.post('/api/feedback/sync-sheets', async (req, res) => {
+  try {
+    const rules = await GoogleSheetsService.syncFeedbackRulesFromSheet();
+    if (rules && Array.isArray(rules)) {
+      botStatus.userFeedbackRules = rules;
+      await saveBotStatus();
+      addLog('system', `[Feedback Utente] Sincronizzate ${rules.length} regole da Google Sheets.`);
+      res.json({ success: true, message: `Sincronizzate ${rules.length} regole da Google Sheets.`, userFeedbackRules: rules });
+    } else {
+      res.status(500).json({ success: false, error: 'Nessuna regola trovata o errore di sincronizzazione.' });
+    }
+  } catch (error: any) {
+    console.error('[Google Sheets Error]', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/feedback/export-sheets', async (req, res) => {
+  try {
+    const success = await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules || []);
+    if (success) {
+      addLog('system', `[Feedback Utente] Esportate regole su Google Sheets.`);
+      res.json({ success: true, message: 'Regole esportate su Google Sheets con successo.' });
+    } else {
+      res.status(500).json({ success: false, error: 'Errore durante l\'esportazione delle regole.' });
+    }
+  } catch (error: any) {
+    console.error('[Google Sheets Error]', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -3662,23 +3695,58 @@ app.get('/api/closed-positions', async (req, res) => {
         if (actResponse.ok) {
           const fills = await actResponse.json();
           if (Array.isArray(fills)) {
-            const sellFills = fills.filter((f: any) => (f.side || '').toLowerCase() === 'sell');
-            for (const f of sellFills) {
-              const qty = parseFloat(f.qty || '0');
-              const price = parseFloat(f.price || '0');
-              const timestamp = f.transaction_time || f.timestamp || new Date().toISOString();
-              closedTrades.push({
-                id: f.id || `fill_${timestamp}_${f.symbol}`,
-                symbol: f.symbol,
-                action: 'VENDITA',
-                qty,
-                price,
-                totalValue: (qty * price).toFixed(2),
-                timestamp,
-                reason: f.type || 'Esecuzione Ordine di Vendita (Alpaca)',
-                source: 'Alpaca Fill'
-              });
+            const fillsBySymbol = new Map<string, any[]>();
+            for (const f of fills) {
+              const sym = f.symbol;
+              if (!sym) continue;
+              if (!fillsBySymbol.has(sym)) fillsBySymbol.set(sym, []);
+              fillsBySymbol.get(sym)!.push(f);
             }
+
+            fillsBySymbol.forEach((symFills, sym) => {
+              symFills.sort((a, b) => new Date(a.transaction_time || a.timestamp).getTime() - new Date(b.transaction_time || b.timestamp).getTime());
+              const buyQueue: { qty: number; price: number }[] = [];
+
+              for (const f of symFills) {
+                const side = (f.side || '').toLowerCase();
+                const qty = parseFloat(f.qty || '0');
+                const price = parseFloat(f.price || '0');
+                const timestamp = f.transaction_time || f.timestamp || new Date().toISOString();
+
+                if (side === 'buy') {
+                  buyQueue.push({ qty, price });
+                } else if (side === 'sell') {
+                  let pnl = 0;
+                  let remainingQty = qty;
+                  while (remainingQty > 0 && buyQueue.length > 0) {
+                    const matchedQty = Math.min(remainingQty, buyQueue[0].qty);
+                    pnl += matchedQty * (price - buyQueue[0].price);
+                    remainingQty -= matchedQty;
+                    buyQueue[0].qty -= matchedQty;
+                    if (buyQueue[0].qty <= 0) buyQueue.shift();
+                  }
+
+                  if (pnl === 0 && remainingQty === qty) {
+                    if (f.pnl !== undefined) pnl = parseFloat(f.pnl);
+                    else if (f.pl !== undefined) pnl = parseFloat(f.pl);
+                    else if (f.realized_pl !== undefined) pnl = parseFloat(f.realized_pl);
+                  }
+
+                  closedTrades.push({
+                    id: f.id || `fill_${timestamp}_${sym}`,
+                    symbol: sym,
+                    action: 'VENDITA',
+                    qty,
+                    price,
+                    pnl: parseFloat(pnl.toFixed(2)),
+                    totalValue: (qty * price).toFixed(2),
+                    timestamp,
+                    reason: f.type || 'Esecuzione Ordine di Vendita (Alpaca)',
+                    source: 'Alpaca Fill'
+                  });
+                }
+              }
+            });
           }
         }
       } catch (err: any) {
@@ -3693,12 +3761,20 @@ app.get('/api/closed-positions', async (req, res) => {
         snap.forEach(doc => {
           const data = doc.data();
           const timestamp = data.closedAt || data.updatedAt || new Date().toISOString();
+          const pnlVal = data.realizedPl !== undefined 
+            ? parseFloat(data.realizedPl) 
+            : (data.pnl !== undefined 
+                ? parseFloat(data.pnl) 
+                : (data.entryPrice && data.highestPrice 
+                    ? parseFloat(((data.highestPrice - data.entryPrice) * (data.qty || 1)).toFixed(2))
+                    : 0));
           closedTrades.push({
             id: `fs_${doc.id}_${timestamp}`,
             symbol: data.symbol || doc.id,
             action: 'CHIUSURA POSIZIONE',
             qty: data.qty || 1,
             price: data.highestPrice || 0,
+            pnl: pnlVal,
             totalValue: data.currentValue || 0,
             timestamp,
             reason: data.closureReason || 'Chiusura automatica da Risk Management',
@@ -3715,12 +3791,14 @@ app.get('/api/closed-positions', async (req, res) => {
     for (const log of logicLogs) {
       if ((log.action || '').toUpperCase() === 'SELL') {
         const timestamp = log.timestamp || new Date().toISOString();
+        const pnlVal = log.pnl !== undefined ? parseFloat(log.pnl) : (log.realizedPl !== undefined ? parseFloat(log.realizedPl) : 0);
         closedTrades.push({
           id: `log_${timestamp}_${log.symbol}`,
           symbol: log.symbol,
           action: 'SEGNALE CHIUSURA IA',
           qty: 0,
           price: parseFloat(log.price || '0'),
+          pnl: pnlVal,
           totalValue: 0,
           timestamp,
           reason: log.reasoning || log.reason || 'Chiusura da analisi sentiment IA',
