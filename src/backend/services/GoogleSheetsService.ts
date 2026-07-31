@@ -113,7 +113,7 @@ export class GoogleSheetsService {
       const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: targetSheetId,
-        range: `${sheetName}!A:A`,
+        range: `${sheetName}!A:B`,
       });
 
       const rows = response.data.values;
@@ -122,7 +122,7 @@ export class GoogleSheetsService {
       }
 
       const rules: string[] = [];
-      const startIndex = (rows[0] && rows[0][0] && rows[0][0].toLowerCase().includes('regol')) ? 1 : 0;
+      const startIndex = (rows[0] && rows[0][0] && (rows[0][0].toLowerCase().includes('regol') || rows[0][0].toLowerCase().includes('loop'))) ? 1 : 0;
       for (let i = startIndex; i < rows.length; i++) {
         const row = rows[i];
         if (row && row[0] && row[0].trim().length > 0) {
@@ -142,14 +142,20 @@ export class GoogleSheetsService {
       const sheets = this.getSheetsClient();
       const sheetName = await this.getFirstSheetName(targetSheetId, ['LOOP', 'Regole', 'Feedback']);
       
-      const values = [['Regole di Feedback (Loops di Correzione)']];
+      const values = [['Regole di Feedback (Loops di Correzione)', 'Predicato di Esecuzione (Logica Operativa)']];
       for (const rule of rules) {
-        values.push([rule]);
+        let predicate = 'f(dt, s, sig) = 0 se dt < 60; 0 se dt < 30 and s == 0.00 and sig == "SELL"; altrimenti 1';
+        if (rule.includes('f(dt, s, sig)')) {
+          predicate = 'f(dt, s, sig) = 0 se dt < 60; 0 se dt < 30 and s == 0.00 and sig == "SELL"; altrimenti 1';
+        } else if (rule.includes('==') || rule.includes('<') || rule.includes('>')) {
+          predicate = rule;
+        }
+        values.push([rule, predicate]);
       }
 
       await sheets.spreadsheets.values.clear({
         spreadsheetId: targetSheetId,
-        range: `${sheetName}!A:A`,
+        range: `${sheetName}!A:B`,
       });
 
       await sheets.spreadsheets.values.update({
