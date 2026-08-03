@@ -1081,213 +1081,67 @@ function AccountPanel({
 
         {showLlmSettings && <LLMSettings />}
 
-        {/* Grafico P&L Realizzato e Non Realizzato */}
-        <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-                <BarChart2 className="w-4 h-4 text-gray-500" />
-                Andamento Storico P&L
-              </h3>
-              <p className="text-[11px] text-gray-500">Confronto tra profitti/perdite realizzati e posizioni aperte</p>
-            </div>
-            {/* Legenda personalizzata */}
-            <div className="flex gap-4 text-[10px] font-medium">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block"></span>
-                <span className="text-gray-600">Realizzato</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded bg-sky-400 inline-block"></span>
-                <span className="text-gray-600">Non Realizzato</span>
-              </div>
-            </div>
-          </div>
+        {/* Quick Metrics P&L Summary */}
+        {account.dailyPnL && account.dailyPnL.length > 0 && (() => {
+          const lastDay = account.dailyPnL[account.dailyPnL.length - 1];
+          const prevDay = account.dailyPnL.length > 1 ? account.dailyPnL[account.dailyPnL.length - 2] : null;
 
-          <div className="h-60 w-full mt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={account.dailyPnL || []}
-                margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="colorRealized" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorUnrealized" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                <XAxis 
-                  dataKey="date" 
-                  tickFormatter={formatDate}
-                  tick={{ fill: '#6b7280', fontSize: 10 }}
-                  axisLine={{ stroke: '#e5e7eb' }}
-                  tickLine={{ stroke: '#e5e7eb' }}
-                />
-                <YAxis 
-                  tick={{ fill: '#6b7280', fontSize: 10 }}
-                  axisLine={{ stroke: '#e5e7eb' }}
-                  tickLine={{ stroke: '#e5e7eb' }}
-                  tickFormatter={(val) => `${val >= 0 ? '+' : ''}${val}$`}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Area 
-                  type="monotone" 
-                  dataKey="realized" 
-                  name="P&L Realizzato"
-                  stroke="#10b981" 
-                  strokeWidth={2}
-                  fillOpacity={1} 
-                  fill="url(#colorRealized)" 
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="unrealized" 
-                  name="P&L Non Realizzato"
-                  stroke="#0ea5e9" 
-                  strokeWidth={2}
-                  fillOpacity={1} 
-                  fill="url(#colorUnrealized)" 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          const totalRealized = lastDay?.realized ?? 0;
+          const totalUnrealized = lastDay?.unrealized ?? 0;
+          const totalPnL = lastDay?.pnl ?? 0;
 
-          {/* Quick Metrics */}
-          {account.dailyPnL && account.dailyPnL.length > 0 && (() => {
-            const lastDay = account.dailyPnL[account.dailyPnL.length - 1];
-            const prevDay = account.dailyPnL.length > 1 ? account.dailyPnL[account.dailyPnL.length - 2] : null;
+          const dailyRealized = prevDay ? (totalRealized - (prevDay.realized ?? 0)) : totalRealized;
+          const dailyUnrealized = totalUnrealized;
+          const dailyTotalPnL = dailyRealized + dailyUnrealized;
 
-            const totalRealized = lastDay?.realized ?? 0;
-            const totalUnrealized = lastDay?.unrealized ?? 0;
-            const totalPnL = lastDay?.pnl ?? 0;
-
-            const dailyRealized = prevDay ? (totalRealized - (prevDay.realized ?? 0)) : totalRealized;
-            const dailyUnrealized = totalUnrealized;
-            const dailyTotalPnL = dailyRealized + dailyUnrealized;
-
-            return (
-              <div className="mt-4 pt-3 border-t border-gray-100/80 space-y-3">
-                {/* Riga 1: Totale Cumulativo (Storico) */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {totalRealized >= 0 ? '+' : ''}{totalRealized.toFixed(2)}$
-                    </div>
-                  </div>
-                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {totalUnrealized >= 0 ? '+' : ''}{totalUnrealized.toFixed(2)}$
-                    </div>
-                  </div>
-                  <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                    <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}$
-                    </div>
+          return (
+            <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 mt-2 space-y-2">
+              {/* Riga 1: Totale Cumulativo (Storico) */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {totalRealized >= 0 ? '+' : ''}{totalRealized.toFixed(2)}$
                   </div>
                 </div>
-
-                {/* Riga 2: Giornaliero (Oggi fino a questo momento) */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Realizzato</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {dailyRealized >= 0 ? '+' : ''}{dailyRealized.toFixed(2)}$
-                    </div>
+                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {totalUnrealized >= 0 ? '+' : ''}{totalUnrealized.toFixed(2)}$
                   </div>
-                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Non Realizzato</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {dailyUnrealized >= 0 ? '+' : ''}{dailyUnrealized.toFixed(2)}$
-                    </div>
-                  </div>
-                  <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                    <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale Netto Giornaliero</div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {dailyTotalPnL >= 0 ? '+' : ''}{dailyTotalPnL.toFixed(2)}$
-                    </div>
+                </div>
+                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}$
                   </div>
                 </div>
               </div>
-            );
-          })()}
-        </div>
 
-        {/* Asset in Gestione */}
-        <div className="mt-4 space-y-4">
-          <div>
-            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1 flex items-center justify-between">
-              <span>Indici Gestiti</span>
-              <span className="text-xs text-gray-500 font-normal">CASH - Stato</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              {['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'].map(symbol => {
-                const hasPosition = account.positions?.some(pos => pos.symbol === symbol);
-                const latestLog = account.dailyLogicLogs ? [...account.dailyLogicLogs].reverse().find(l => l.symbol === symbol) : null;
-                return (
-                  <div key={symbol} className="p-2 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between gap-1 text-xs">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-gray-800">{symbol}</span>
-                      <span className="px-1 text-[9px] font-semibold bg-gray-200 text-gray-600 rounded">CASH</span>
-                    </div>
-                    <div className="flex justify-between items-center mt-1">
-                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${hasPosition ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {hasPosition ? 'Attivo' : 'In attesa'}
-                      </span>
-                    </div>
-                    {latestLog && (
-                      <div className="text-[9px] text-gray-500 mt-1 border-t border-gray-200/60 pt-1">
-                        <span className={`font-semibold ${latestLog.action === 'BUY' ? 'text-green-600' : latestLog.action === 'SKIP' ? 'text-amber-600' : 'text-gray-500'}`}>
-                          {latestLog.action}
-                        </span>
-                      </div>
-                    )}
+              {/* Riga 2: Giornaliero (Oggi fino a questo momento) */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Realizzato</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {dailyRealized >= 0 ? '+' : ''}{dailyRealized.toFixed(2)}$
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1 flex items-center justify-between">
-              <span>Materie Prime Gestite</span>
-              <span className="text-xs text-gray-500 font-normal">CASH - Stato</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              {['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'].map(symbol => {
-                const hasPosition = account.positions?.some(pos => pos.symbol === symbol);
-                const latestLog = account.dailyLogicLogs ? [...account.dailyLogicLogs].reverse().find(l => l.symbol === symbol) : null;
-                return (
-                  <div key={symbol} className="p-2 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between gap-1 text-xs">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-gray-800">{symbol}</span>
-                      <span className="px-1 text-[9px] font-semibold bg-gray-200 text-gray-600 rounded">CASH</span>
-                    </div>
-                    <div className="flex justify-between items-center mt-1">
-                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${hasPosition ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {hasPosition ? 'Attivo' : 'In attesa'}
-                      </span>
-                    </div>
-                    {latestLog && (
-                      <div className="text-[9px] text-gray-500 mt-1 border-t border-gray-200/60 pt-1">
-                        <span className={`font-semibold ${latestLog.action === 'BUY' ? 'text-green-600' : latestLog.action === 'SKIP' ? 'text-amber-600' : 'text-gray-500'}`}>
-                          {latestLog.action}
-                        </span>
-                      </div>
-                    )}
+                </div>
+                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Non Realizzato</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {dailyUnrealized >= 0 ? '+' : ''}{dailyUnrealized.toFixed(2)}$
                   </div>
-                );
-              })}
+                </div>
+                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale Netto Giornaliero</div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {dailyTotalPnL >= 0 ? '+' : ''}{dailyTotalPnL.toFixed(2)}$
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
@@ -1588,6 +1442,7 @@ export default function App() {
   const [isPeriodicDebriefCollapsed, setIsPeriodicDebriefCollapsed] = useState(false);
   const [isMotivationCollapsed, setIsMotivationCollapsed] = useState(false);
   const [isFeedbackCollapsed, setIsFeedbackCollapsed] = useState(false);
+  const [isLogicLogsCollapsed, setIsLogicLogsCollapsed] = useState(false);
 
   // Stato per la Sezione Operazioni Chiuse con Filtro Data
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
@@ -2382,64 +2237,72 @@ export default function App() {
               </div>
 
               {/* 3. LOG LOGICA DECISIONALE DEL BOT */}
-              <div>
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+              <div className="border-t border-slate-100 pt-3 mt-3">
+                <h3 
+                  className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono cursor-pointer select-none hover:text-slate-700 transition-colors"
+                  onClick={() => setIsLogicLogsCollapsed(!isLogicLogsCollapsed)}
+                >
                   <Brain className="w-4 h-4 text-indigo-500" />
-                  Log Logica Decisionale del Bot (Ultimi Segnali)
+                  <span>Log Logica Decisionale del Bot (Ultimi Segnali)</span>
+                  {isLogicLogsCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />}
                 </h3>
-                {operationsData.dailyLogicLogs && operationsData.dailyLogicLogs.length > 0 ? (
-                  <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
-                          <th className="p-3">Ora</th>
-                          <th className="p-3">Simbolo</th>
-                          <th className="p-3">Decisione</th>
-                          <th className="p-3 text-right">Prezzo</th>
-                          <th className="p-3">Motivazione Sentiment LLM</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                        {operationsData.dailyLogicLogs
-                          .slice(-10)
-                          .reverse()
-                          .map((log, idx) => {
-                            const act = (log.action || '').toUpperCase();
-                            return (
-                              <tr key={idx} className="hover:bg-slate-100/30">
-                                <td className="p-3 text-slate-500 font-mono">
-                                  {new Date(log.timestamp).toLocaleTimeString('it-IT')}
-                                </td>
-                                <td className="p-3 font-bold text-slate-900">{log.symbol}</td>
-                                <td className="p-3">
-                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    act === 'BUY' 
-                                      ? 'bg-green-100 text-green-700' 
-                                      : act === 'SELL' 
-                                      ? 'bg-red-100 text-red-700' 
-                                      : act === 'HOLD' 
-                                      ? 'bg-indigo-100 text-indigo-700' 
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}>
-                                    {act === 'BUY' ? 'BUY' : act === 'SELL' ? 'SELL' : act === 'HOLD' ? 'HOLD' : 'SKIP'}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-right font-mono">
-                                  {log.price ? `$${parseFloat(log.price).toFixed(2)}` : 'N/D'}
-                                </td>
-                                <td className="p-3 text-slate-500 max-w-xs truncate" title={log.reasoning}>
-                                  {log.reasoning}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-center py-4 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
-                    Nessuna decisione o segnale recente registrato in memoria.
-                  </div>
+                {!isLogicLogsCollapsed && (
+                  <>
+                    {operationsData.dailyLogicLogs && operationsData.dailyLogicLogs.length > 0 ? (
+                      <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
+                        <table className="w-full text-left border-collapse text-[11px]">
+                          <thead>
+                            <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
+                              <th className="py-1 px-2">Ora</th>
+                              <th className="py-1 px-2">Simbolo</th>
+                              <th className="py-1 px-2">Decisione</th>
+                              <th className="py-1 px-2 text-right">Prezzo</th>
+                              <th className="py-1 px-2">Motivazione Sentiment LLM</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                            {operationsData.dailyLogicLogs
+                              .slice(-10)
+                              .reverse()
+                              .map((log, idx) => {
+                                const act = (log.action || '').toUpperCase();
+                                return (
+                                  <tr key={idx} className="hover:bg-slate-100/30">
+                                    <td className="py-1 px-2 text-slate-500 font-mono">
+                                      {new Date(log.timestamp).toLocaleTimeString('it-IT')}
+                                    </td>
+                                    <td className="py-1 px-2 font-bold text-slate-900">{log.symbol}</td>
+                                    <td className="py-1 px-2">
+                                      <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
+                                        act === 'BUY' 
+                                          ? 'bg-green-100 text-green-700' 
+                                          : act === 'SELL' 
+                                          ? 'bg-red-100 text-red-700' 
+                                          : act === 'HOLD' 
+                                          ? 'bg-indigo-100 text-indigo-700' 
+                                          : 'bg-slate-100 text-slate-600'
+                                      }`}>
+                                        {act === 'BUY' ? 'BUY' : act === 'SELL' ? 'SELL' : act === 'HOLD' ? 'HOLD' : 'SKIP'}
+                                      </span>
+                                    </td>
+                                    <td className="py-1 px-2 text-right font-mono">
+                                      {log.price ? `$${parseFloat(log.price).toFixed(2)}` : 'N/D'}
+                                    </td>
+                                    <td className="py-1 px-2 text-slate-500 max-w-xs truncate" title={log.reasoning}>
+                                      {log.reasoning}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-center py-3 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
+                        Nessuna decisione o segnale recente registrato in memoria.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

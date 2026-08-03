@@ -938,6 +938,7 @@ let botStatus: {
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   userFeedbackRules?: string[];
   monitoredSymbols?: string[];
+  lastGoogleSheetsLogSync?: string | null;
   historicalProfits?: number;
   y?: number;
   defaultTP?: number;
@@ -1936,6 +1937,49 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
   }
 }
 
+async function syncDailyTradingSummaryToGoogleSheets() {
+  try {
+    const now = new Date();
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
+    
+    // Controlla se siamo esattamente intorno alle 20:45 UTC (15 minuti prima della chiusura di Wall Street alle 21:00 UTC)
+    // O se sono passate almeno 12 ore dall'ultimo invio e siamo in sessione di mercato pomeridiana/serale
+    const isCloseToMarketEnd = (utcHours === 20 && utcMinutes >= 40 && utcMinutes <= 50);
+    
+    const lastSync = botStatus.lastGoogleSheetsLogSync ? new Date(botStatus.lastGoogleSheetsLogSync).getTime() : 0;
+    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+    const isTimeElapsed = (now.getTime() - lastSync) >= TWELVE_HOURS;
+
+    if (!isCloseToMarketEnd && !isTimeElapsed) {
+      return;
+    }
+
+    const summaryPayload = {
+      eventType: 'daily_trading_digest',
+      timestamp: new Date().toISOString(),
+      data: {
+        totalTradesLogged: botStatus.dailyLogicLogs?.length || 0,
+        logicLogs: (botStatus.dailyLogicLogs || []).map((l: any) => ({
+          time: new Date(l.timestamp).toLocaleTimeString('it-IT'),
+          symbol: l.symbol,
+          action: l.action,
+          reasoning: l.reasoning,
+          price: l.price
+        })),
+        dailyPnL: botStatus.dailyPnL || []
+      }
+    };
+
+    await GoogleSheetsService.appendLogsToSheet(summaryPayload);
+    botStatus.lastGoogleSheetsLogSync = new Date().toISOString();
+    saveBotStatus().catch(() => {});
+    console.log('[Google Sheets] Riepilogo giornaliero inviato con successo (15 minuti prima della chiusura di mercato).');
+  } catch (err: any) {
+    console.error('[Google Sheets Error] Errore sincronizzazione riepilogo giornaliero:', err?.message || err);
+  }
+}
+
 async function exportCredentialsToGoogleSheets(): Promise<boolean> {
   try {
     const llmConfigs = LLMProviderService.getInstance().getConfigs();
@@ -2224,16 +2268,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (posResponse.ok) {
         openPositions = await posResponse.json();
       }
-      sendToGoogleSheets({
-        eventType: 'trading_cycle',
-        mode,
-        data: {
-          balance: botData[mode].balance,
-          buyingPower: currentBuyingPower,
-          openPositionsCount: openPositions.length,
-          openPositions: openPositions.map((p: any) => ({ symbol: p.symbol, qty: p.qty, unrealized_pl: p.unrealized_pl }))
-        }
-      }).catch(err => console.error('[Google Sheets Error]', err));
+      syncDailyTradingSummaryToGoogleSheets().catch(() => {});
     } catch (e: any) {
       addLog(mode as 'paper' | 'live', `[Alpaca Posizioni Errore] Impossibile recuperare posizioni aperte: ${e.message}`);
     }
@@ -2397,13 +2432,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           action: 'SELL',
           reasoning: closeReason
         });
-        sendToGoogleSheets({
-          eventType: 'trade_action',
-          mode,
-          symbol,
-          action: 'SELL',
-          data: { symbol, action: 'SELL', reason: closeReason, profitAmt }
-        }).catch(err => console.error('[Google Sheets Error]', err));
 
         try {
           const closeResponse = await fetch(`${baseUrl}/positions/${symbol}?cancel_orders=true`, {
@@ -2438,13 +2466,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           action: 'HOLD',
           reasoning: `Sentiment score: ${sentimentScore.toFixed(2)} - ${sentimentReasoning}`
         });
-        sendToGoogleSheets({
-          eventType: 'trade_action',
-          mode,
-          symbol,
-          action: 'HOLD',
-          data: { symbol, action: 'HOLD', sentimentScore, reasoning: sentimentReasoning }
-        }).catch(err => console.error('[Google Sheets Error]', err));
       }
     }
 
@@ -2544,13 +2565,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             action: 'BUY',
             reasoning: `Ordine frazionario simultaneo ($${order.amount.toFixed(2)}) - Sentiment: ${order.sentimentScore.toFixed(2)}: ${order.reasoning}`
           });
-          sendToGoogleSheets({
-            eventType: 'trade_action',
-            mode,
-            symbol: order.symbol,
-            action: 'BUY',
-            data: { symbol: order.symbol, action: 'BUY', amount: order.amount, sentimentScore: order.sentimentScore, reasoning: order.reasoning }
-          }).catch(err => console.error('[Google Sheets Error]', err));
 
           try {
             const orderResponse = await fetch(`${baseUrl}/orders`, {
