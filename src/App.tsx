@@ -1391,6 +1391,25 @@ function AccountPanel({
                         {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Target Attivazione: +2.50% | Trailing: 0.50%'}
                       </div>
                     </div>
+
+                    {/* Real-time Take Profit & Trailing Stop Level Indicator */}
+                    <div className="mt-1.5 p-2 bg-white rounded-md border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${pos.isTrailingActive ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-blue-50 text-blue-700'}`}>
+                          {pos.isTrailingActive ? '🚀 Trailing Stop Attivo!' : '🎯 In attesa Target Attivazione'}
+                        </span>
+                        <span className="text-gray-700">
+                          {pos.isTrailingActive ? (
+                            <>Soglia Trailing (Picco: <strong className="font-mono text-gray-900">${pos.highestPrice?.toFixed(2)}</strong>): <strong className="font-mono text-emerald-600 font-bold">${pos.trailingStopPrice?.toFixed(2)}</strong> (-{pos.strategyParams?.tsPct || 0}%)</>
+                          ) : (
+                            <>Target Attivazione (+{pos.strategyParams?.tpPct || 2.5}%): <strong className="font-mono text-blue-600 font-bold">${pos.targetActivationPrice?.toFixed(2)}</strong></>
+                          )}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-500">
+                        Stop Loss: <span className="text-red-600 font-semibold">${pos.stopLossPrice?.toFixed(2)}</span> ({pos.strategyParams?.slPct || -1.0}%)
+                      </div>
+                    </div>
                   </div>
                 );
               })}

@@ -56,10 +56,10 @@ export class GoogleSheetsService {
           if (found?.properties?.title) return found.properties.title;
         }
       }
-      return sheetList[0]?.properties?.title || 'Foglio1';
+      return sheetList[0]?.properties?.title || '';
     } catch (e: any) {
       console.warn(`[GoogleSheetsService] Impossibile recuperare il nome del foglio per ${spreadsheetId}:`, e?.message || e);
-      return preferredNames[0] || 'Foglio1';
+      return '';
     }
   }
 
@@ -80,7 +80,7 @@ export class GoogleSheetsService {
       
       let sheetNameVal = payload.sheetName || (payload.data && payload.data.sheetName);
       if (!sheetNameVal) {
-        sheetNameVal = await this.getFirstSheetName(targetSheetId, ['Logs', 'StoriaLOG', 'LOGS']);
+        sheetNameVal = await this.getFirstSheetName(targetSheetId, ['Logs', 'StoriaLOG', 'LOGS', 'Foglio1', 'Sheet1']);
       }
       
       const row = [
@@ -92,9 +92,11 @@ export class GoogleSheetsService {
         JSON.stringify(payload.data || {})
       ];
 
+      const range = sheetNameVal ? `${sheetNameVal}!A:F` : 'A:F';
+
       await sheets.spreadsheets.values.append({
         spreadsheetId: targetSheetId,
-        range: `${sheetNameVal}!A:F`,
+        range,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
           values: [row]

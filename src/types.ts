@@ -17,6 +17,13 @@ export interface Position {
   change_today: string;
   nominalInvestment?: number;
   activeStrategy?: 'Prudente' | 'Conservativa' | 'Aggressiva';
+  highestPrice?: number;
+  highestProfitPct?: number;
+  isTrailingActive?: boolean;
+  targetActivationPrice?: number;
+  trailingStopPrice?: number;
+  stopLossPrice?: number;
+  strategyParams?: { tpPct: number; slPct: number; tsPct: number };
 }
 
 export interface AccountData {

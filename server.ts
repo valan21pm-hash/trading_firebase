@@ -3267,7 +3267,7 @@ app.get('/api/status', async (req, res) => {
         });
         if (posResponse.ok) {
           const rawPositions = await posResponse.json();
-          positions = rawPositions.map((pos: any) => {
+          positions = await Promise.all(rawPositions.map(async (pos: any) => {
             const sym = pos.symbol;
             const qty = parseFloat(pos.qty || '0');
             const currentValue = parseFloat(pos.market_value || '0');
@@ -3282,14 +3282,32 @@ app.get('/api/status', async (req, res) => {
               saveBotStatus();
             }
             const activeStrategy = positionStrategies[mode][sym];
+            const params = STRATEGY_PARAMS[activeStrategy] || STRATEGY_PARAMS.Aggressiva;
+            const avgEntry = parseFloat(pos.avg_entry_price || '0');
+            const currP = parseFloat(pos.current_price || '0');
+            
+            const peakP = await getAndUpdateHighestPrice(sym, currP, avgEntry);
+
+            const highestProfitPct = avgEntry > 0 ? ((peakP - avgEntry) / avgEntry) * 100 : 0;
+            const isTrailingActive = highestProfitPct >= params.tpPct;
+            const targetActivationPrice = avgEntry > 0 ? avgEntry * (1 + params.tpPct / 100) : 0;
+            const trailingStopPrice = peakP * (1 - params.tsPct / 100);
+            const stopLossPrice = avgEntry > 0 ? avgEntry * (1 - Math.abs(params.slPct) / 100) : 0;
 
             return {
               ...pos,
               activeStrategy,
               nominalInvestment: costBasis,
-              currentValue
+              currentValue,
+              highestPrice: peakP,
+              highestProfitPct,
+              isTrailingActive,
+              targetActivationPrice,
+              trailingStopPrice,
+              stopLossPrice,
+              strategyParams: params
             };
-          });
+          }));
         }
         
         const accResponse = await fetch(`${conf.baseUrl}/account`, {
