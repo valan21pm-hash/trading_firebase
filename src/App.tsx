@@ -1447,11 +1447,7 @@ export default function App() {
   // Stato per la Sezione Operazioni Chiuse con Filtro Data
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
   const [closedLoading, setClosedLoading] = useState(false);
-  const [closedStartDate, setClosedStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
-  });
+  const [closedStartDate, setClosedStartDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [closedEndDate, setClosedEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [closedSymbolFilter, setClosedSymbolFilter] = useState('');
 
