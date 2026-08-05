@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -1450,6 +1450,32 @@ export default function App() {
   const [closedStartDate, setClosedStartDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [closedEndDate, setClosedEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [closedSymbolFilter, setClosedSymbolFilter] = useState('');
+  const [closedPnlFilter, setClosedPnlFilter] = useState<'all' | 'profit' | 'loss'>('all');
+
+  const exportClosedTradesCSV = () => {
+    if (!closedTrades || closedTrades.length === 0) return;
+    const headers = ['ID', 'DataOra', 'Simbolo', 'Azione', 'PnL', 'Quantita', 'PrezzoUscita', 'Controvalore', 'Motivazione', 'Origine'];
+    const rows = closedTrades.map(t => [
+      t.id || '',
+      t.timestamp || '',
+      t.symbol || '',
+      t.action || '',
+      t.pnl || 0,
+      t.qty || 0,
+      t.price || 0,
+      t.totalValue || 0,
+      `"${(t.reason || '').replace(/"/g, '""')}"`,
+      t.source || ''
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `operazioni_chiuse_${selectedTab}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const fetchClosedPositions = async () => {
     setClosedLoading(true);
@@ -2428,93 +2454,166 @@ export default function App() {
               return acc + val;
             }, 0);
 
+            const winningCount = closedTrades.filter(t => {
+              const v = typeof t.pnl === 'number' ? t.pnl : (t.pnl ? parseFloat(t.pnl) : 0);
+              return v > 0;
+            }).length;
+
+            const winRate = closedTrades.length > 0 ? ((winningCount / closedTrades.length) * 100).toFixed(1) : '0.0';
+
+            const bestTradeVal = closedTrades.reduce((max, t) => {
+              const v = typeof t.pnl === 'number' ? t.pnl : (t.pnl ? parseFloat(t.pnl) : 0);
+              return v > max ? v : max;
+            }, 0);
+
+            const worstTradeVal = closedTrades.reduce((min, t) => {
+              const v = typeof t.pnl === 'number' ? t.pnl : (t.pnl ? parseFloat(t.pnl) : 0);
+              return v < min ? v : min;
+            }, 0);
+
+            const filteredTrades = closedTrades.filter(t => {
+              const pnlVal = typeof t.pnl === 'number' ? t.pnl : (t.pnl ? parseFloat(t.pnl) : 0);
+              if (closedPnlFilter === 'profit' && pnlVal <= 0) return false;
+              if (closedPnlFilter === 'loss' && pnlVal > 0) return false;
+              return true;
+            });
+
             return (
             <>
-          {/* Sommario Metriche Periodo */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-4">
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Operazioni Chiuse</span>
-              <p className="text-lg font-bold text-slate-900 font-mono mt-0.5">{closedTrades.length}</p>
+          {/* Sommario Metriche Avanzato (Stile Trading Platform) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mb-4">
+            <div className="bg-slate-900 text-white p-3 rounded-xl border border-slate-800 shadow-sm flex flex-col justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">Operazioni Chiuse</span>
+              <p className="text-xl font-bold font-mono mt-1 text-slate-100">{closedTrades.length}</p>
             </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Saldo PnL Periodo</span>
-              <p className={`text-lg font-bold font-mono mt-0.5 ${periodSaldoPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            <div className={`p-3 rounded-xl border shadow-sm flex flex-col justify-between ${periodSaldoPnL >= 0 ? 'bg-emerald-50/60 border-emerald-200' : 'bg-rose-50/60 border-rose-200'}`}>
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600">PnL Netto Periodo</span>
+              <p className={`text-lg font-bold font-mono mt-1 ${periodSaldoPnL >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                 {periodSaldoPnL >= 0 ? '+' : ''}${periodSaldoPnL.toFixed(2)}
               </p>
             </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Modalità Attuale</span>
-              <p className="text-sm font-bold text-indigo-700 font-mono mt-1 uppercase">{selectedTab === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'}</p>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Win Rate</span>
+              <p className="text-lg font-bold font-mono text-indigo-700 mt-1">{winRate}%</p>
             </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Intervallo Date</span>
-              <p className="text-xs font-semibold text-slate-700 font-mono mt-1">
-                {closedStartDate ? closedStartDate : 'Inizio'} → {closedEndDate ? closedEndDate : 'Oggi'}
-              </p>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Miglior Trade</span>
+              <p className="text-lg font-bold font-mono text-emerald-600 mt-1">+{bestTradeVal.toFixed(2)}$</p>
             </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-              <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Simbolo Filtrato</span>
-              <p className="text-sm font-bold text-slate-800 font-mono mt-1">{closedSymbolFilter || 'TUTTI'}</p>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Peggior Trade</span>
+              <p className="text-lg font-bold font-mono text-rose-600 mt-1">{worstTradeVal.toFixed(2)}$</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Azioni / Controlli</span>
+              <div className="mt-1 flex gap-1 items-center">
+                <button
+                  type="button"
+                  onClick={exportClosedTradesCSV}
+                  disabled={closedTrades.length === 0}
+                  className="w-full py-1 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="Esporta storico in CSV"
+                >
+                  <Download className="w-3 h-3" />
+                  CSV
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Tabella Dati Operazioni Chiuse */}
+          {/* Barriera Filtro PnL rapido */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 bg-slate-100/80 p-2 rounded-xl text-xs">
+            <div className="flex items-center gap-1.5 font-medium text-slate-600">
+              <Filter className="w-3.5 h-3.5 text-slate-500" />
+              <span>Filtro Esito:</span>
+              <button
+                type="button"
+                onClick={() => setClosedPnlFilter('all')}
+                className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${closedPnlFilter === 'all' ? 'bg-indigo-600 text-white shadow-2xs' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
+              >
+                Tutti ({closedTrades.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setClosedPnlFilter('profit')}
+                className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${closedPnlFilter === 'profit' ? 'bg-emerald-600 text-white shadow-2xs' : 'bg-white text-emerald-700 hover:bg-slate-50'}`}
+              >
+                In Profitto ({closedTrades.filter(t => (typeof t.pnl === 'number' ? t.pnl : parseFloat(t.pnl || '0')) > 0).length}) 🟢
+              </button>
+              <button
+                type="button"
+                onClick={() => setClosedPnlFilter('loss')}
+                className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${closedPnlFilter === 'loss' ? 'bg-rose-600 text-white shadow-2xs' : 'bg-white text-rose-700 hover:bg-slate-50'}`}
+              >
+                In Perdita ({closedTrades.filter(t => (typeof t.pnl === 'number' ? t.pnl : parseFloat(t.pnl || '0')) < 0).length}) 🔴
+              </button>
+            </div>
+            <div className="text-[11px] font-mono text-slate-500">
+              Visualizzati {filteredTrades.length} di {closedTrades.length} record
+            </div>
+          </div>
+
+          {/* Tabella Dati Operazioni Chiuse (Stile Trading Terminal) */}
           {closedLoading ? (
             <div className="text-center py-12 text-slate-400 text-xs flex flex-col items-center gap-2">
               <RotateCcw className="w-5 h-5 animate-spin text-emerald-600" />
               Caricamento operazioni chiuse nel periodo selezionato...
             </div>
-          ) : closedTrades.length > 0 ? (
-            <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
-              <table className="w-full text-left border-collapse text-xs">
+          ) : filteredTrades.length > 0 ? (
+            <div className="overflow-x-auto bg-slate-900 text-slate-200 rounded-xl border border-slate-800 shadow-xl">
+              <table className="w-full text-left border-collapse text-xs font-mono">
                 <thead>
-                  <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
-                    <th className="p-3">Data / Ora Chiusura</th>
+                  <tr className="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800 text-[11px] uppercase tracking-wider">
+                    <th className="p-3">Data / Ora</th>
                     <th className="p-3">Simbolo</th>
-                    <th className="p-3">Azione</th>
+                    <th className="p-3">Tipo</th>
                     <th className="p-3 text-right">Profitto / Perdita</th>
-                    <th className="p-3 text-right">Quantità</th>
+                    <th className="p-3 text-right">Q.tà</th>
                     <th className="p-3 text-right">Prezzo Uscita</th>
-                    <th className="p-3 text-right">Controvalore Totale</th>
-                    <th className="p-3">Motivazione Chiusura / Origine</th>
+                    <th className="p-3 text-right">Controvalore</th>
+                    <th className="p-3">Motivazione & Origine</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {closedTrades.map((trade, idx) => {
+                <tbody className="divide-y divide-slate-800/80 font-medium">
+                  {filteredTrades.map((trade, idx) => {
                     const pnlVal = typeof trade.pnl === 'number' ? trade.pnl : (trade.pnl ? parseFloat(trade.pnl) : 0);
                     const isPos = pnlVal >= 0;
                     return (
-                    <tr key={trade.id || idx} className="hover:bg-slate-100/40 transition-colors">
-                      <td className="p-3 text-slate-500 font-mono whitespace-nowrap">
+                    <tr key={trade.id || idx} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-3 text-slate-400 whitespace-nowrap">
                         {new Date(trade.timestamp).toLocaleString('it-IT')}
                       </td>
-                      <td className="p-3 font-bold text-slate-900 font-mono text-sm">{trade.symbol}</td>
+                      <td className="p-3 font-bold text-white text-sm">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-400 border border-slate-700">
+                          {trade.symbol}
+                        </span>
+                      </td>
                       <td className="p-3">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200/60">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-900/60">
                           {trade.action || 'VENDITA'}
                         </span>
                       </td>
-                      <td className="p-3 text-right font-mono font-bold whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded-md text-xs font-bold inline-flex items-center gap-0.5 ${
+                      <td className="p-3 text-right font-bold whitespace-nowrap">
+                        <span className={`px-2 py-1 rounded text-xs font-bold inline-flex items-center gap-1 ${
                           isPos 
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80' 
-                            : 'bg-rose-50 text-rose-700 border border-rose-200/80'
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-900/80' 
+                            : 'bg-rose-950 text-rose-400 border border-rose-900/80'
                         }`}>
                           {isPos ? '+' : ''}${pnlVal.toFixed(2)}
                         </span>
                       </td>
-                      <td className="p-3 text-right font-mono font-medium">
+                      <td className="p-3 text-right text-slate-300">
                         {trade.qty > 0 ? trade.qty.toFixed(4) : 'N/D'}
                       </td>
-                      <td className="p-3 text-right font-mono font-semibold text-slate-900">
+                      <td className="p-3 text-right text-slate-100 font-semibold">
                         {trade.price > 0 ? `$${trade.price.toFixed(2)}` : 'N/D'}
                       </td>
-                      <td className="p-3 text-right font-mono font-bold text-slate-900">
+                      <td className="p-3 text-right text-slate-100 font-bold">
                         {trade.totalValue > 0 ? `$${parseFloat(trade.totalValue).toFixed(2)}` : 'N/D'}
                       </td>
-                      <td className="p-3">
+                      <td className="p-3 font-sans">
                         <div className="flex flex-col gap-0.5 max-w-sm">
-                          <span className="text-slate-800 font-semibold text-xs leading-tight">
+                          <span className="text-slate-200 font-semibold text-xs leading-tight">
                             {trade.reason || 'Chiusura posizione'}
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono">
@@ -2529,8 +2628,8 @@ export default function App() {
               </table>
             </div>
           ) : (
-            <div className="text-center py-8 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl">
-              Nessuna operazione chiusa registrata nel periodo selezionato ({closedStartDate || 'Inizio'} - {closedEndDate || 'Oggi'}).
+            <div className="text-center py-8 text-slate-400 text-xs bg-slate-50/30 border border-dashed border-slate-200 rounded-xl font-mono">
+              Nessuna operazione chiusa trovata con i filtri selezionati ({closedStartDate || 'Inizio'} - {closedEndDate || 'Oggi'}).
             </div>
           )}
             </>
