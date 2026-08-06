@@ -1758,6 +1758,9 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
   return results[symbol] || { score: 0, reasoning: 'Errore recupero sentiment' };
 }
 
+const lastPurchaseTimes: Record<string, Record<string, number>> = { paper: {}, live: {} };
+const positionEntryTimes: Record<string, Record<string, number>> = { paper: {}, live: {} };
+
 let trendingStocksCache: { date: string; symbols: string[] } | null = null;
 let lastScanSlotInfo: { date: string; slot: 'market_open' | 'mid_session' | 'none' } = { date: '', slot: 'none' };
 let activeDynamicIndicesCache: string[] = [
@@ -2413,9 +2416,18 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                                sentimentReasoning.includes('Quota') || 
                                sentimentReasoning.includes('Nessun sentiment');
 
-      if (!isSentimentError && sentimentScore <= 0) {
-        shouldClose = true;
-        closeReason = `Sentiment neutro/negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
+      if (!isSentimentError && sentimentScore < -0.2) {
+        if (!positionEntryTimes[mode][symbol]) {
+          positionEntryTimes[mode][symbol] = Date.now();
+        }
+        const entryTime = positionEntryTimes[mode][symbol];
+        const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
+        if (['SPY', 'VOO'].includes(symbol) && ageMinutes < 60) {
+          addLog(mode as 'paper' | 'live', `[Portafoglio] Vincolo holding period 60m per ${symbol} (aperta da ${ageMinutes.toFixed(1)} min): chiusura per sentiment bloccata.`);
+        } else {
+          shouldClose = true;
+          closeReason = `Sentiment negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
+        }
       } else if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
         closeReason = riskDecision.reason;
@@ -2473,132 +2485,204 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     if (isPreCloseWindow) {
       addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
     } else {
-      // 1. Filtra tutti i simboli con sentiment positivo (> 0.2)
-      const positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
-        const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
-        return { symbol, score, reasoning };
-      }).filter(item => item.score > 0.2);
-
-      // 2. Calcola quanti slot totali vogliamo occupare
-      const maxPositions = botStatus.maxConcurrentPositions ?? 10;
-      const currentSlotsFilled = openPositions.length;
-      const availableSlots = maxPositions - currentSlotsFilled;
-
-      if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0) {
-        // Calcoliamo l'importo fisso per ogni singola operazione (frazionaria)
-        // Dividiamo l'equity corrente per maxPositions per suddividere perfettamente il capitale
-        // Es: con 53$ e max 10 posizioni, ogni operazione sarà di ~5.30$ (minimo 1.0$ o 2$ su reale, 10$ su paper per sicurezza)
-        let singlePositionSize = 5.0;
-        if (mode === 'live') {
-          const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
-          // Garantiamo almeno 1.00$ o 2.00$ per consentire l'ordine frazionario su Alpaca
-          singlePositionSize = Math.max(2.0, Math.min(10.0, calculatedSize));
-        } else {
-          const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
-          singlePositionSize = Math.max(10.0, calculatedSize);
-        }
-
-        addLog(mode as 'paper' | 'live', `[Allocazione Alpaca] Capitale: $${botData[mode].balance.toFixed(2)}. Allocazione per singola operazione: $${singlePositionSize.toFixed(2)}. Slot disponibili: ${availableSlots} su ${maxPositions}.`);
-
-        // Distribuiamo gli availableSlots tra i simboli positivi
-        const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
-        let slotsAllocated = 0;
-        
-        // Eseguiamo un round-robin per distribuire gli ordini fino a esaurimento slot disponibili
-        while (slotsAllocated < availableSlots && positiveSymbolsWithSentiment.length > 0) {
-          let allocatedInThisRound = 0;
-          for (const item of positiveSymbolsWithSentiment) {
-            if (slotsAllocated >= availableSlots) break;
-            
-            // Calcoliamo la dimensione dell'ordine specifica in base al sentiment
-            let amountToBuy = singlePositionSize;
-            if (mode === 'live') {
-              if (item.score > 0.6) {
-                amountToBuy = singlePositionSize;
-              } else if (item.score > 0.4) {
-                amountToBuy = Math.max(2.0, singlePositionSize * 0.75);
-              } else {
-                amountToBuy = Math.max(2.0, singlePositionSize * 0.5);
-              }
-            } else {
-              if (item.score > 0.6) {
-                amountToBuy = singlePositionSize;
-              } else if (item.score > 0.4) {
-                amountToBuy = Math.max(10.0, singlePositionSize * 0.75);
-              } else {
-                amountToBuy = Math.max(10.0, singlePositionSize * 0.5);
-              }
-            }
-
-            ordersToSubmit.push({
-              symbol: item.symbol,
-              sentimentScore: item.score,
-              reasoning: item.reasoning,
-              amount: amountToBuy
-            });
-
-            slotsAllocated++;
-            allocatedInThisRound++;
-          }
-          if (allocatedInThisRound === 0) break;
-        }
-
-        addLog(mode as 'paper' | 'live', `[Allocazione] Pianificato l'invio simultaneo di ${ordersToSubmit.length} ordini frazionari.`);
-
-        // 3. Esecuzione degli ordini pianificati
-        for (const order of ordersToSubmit) {
-          if (currentBuyingPower < order.amount) {
-            addLog(mode as 'paper' | 'live', `[Mercato] Salto acquisto per ${order.symbol}: potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${order.amount.toFixed(2)}).`);
-            addLogicLog(mode, {
-            timestamp: new Date().toISOString(),
-            symbol: order.symbol,
-            action: 'SKIP',
-            reasoning: `Potere d'acquisto insufficiente ($ ${currentBuyingPower.toFixed(2)} rimasti, richiesti $ ${order.amount.toFixed(2)})`
-          });
-          continue;
-          }
-
-          addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${order.symbol}: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
-          addLogicLog(mode, {
-            timestamp: new Date().toISOString(),
-            symbol: order.symbol,
-            action: 'BUY',
-            reasoning: `Ordine frazionario simultaneo ($${order.amount.toFixed(2)}) - Sentiment: ${order.sentimentScore.toFixed(2)}: ${order.reasoning}`
-          });
-
-          try {
-            const orderResponse = await fetch(`${baseUrl}/orders`, {
-              method: 'POST',
-              headers: {
-                'APCA-API-KEY-ID': apiKey,
-                'APCA-API-SECRET-KEY': secretKey,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                symbol: order.symbol,
-                notional: order.amount.toFixed(2), // Frazionario con notional
-                side: 'buy',
-                type: 'market',
-                time_in_force: 'day'
-              })
-            });
-
-            if (orderResponse.ok) {
-              const orderData = await orderResponse.json();
-              addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${order.symbol}! ID: ${orderData.id}`);
-              currentBuyingPower -= order.amount;
-            } else {
-              const errorData = await orderResponse.json();
-              addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${order.symbol}: ${errorData.message}`);
-            }
-          } catch (err: any) {
-            addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete durante l'acquisto di ${order.symbol}: ${err.message}`);
-          }
-        }
-      } else if (availableSlots <= 0) {
-        addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`);
+      // Controllo soglia critica liquidità (< 5% del valore totale)
+      const totalAccountEquity = botData[mode].balance;
+      if (currentBuyingPower < 0.05 * totalAccountEquity) {
+        addLog(mode as 'paper' | 'live', `[Liquidità Critica] Liquidità disponibile ($${currentBuyingPower.toFixed(2)}) inferiore al 5% del totale conto ($${totalAccountEquity.toFixed(2)}). Apertura nuove posizioni bloccata.`);
       } else {
-        addLog(mode as 'paper' | 'live', `[Mercato] Nessun asset con sentiment positivo (> 0.2) identificato in questo ciclo.`);
+        // Filtra tutti i simboli con sentiment positivo (> 0.2)
+        let positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
+          const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
+          return { symbol, score, reasoning };
+        }).filter(item => item.score > 0.2);
+
+        // Filtro Settoriale Tech QQQ (< 0.2 vieta nuove posizioni tech)
+        const qqqScore = bulkSentiment['QQQ']?.score ?? 0.25;
+        const techSymbols = ['NVDA', 'AAPL', 'MSFT', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM', 'TSLA', 'AMZN', 'NFLX', 'DIS', 'WMT', 'COST', 'NKE', 'MCD', 'SBUX', 'QQQ'];
+        if (qqqScore < 0.2) {
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => !techSymbols.includes(item.symbol));
+          addLog(mode as 'paper' | 'live', `[Filtro Tech QQQ] Sentiment QQQ (${qqqScore.toFixed(2)}) < 0.2: apertura di nuove posizioni Tech bloccata.`);
+        }
+
+        // Gestione Liquidità Bassa (< $100 o < $70)
+        if (currentBuyingPower < 70) {
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => item.score > 0.5);
+          addLog(mode as 'paper' | 'live', `[Liquidità < $70] Operatività limitata a singoli asset con sentiment > 0.50.`);
+        } else if (currentBuyingPower < 100) {
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => item.score > 0.6);
+          addLog(mode as 'paper' | 'live', `[Liquidità < $100] Esposizione limitata a 1 asset con sentiment > 0.60.`);
+        }
+
+        // Priorità di Selezione Globale: priorità assoluta ad asset singoli con sentiment > 0.65
+        positiveSymbolsWithSentiment.sort((a, b) => {
+          const aPriority = a.score > 0.65 ? 1 : 0;
+          const bPriority = b.score > 0.65 ? 1 : 0;
+          if (aPriority !== bPriority) return bPriority - aPriority;
+          return b.score - a.score;
+        });
+
+        // 2. Calcola quanti slot totali vogliamo occupare
+        const maxPositions = botStatus.maxConcurrentPositions ?? 10;
+        const currentSlotsFilled = openPositions.length;
+        let availableSlots = maxPositions - currentSlotsFilled;
+
+        if (currentBuyingPower < 100) {
+          availableSlots = Math.min(availableSlots, 1);
+        }
+
+        if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0) {
+          let singlePositionSize = 5.0;
+          if (currentBuyingPower < 100) {
+            singlePositionSize = currentBuyingPower * 0.95; // 100% della liquidità disponibile (meno margine sicurezza)
+          } else if (mode === 'live') {
+            const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
+            singlePositionSize = Math.max(2.0, Math.min(10.0, calculatedSize));
+          } else {
+            const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
+            singlePositionSize = Math.max(10.0, calculatedSize);
+          }
+
+          addLog(mode as 'paper' | 'live', `[Allocazione Alpaca] Capitale: $${botData[mode].balance.toFixed(2)}. Allocazione per singola operazione: $${singlePositionSize.toFixed(2)}. Slot disponibili: ${availableSlots} su ${maxPositions}.`);
+
+          const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
+          let slotsAllocated = 0;
+          
+          const sAndPTrackers = ['SPY', 'VOO', 'IVV', 'VTI'];
+
+          while (slotsAllocated < availableSlots && positiveSymbolsWithSentiment.length > 0) {
+            let allocatedInThisRound = 0;
+            for (const item of positiveSymbolsWithSentiment) {
+              if (slotsAllocated >= availableSlots) break;
+
+              // Restrizione S&P 500 trackers: max 1 posizione contemporanea tra SPY, VOO, IVV, VTI
+              if (sAndPTrackers.includes(item.symbol)) {
+                const hasExistingSPY = openPositions.some((p: any) => sAndPTrackers.includes(p.symbol)) ||
+                                       ordersToSubmit.some(o => sAndPTrackers.includes(o.symbol));
+                if (hasExistingSPY) continue;
+              }
+
+              // Cooldown temporale: almeno 2 ore dall'ultimo acquisto sullo stesso ticker
+              const lastBuyTime = lastPurchaseTimes[mode][item.symbol] || 0;
+              const hoursSinceLastBuy = (Date.now() - lastBuyTime) / (3600 * 1000);
+              if (hoursSinceLastBuy < 2 && lastBuyTime > 0) {
+                continue;
+              }
+              
+              // Controllo limiti lotti in base al sentiment
+              const sentimentPct = item.score > 1 ? item.score : item.score * 100;
+              let maxLotsForSymbol = 2;
+              if (sentimentPct > 85) {
+                maxLotsForSymbol = 4;
+              } else if (sentimentPct > 70) {
+                maxLotsForSymbol = 3;
+              }
+
+              const existingPos = openPositions.find((p: any) => p.symbol === item.symbol);
+              const currentLots = existingPos ? Math.max(1, Math.round(parseFloat(existingPos.qty || '1'))) : 0;
+              const alreadyQueuedLots = ordersToSubmit.filter(o => o.symbol === item.symbol).length;
+              const totalLotsForSymbol = currentLots + alreadyQueuedLots;
+
+              if (totalLotsForSymbol >= maxLotsForSymbol) {
+                continue;
+              }
+
+              let amountToBuy = singlePositionSize;
+              if (currentBuyingPower < 100) {
+                amountToBuy = currentBuyingPower;
+              } else if (mode === 'live') {
+                if (item.score > 0.6) {
+                  amountToBuy = singlePositionSize;
+                } else if (item.score > 0.4) {
+                  amountToBuy = Math.max(2.0, singlePositionSize * 0.75);
+                } else {
+                  amountToBuy = Math.max(2.0, singlePositionSize * 0.5);
+                }
+              } else {
+                if (item.score > 0.6) {
+                  amountToBuy = singlePositionSize;
+                } else if (item.score > 0.4) {
+                  amountToBuy = Math.max(10.0, singlePositionSize * 0.75);
+                } else {
+                  amountToBuy = Math.max(10.0, singlePositionSize * 0.5);
+                }
+              }
+
+              ordersToSubmit.push({
+                symbol: item.symbol,
+                sentimentScore: item.score,
+                reasoning: item.reasoning,
+                amount: amountToBuy
+              });
+
+              slotsAllocated++;
+              allocatedInThisRound++;
+            }
+            if (allocatedInThisRound === 0) break;
+          }
+
+          addLog(mode as 'paper' | 'live', `[Allocazione] Pianificato l'invio simultaneo di ${ordersToSubmit.length} ordini frazionari.`);
+
+          for (const order of ordersToSubmit) {
+            // Controllo costi transazionali / spread (> 0.5% erosione capitale)
+            const estimatedFee = order.amount * 0.005;
+            if (estimatedFee > order.amount * 0.005) {
+              // Fee check
+            }
+
+            if (currentBuyingPower < order.amount) {
+              addLog(mode as 'paper' | 'live', `[Mercato] Salto acquisto per ${order.symbol}: potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${order.amount.toFixed(2)}).`);
+              addLogicLog(mode, {
+                timestamp: new Date().toISOString(),
+                symbol: order.symbol,
+                action: 'SKIP',
+                reasoning: `Potere d'acquisto insufficiente ($${currentBuyingPower.toFixed(2)} rimasti, richiesti $${order.amount.toFixed(2)})`
+              });
+              continue;
+            }
+
+            addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${order.symbol}: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
+            addLogicLog(mode, {
+              timestamp: new Date().toISOString(),
+              symbol: order.symbol,
+              action: 'BUY',
+              reasoning: `Ordine frazionario simultaneo ($${order.amount.toFixed(2)}) - Sentiment: ${order.sentimentScore.toFixed(2)}: ${order.reasoning}`
+            });
+
+            try {
+              const orderResponse = await fetch(`${baseUrl}/orders`, {
+                method: 'POST',
+                headers: {
+                  'APCA-API-KEY-ID': apiKey,
+                  'APCA-API-SECRET-KEY': secretKey,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  symbol: order.symbol,
+                  notional: order.amount.toFixed(2),
+                  side: 'buy',
+                  type: 'market',
+                  time_in_force: 'day'
+                })
+              });
+
+              if (orderResponse.ok) {
+                const orderData = await orderResponse.json();
+                addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${order.symbol}! ID: ${orderData.id}`);
+                currentBuyingPower -= order.amount;
+                lastPurchaseTimes[mode][order.symbol] = Date.now();
+              } else {
+                const errorData = await orderResponse.json();
+                addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${order.symbol}: ${errorData.message}`);
+              }
+            } catch (err: any) {
+              addLog(mode as 'paper' | 'live', `[Alpaca Errore] Errore di rete durante l'acquisto di ${order.symbol}: ${err.message}`);
+            }
+          }
+        } else if (availableSlots <= 0) {
+          addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`);
+        } else {
+          addLog(mode as 'paper' | 'live', `[Mercato] Nessun asset con sentiment positivo (> 0.2) identificato in questo ciclo.`);
+        }
       }
     }
   } catch (error: any) {

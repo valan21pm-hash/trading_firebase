@@ -9,6 +9,7 @@ import { getAccessToken } from './auth';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 import { LLMSettings } from './components/LLMSettings';
+import { ProTradingTerminal } from './components/ProTradingTerminal';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -1407,6 +1408,7 @@ export default function App() {
   const [copiedDebriefRule, setCopiedDebriefRule] = useState(false);
   const [showPanicConfirm, setShowPanicConfirm] = useState(false);
   const [panicLoading, setPanicLoading] = useState(false);
+  const [showProTerminal, setShowProTerminal] = useState(false);
 
   // Valutazioni su periodi superiori al giorno con scelta degli intervalli di tempo
   const [rangeStartDate, setRangeStartDate] = useState(() => {
@@ -2024,6 +2026,15 @@ export default function App() {
             >
               <Flame className="w-3.5 h-3.5 animate-pulse" />
               PANIC BUTTON
+            </button>
+
+            {/* Versione Nuova / Pro Terminal Button */}
+            <button
+              onClick={() => setShowProTerminal(true)}
+              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl text-xs font-bold shadow-md hover:from-indigo-700 hover:to-violet-700 active:scale-95 transition-all cursor-pointer border-none"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              Versione Nuova
             </button>
 
             <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
@@ -3636,6 +3647,14 @@ export default function App() {
             })}
           </AnimatePresence>
         </div>
+
+        {/* Pro Trading Terminal Overlay / Modal */}
+        {showProTerminal && (
+          <ProTradingTerminal
+            onClose={() => setShowProTerminal(false)}
+            botStatus={status}
+          />
+        )}
 
       </div>
     </div>

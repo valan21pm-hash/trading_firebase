@@ -1,0 +1,45 @@
+{
+  "updatedAt": "2026-08-06T17:07:45.266Z",
+  "folderId": "1ZtwUz2SMUQg20nPWYf_KWHfljK5kya1_",
+  "credentials": {
+    "alpaca": {
+      "paper": {
+        "apiKey": "PK_PAPER_KEY_PLACEHOLDER",
+        "secretKey": "SECRET_KEY_PLACEHOLDER",
+        "isConfigured": false
+      },
+      "live": {
+        "apiKey": "",
+        "secretKey": "",
+        "isConfigured": false
+      }
+    },
+    "llm": {
+      "gemini": {
+        "provider": "gemini",
+        "apiKey": "",
+        "model": "gemini-3.1-flash-lite"
+      },
+      "mistral": {
+        "provider": "mistral",
+        "apiKey": "",
+        "model": "mistral-small-latest"
+      },
+      "deepseek": {
+        "provider": "deepseek",
+        "apiKey": "",
+        "model": "deepseek-chat"
+      },
+      "groq": {
+        "provider": "groq",
+        "apiKey": "",
+        "model": "llama-3.1-8b-instant"
+      },
+      "anthropic": {
+        "provider": "anthropic",
+        "apiKey": "",
+        "model": "claude-3-5-haiku-20241022"
+      }
+    }
+  }
+}
