@@ -1,11 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   TrendingUp, TrendingDown, Activity, Shield, Zap, RefreshCw, 
   Layers, BarChart3, Globe, Cpu, Clock, AlertTriangle, 
-  Sliders, Search, ArrowUpRight, ArrowDownRight, Terminal, 
-  Maximize2, PieChart, DollarSign, Eye, Compass, X, Play, Square, Settings, BookOpen, Key, Sparkles, Check, AlertCircle, Upload
+  Search, ArrowUpRight, ArrowDownRight,
+  Maximize2, PieChart, DollarSign, Eye, X, Play, Square, Settings, BookOpen, Key, Sparkles, Check, AlertCircle, Upload, Download,
+  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import ReactMarkdown from 'react-markdown';
+import { jsPDF } from 'jspdf';
+import { LLMSettings } from './LLMSettings';
+import { GeminiSignalsTicker } from './GeminiSignalsTicker';
+import { AlpacaMonitorModule } from './AlpacaMonitorModule';
+import { getAccessToken } from '../auth';
 
 interface ProTradingTerminalProps {
   onClose: () => void;
@@ -44,7 +51,7 @@ const mockOrderBook = {
   ]
 };
 
-const topAssets = [
+const defaultTopAssets = [
   { symbol: 'AAPL', name: 'Apple Inc.', price: 189.20, change: '+1.84%', positive: true, volume: '48.2M' },
   { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 124.60, change: '+4.12%', positive: true, volume: '92.5M' },
   { symbol: 'TSLA', name: 'Tesla Inc.', price: 215.40, change: '-1.25%', positive: false, volume: '34.1M' },
@@ -56,28 +63,643 @@ const topAssets = [
 ];
 
 export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalProps) {
-  const [activeTab, setActiveTab] = useState<'terminal' | 'depth' | 'ai' | 'analytics' | 'news' | 'debrief' | 'api' | 'settings'>('terminal');
-  const [selectedAsset, setSelectedAsset] = useState(topAssets[0]);
+  const [activeTab, setActiveTab] = useState<'terminal' | 'positions' | 'depth' | 'ai' | 'analytics' | 'news' | 'debrief' | 'api' | 'settings' | 'monitor'>('terminal');
+  const [topAssets, setTopAssets] = useState(defaultTopAssets);
+  const [selectedAsset, setSelectedAsset] = useState(defaultTopAssets[0]);
   const [timeframe, setTimeframe] = useState('1D');
   const [tickerTime, setTickerTime] = useState(new Date().toLocaleTimeString());
   
-  // Controls state (isolated UI mirror)
-  const [tradingMode, setTradingMode] = useState<'paper' | 'live'>('paper');
-  const [isBotRunning, setIsBotRunning] = useState<boolean>(botStatus?.paper?.isRunning || false);
+  // Realtime backend status synced directly with main dashboard
+  const [currentStatus, setCurrentStatus] = useState<any>(botStatus);
+  const [closingSymbols, setClosingSymbols] = useState<string[]>([]);
+
+  // Trading Mode state ('paper' or 'live') synced with backend
+  const [tradingMode, setTradingMode] = useState<'paper' | 'live'>(
+    botStatus?.tradingMode === 'live' ? 'live' : 'paper'
+  );
+
+  // Settings inputs state (synced with currentStatus)
+  const [maxPosInput, setMaxPosInput] = useState<number>(botStatus?.maxConcurrentPositions || 10);
+  const [tfInput, setTfInput] = useState<number>(botStatus?.timeframe || 15);
+  const [riskInput, setRiskInput] = useState<number>(botStatus?.riskPercentage || 10);
+
+  // Loading and UI states
+  const [savingSettings, setSavingSettings] = useState(false);
   const [showPanicModal, setShowPanicModal] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [apiSecretInput, setApiSecretInput] = useState('');
+  const [panicLoading, setPanicLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Debriefing State
+  const [debriefLoading, setDebriefLoading] = useState(false);
+  const [debriefResult, setDebriefResult] = useState<string | null>(null);
+  const [rangeStartDate, setRangeStartDate] = useState(
+    new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
+  const [rangeEndDate, setRangeEndDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [rangeLoading, setRangeLoading] = useState(false);
+
+  // AI Feedback & Rules State
+  const [ruleInput, setRuleInput] = useState('');
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // Operations & Telemetry State
+  const [operationsData, setOperationsData] = useState<any>(null);
+  const [closedTradesList, setClosedTradesList] = useState<any[]>([]);
+  const [closedStartDate, setClosedStartDate] = useState(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
+  const [closedEndDate, setClosedEndDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [closedSymbolFilter, setClosedSymbolFilter] = useState('');
+  const [closedLoading, setClosedLoading] = useState(false);
+
+  // Ticker timer
   useEffect(() => {
     const timer = setInterval(() => setTickerTime(new Date().toLocaleTimeString()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Fetch status periodically to keep 100% in sync with backend
+  const refreshBackendStatus = async () => {
+    try {
+      const res = await fetch('/api/status');
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentStatus(data);
+      }
+    } catch (err) {
+      // silent network catch
+    }
+  };
+
+  // Fetch Momentum Assets
+  const fetchMomentumAssets = async () => {
+    try {
+      const res = await fetch('/api/momentum-assets');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.assets && data.assets.length > 0) {
+          const formatted = data.assets.map((ast: any) => ({
+            symbol: ast.symbol,
+            name: ast.symbol,
+            price: ast.price || 0,
+            change: `${ast.changePercent >= 0 ? '+' : ''}${(ast.changePercent || 0).toFixed(2)}%`,
+            positive: (ast.changePercent || 0) >= 0,
+            volume: ast.volume ? `${(ast.volume / 1000000).toFixed(1)}M` : 'N/D'
+          }));
+          setTopAssets(formatted);
+        }
+      }
+    } catch (err) {}
+  };
+
+  // Auto-connect and sync Google Sheets / Drive credentials on mount
+  const autoConnectGoogleSheetsAndDrive = async () => {
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // 1. Sync credentials from Google Sheets (SHEET_ID: 1945r1-sCFj45myHM6APOMc9Q1d8He0-WBuWFfcuJfOU)
+      await fetch('/api/sheets/sync', { method: 'POST', headers });
+      
+      // 2. Sync feedback rules from Google Sheets (FEEDBACK_SHEET_ID: 1rFR1J0W9_WyvPfhaGyI1VXj9ABSgJGx8IrjFWgkepqc)
+      await fetch('/api/feedback/sync-sheets', { method: 'POST', headers });
+
+      // 3. Trigger Drive log sync
+      await fetch('/api/drive/sync-logs', { method: 'POST', headers });
+
+      await refreshBackendStatus();
+    } catch (err) {
+      console.warn('Auto-sync Google Sheets/Drive skipped:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshBackendStatus();
+    fetchMomentumAssets();
+    autoConnectGoogleSheetsAndDrive();
+    const interval = setInterval(refreshBackendStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch Operations and Closed Positions when mode or filters change
+  const fetchOperations = async () => {
+    try {
+      const res = await fetch(`/api/operations?mode=${tradingMode}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setOperationsData(data);
+      }
+    } catch (err) {}
+  };
+
+  const fetchClosedPositions = async () => {
+    setClosedLoading(true);
+    try {
+      const params = new URLSearchParams({
+        mode: tradingMode,
+        startDate: closedStartDate,
+        endDate: closedEndDate,
+        symbol: closedSymbolFilter
+      });
+      const res = await fetch(`/api/closed-positions?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setClosedTradesList(data.positions || []);
+      }
+    } catch (err) {
+    } finally {
+      setClosedLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOperations();
+    fetchClosedPositions();
+  }, [tradingMode, closedStartDate, closedEndDate, closedSymbolFilter]);
+
+  // Sync inputs when status updates from server
+  useEffect(() => {
+    if (currentStatus) {
+      if (currentStatus.maxConcurrentPositions !== undefined) {
+        setMaxPosInput(currentStatus.maxConcurrentPositions);
+      }
+      if (currentStatus.timeframe !== undefined) {
+        setTfInput(currentStatus.timeframe);
+      }
+      if (currentStatus.riskPercentage !== undefined) {
+        setRiskInput(currentStatus.riskPercentage);
+      }
+      if (currentStatus.tradingMode) {
+        setTradingMode(currentStatus.tradingMode);
+      }
+    }
+  }, [currentStatus]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
+
+  // Determine if bot is active for the current selected mode
+  const isBotActiveInCurrentMode = tradingMode === 'paper' 
+    ? !!(currentStatus?.paperActive || currentStatus?.paper?.isRunning)
+    : !!(currentStatus?.liveActive || currentStatus?.live?.isRunning);
+
+  // 1. TOGGLE BOT HANDLER
+  const handleToggleBot = async () => {
+    try {
+      showToast(`Invio comando modifica stato Bot (${tradingMode.toUpperCase()})...`);
+      const res = await fetch('/api/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: tradingMode })
+      });
+
+      if (res.ok) {
+        const freshData = await res.json();
+        setCurrentStatus(freshData);
+        const isActiveNow = tradingMode === 'paper' ? freshData.paperActive : freshData.liveActive;
+        showToast(`✅ Bot (${tradingMode.toUpperCase()}) ora è ${isActiveNow ? 'ATTIVO 🟢' : 'FERMO 🔴'}`);
+      } else {
+        showToast('❌ Impossibile modificare lo stato del bot dal server.');
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore di connessione: ${err.message}`);
+    }
+  };
+
+  // 2. SWITCH TRADING MODE HANDLER
+  const handleSwitchMode = async (mode: 'paper' | 'live') => {
+    setTradingMode(mode);
+    try {
+      await fetch('/api/set-trading-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
+      await refreshBackendStatus();
+      showToast(`Modalità di visualizzazione impostata su: ${mode.toUpperCase()}`);
+    } catch (err) {
+      showToast(`Passato a conto: ${mode.toUpperCase()}`);
+    }
+  };
+
+  // 3. SAVE BOT SETTINGS HANDLER
+  const handleSaveBotSettings = async () => {
+    setSavingSettings(true);
+    try {
+      const res = await fetch('/api/trading/alpaca-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maxConcurrentPositions: Number(maxPosInput),
+          timeframe: Number(tfInput),
+          riskPercentage: Number(riskInput)
+        })
+      });
+
+      if (res.ok) {
+        showToast('✅ Parametri del bot salvati e sincronizzati sul backend!');
+        await refreshBackendStatus();
+      } else {
+        showToast('❌ Errore nel salvataggio dei parametri del bot');
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // 4. POSITION STRATEGY UPDATE HANDLER
+  const handleUpdateStrategy = async (symbol: string, strategy: 'Prudente' | 'Conservativa' | 'Aggressiva') => {
+    try {
+      showToast(`Aggiornamento strategia per ${symbol} a ${strategy}...`);
+      const response = await fetch('/api/trading/position-strategy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: tradingMode, symbol, strategy })
+      });
+      if (response.ok) {
+        showToast(`✅ Strategia ${symbol} impostata su ${strategy}`);
+        await refreshBackendStatus();
+      } else {
+        showToast(`❌ Errore impostazione strategia ${symbol}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore di rete: ${err.message}`);
+    }
+  };
+
+  // 5. CLOSE POSITION HANDLER
+  const handleClosePosition = async (symbol: string) => {
+    try {
+      setClosingSymbols(prev => [...prev, symbol]);
+      showToast(`Invio ordine di chiusura per ${symbol}...`);
+      
+      const res = await fetch('/api/close-position', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: tradingMode, symbol })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`✅ Posizione ${symbol} chiusa con successo!`);
+        await refreshBackendStatus();
+      } else {
+        showToast(`❌ Errore chiusura ${symbol}: ${data.message || 'Impossibile completare l\'ordine'}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore di rete: ${err.message}`);
+    } finally {
+      setClosingSymbols(prev => prev.filter(s => s !== symbol));
+    }
+  };
+
+  // 6. PANIC LIQUIDATE HANDLER
+  const handlePanicLiquidate = async () => {
+    setPanicLoading(true);
+    try {
+      const res = await fetch('/api/panic-liquidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('🚨 PANIC BUTTON ESEGUITO: Tutte le posizioni chiuse e Bot arrestato!');
+        await refreshBackendStatus();
+      } else {
+        showToast(`❌ Errore liquidazione di emergenza: ${data.message || 'Errore del server'}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore di rete: ${err.message}`);
+    } finally {
+      setPanicLoading(false);
+      setShowPanicModal(false);
+    }
+  };
+
+  // 7. DAILY & RANGE DEBRIEF GENERATION HANDLERS
+  const handleGenerateDebrief = async () => {
+    setDebriefLoading(true);
+    try {
+      showToast('Generazione Daily Debrief AI in corso...');
+      const res = await fetch('/api/generate-daily-debrief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.debrief) {
+          setDebriefResult(data.debrief);
+          showToast('✅ Debrief Giornaliero generato con successo!');
+          await refreshBackendStatus();
+        } else {
+          showToast(`❌ Errore: ${data.error || 'Nessun debrief ricevuto'}`);
+        }
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    } finally {
+      setDebriefLoading(false);
+    }
+  };
+
+  const handleGenerateRangeDebrief = async () => {
+    setRangeLoading(true);
+    try {
+      showToast(`Generazione Debrief di Periodo (${rangeStartDate} - ${rangeEndDate})...`);
+      const res = await fetch('/api/generate-range-debrief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: rangeStartDate,
+          endDate: rangeEndDate,
+          mode: tradingMode
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setDebriefResult(data.debrief);
+          showToast('✅ Report analitico di periodo generato con successo!');
+        } else {
+          showToast(`❌ Errore: ${data.error || 'Impossibile generare report'}`);
+        }
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    } finally {
+      setRangeLoading(false);
+    }
+  };
+
+  const handleDownloadCustomReport = () => {
+    window.location.href = `/api/report/download?startDate=${rangeStartDate}&endDate=${rangeEndDate}`;
+    showToast('Download report TXT avviato');
+  };
+
+  const exportDebriefPDF = () => {
+    if (!debriefResult) return;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('Debriefing Analitico IA - Trading Terminal Pro', 14, 20);
+    doc.setFontSize(10);
+    doc.text(`Data Generazione: ${new Date().toLocaleString('it-IT')}`, 14, 28);
+    doc.text(`Modalità: ${tradingMode.toUpperCase()}`, 14, 34);
+
+    const splitText = doc.splitTextToSize(debriefResult, 180);
+    let y = 44;
+    for (let i = 0; i < splitText.length; i++) {
+      if (y > 280) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.text(splitText[i], 14, y);
+      y += 6;
+    }
+    doc.save(`debriefing_ai_${tradingMode}_${new Date().toISOString().split('T')[0]}.pdf`);
+    showToast('Documento PDF scaricato con successo');
+  };
+
+  // 8. AI FEEDBACK & RULES HANDLERS
+  const handleAddRule = async () => {
+    if (!ruleInput.trim()) {
+      showToast('Inserisci prima una regola correttiva valida!');
+      return;
+    }
+    setFeedbackLoading(true);
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ rule: ruleInput.trim() })
+      });
+      if (res.ok) {
+        showToast('✅ Nuova regola correttiva salvata ed attiva con successo!');
+        setRuleInput('');
+        await refreshBackendStatus();
+      } else {
+        showToast('❌ Errore salvataggio regola');
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const handleSyncFeedbackFromSheets = async () => {
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/feedback/sync-sheets', { method: 'POST', headers });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ [Google Sheets] ${data.message}`);
+        await refreshBackendStatus();
+      } else {
+        showToast(`❌ Errore: ${data.error}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    }
+  };
+
+  const handleExportFeedbackToSheets = async () => {
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/feedback/export-sheets', { method: 'POST', headers });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ ${data.message}`);
+      } else {
+        showToast(`❌ Errore: ${data.error}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    }
+  };
+
+  const handleDeleteRule = async (index: number) => {
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/feedback/delete', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ index })
+      });
+      if (res.ok) {
+        showToast('✅ Regola eliminata con successo!');
+        await refreshBackendStatus();
+      }
+    } catch (err: any) {
+      showToast(`❌ Errore: ${err.message}`);
+    }
+  };
+
+  // 9. JSON BACKUP IMPORT & EXPORT HANDLERS
+  const handleImportBackupJSON = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      showToast('Caricamento ed elaborazione del file di backup JSON...');
+      const text = await file.text();
+      const json = JSON.parse(text);
+
+      const res = await fetch('/api/backup/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(json)
+      });
+
+      if (res.ok) {
+        showToast('✅ Backup completo importato e sincronizzato con successo!');
+        await refreshBackendStatus();
+        await fetchOperations();
+      } else {
+        const errData = await res.json();
+        showToast(`❌ Errore importazione: ${errData.error || 'Errore del server'}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ File JSON non valido: ${err.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleExportBackupJSON = () => {
+    window.location.href = '/api/backup/export';
+    showToast('Download file di backup JSON completo avviato');
+  };
+
+  // 10. CSV EXPORT HANDLER
+  const exportClosedTradesCSV = () => {
+    if (closedTradesList.length === 0) return;
+    const headers = ["Simbolo", "Quantità", "Prezzo Ingresso", "Prezzo Uscita", "PnL ($)", "PnL (%)", "Data Chiusura"];
+    const rows = closedTradesList.map(t => [
+      t.symbol,
+      t.qty,
+      t.avg_entry_price,
+      t.current_price || t.close_price,
+      t.unrealized_pl || t.realized_pl,
+      t.unrealized_plpc || t.realized_plpc,
+      t.closed_at || new Date().toISOString()
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `operazioni_chiuse_${tradingMode}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Esportazione CSV completata');
+  };
+
+  // Dynamic Performance Metrics Calculation
+  const performanceMetrics = useMemo(() => {
+    const activities = operationsData?.activities || [];
+    const dailyPnL = currentStatus?.[tradingMode]?.dailyPnL || [];
+
+    // Aggregate calculations
+    let totalWinCount = 0;
+    let totalLossCount = 0;
+    let totalProfit = 0;
+    let totalLoss = 0;
+    let peakBalance = 0;
+    let maxDrawdownAmount = 0;
+    let maxDrawdownPercent = 0;
+
+    const pnlHistory: { date: string; balance: number; pnl: number }[] = [];
+
+    dailyPnL.forEach((entry: any) => {
+      const bal = entry.balance || 0;
+      const pnl = entry.pnl || 0;
+      if (bal > peakBalance) peakBalance = bal;
+      const drawdown = peakBalance - bal;
+      const drawdownPct = peakBalance > 0 ? (drawdown / peakBalance) * 100 : 0;
+
+      if (drawdown > maxDrawdownAmount) maxDrawdownAmount = drawdown;
+      if (drawdownPct > maxDrawdownPercent) maxDrawdownPercent = drawdownPct;
+
+      if (pnl > 0) {
+        totalProfit += pnl;
+        totalWinCount++;
+      } else if (pnl < 0) {
+        totalLoss += Math.abs(pnl);
+        totalLossCount++;
+      }
+
+      pnlHistory.push({
+        date: entry.date || entry.timestamp || '',
+        balance: bal,
+        pnl: pnl
+      });
+    });
+
+    const totalClosed = totalWinCount + totalLossCount;
+    const winRate = totalClosed > 0 ? (totalWinCount / totalClosed) * 100 : 0;
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? 99.9 : 0;
+
+    return {
+      winRate,
+      profitFactor,
+      maxDrawdownPercent,
+      maxDrawdownAmount,
+      pnlHistory,
+      totalWinCount,
+      totalLossCount,
+      totalProfit,
+      totalLoss
+    };
+  }, [operationsData, currentStatus, tradingMode]);
+
+  // Real financial calculations from active account
+  const accountData = currentStatus?.[tradingMode] || { balance: 0, cash: 0, positions: [], dailyPnL: [] };
+  const positions: any[] = accountData.positions || [];
+  const reasoningLogs: string[] = accountData.reasoningLogs || [];
+  const operationalLogs: string[] = accountData.logs || [];
+  const activeFeedbackRules: string[] = currentStatus?.activeFeedbackRules || currentStatus?.rules || [];
+
+  // Financial KPIs
+  const totalBalance = accountData.balance || 0;
+  const totalInvested = positions.reduce((acc, pos) => acc + (parseFloat(pos.market_value || '0') || 0), 0);
+  const totalMarginUsed = positions.reduce((acc, pos) => acc + (parseFloat(pos.cost_basis || pos.market_value || '0') || 0), 0);
+  
+  const cashAvailable = accountData.cash !== undefined && accountData.cash !== null && !isNaN(accountData.cash)
+    ? accountData.cash
+    : Math.max(0, totalBalance - totalInvested);
+
+  const dailyPnLVal = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_intraday_pl || '0') || 0), 0);
+  const dailyPnLPct = totalBalance > 0 ? (dailyPnLVal / totalBalance) * 100 : 0;
+
+  const initialRefBalance = accountData.dailyPnL && accountData.dailyPnL.length > 0 && accountData.dailyPnL[0]?.balance
+    ? accountData.dailyPnL[0].balance
+    : (tradingMode === 'paper' ? 100000 : totalBalance);
+
+  const totalUnrealizedPL = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_pl || '0') || 0), 0);
+  const historicalPnLVal = (totalBalance - initialRefBalance) + totalUnrealizedPL;
+  const historicalPnLPct = initialRefBalance > 0 ? (historicalPnLVal / initialRefBalance) * 100 : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#0B0F17] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-fade-in">
@@ -89,12 +711,44 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         </div>
       )}
 
+      {/* Panic Modal */}
+      {showPanicModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#10172A] border border-rose-500/50 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl font-mono text-xs">
+            <div className="flex items-center gap-3 text-rose-500 font-bold text-base">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <span>CONFERMA LIQUIDAZIONE DI EMERGENZA</span>
+            </div>
+            <p className="text-slate-300 font-sans leading-relaxed">
+              Stai per attivare il <strong>Panic Button</strong>. Questa azione chiuderà <strong>IMMEDIATAMENTE</strong> tutte le posizioni aperte sul conto {tradingMode.toUpperCase()} ed arresterà il bot di trading.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                disabled={panicLoading}
+                onClick={() => setShowPanicModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold cursor-pointer"
+              >
+                Annulla
+              </button>
+              <button
+                disabled={panicLoading}
+                onClick={handlePanicLiquidate}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold flex items-center gap-2 cursor-pointer shadow-lg"
+              >
+                {panicLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
+                {panicLoading ? 'Esecuzione...' : 'SÌ, LIQUIDA TUTTO E FERMA'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Ticker Marquee / Bar */}
       <div className="bg-[#131B2E] border-b border-slate-800 px-4 py-1.5 flex items-center justify-between text-xs font-mono">
         <div className="flex items-center gap-6 overflow-x-auto no-scrollbar py-0.5">
           <div className="flex items-center gap-2 text-amber-400 font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            BLOOMBERG & TRADINGVIEW PRO TERMINAL v4.2 (PRO MODE)
+            PRO TRADING TERMINAL v4.2
           </div>
           {topAssets.slice(0, 5).map(ast => (
             <div key={ast.symbol} className="flex items-center gap-1.5 whitespace-nowrap">
@@ -123,7 +777,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
               </h1>
               <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
                 <span>Vol: <strong className="text-slate-200">{selectedAsset.volume}</strong></span>
-                <span>Bid/Ask: <strong className="text-slate-200">0.02</strong></span>
+                <span>
+                  Stato Bot ({tradingMode.toUpperCase()}): {' '}
+                  <strong className={isBotActiveInCurrentMode ? 'text-emerald-400' : 'text-rose-400'}>
+                    {isBotActiveInCurrentMode ? 'ATTIVO 🟢' : 'INATTIVO 🔴'}
+                  </strong>
+                </span>
               </div>
             </div>
           </div>
@@ -133,33 +792,30 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           {/* Paper / Live Toggle */}
           <div className="flex items-center bg-[#131B2E] p-1 rounded-xl border border-slate-800">
             <button
-              onClick={() => { setTradingMode('paper'); showToast('Modalità simulazione (Paper) attivata'); }}
+              onClick={() => handleSwitchMode('paper')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer font-mono ${tradingMode === 'paper' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Paper
             </button>
             <button
-              onClick={() => { setTradingMode('live'); showToast('Modalità reale (Live) attivata'); }}
+              onClick={() => handleSwitchMode('live')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer font-mono ${tradingMode === 'live' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Live
             </button>
           </div>
 
-          {/* Loop Start / Stop Control */}
+          {/* REAL Loop Start / Stop Control */}
           <button
-            onClick={() => {
-              setIsBotRunning(!isBotRunning);
-              showToast(isBotRunning ? 'Loop Bot fermato con successo' : 'Loop Bot avviato con successo');
-            }}
+            onClick={handleToggleBot}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer font-mono ${
-              isBotRunning
+              isBotActiveInCurrentMode
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg animate-pulse'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
             }`}
           >
-            {isBotRunning ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-            {isBotRunning ? 'Ferma Loop Bot' : 'Avvia Loop Bot'}
+            {isBotActiveInCurrentMode ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+            {isBotActiveInCurrentMode ? `Ferma Bot (${tradingMode.toUpperCase()})` : `Avvia Bot (${tradingMode.toUpperCase()})`}
           </button>
 
           {/* Panic Button */}
@@ -170,6 +826,23 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             <AlertTriangle className="w-3.5 h-3.5" />
             PANIC BUTTON
           </button>
+
+          {/* Backup Import / Export Quick Buttons */}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer font-mono border border-slate-700" title="Ripristina backup JSON">
+              <Upload className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Importa JSON</span>
+              <input type="file" accept=".json" onChange={handleImportBackupJSON} className="hidden" />
+            </label>
+            <button
+              onClick={handleExportBackupJSON}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer font-mono border border-slate-700"
+              title="Scarica backup JSON completo"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Esporta JSON</span>
+            </button>
+          </div>
         </div>
 
         {/* Exit Pro Terminal Button */}
@@ -191,6 +864,24 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           <BarChart3 className="w-3.5 h-3.5" /> Grafico & Mercati
         </button>
         <button
+          onClick={() => setActiveTab('positions')}
+          className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'positions' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
+        >
+          <Briefcase className="w-3.5 h-3.5 text-amber-400" /> Posizioni Aperte & Margini ({positions.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
+        >
+          <Settings className="w-3.5 h-3.5" /> Parametri Bot & Rischio
+        </button>
+        <button
+          onClick={() => setActiveTab('monitor')}
+          className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'monitor' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
+        >
+          <Activity className="w-3.5 h-3.5 text-emerald-400" /> Scanner & Monitor Alpaca
+        </button>
+        <button
           onClick={() => setActiveTab('depth')}
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'depth' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
@@ -200,31 +891,25 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           onClick={() => setActiveTab('ai')}
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
-          <Cpu className="w-3.5 h-3.5" /> AI Neural Matrix
+          <Cpu className="w-3.5 h-3.5" /> AI Neural Matrix & Regole
         </button>
         <button
           onClick={() => setActiveTab('debrief')}
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'debrief' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
-          <BookOpen className="w-3.5 h-3.5" /> Debriefing & Regole
+          <BookOpen className="w-3.5 h-3.5" /> Debriefing & Report
         </button>
         <button
           onClick={() => setActiveTab('api')}
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'api' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
-          <Key className="w-3.5 h-3.5" /> Importazione API & Backup
-        </button>
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
-        >
-          <Settings className="w-3.5 h-3.5" /> Parametri Bot & LLM
+          <Key className="w-3.5 h-3.5" /> Provider LLM & Credenziali
         </button>
         <button
           onClick={() => setActiveTab('analytics')}
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'analytics' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
-          <Shield className="w-3.5 h-3.5" /> Telemetria & Rischio
+          <Shield className="w-3.5 h-3.5" /> Telemetria & Storico
         </button>
         <button
           onClick={() => setActiveTab('news')}
@@ -232,6 +917,86 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         >
           <Globe className="w-3.5 h-3.5" /> Notizie & Wire
         </button>
+      </div>
+
+      {/* RIEPILOGO FINANZIARIO CAPITALE E MARGINI (STRISCIA KPI REALE) */}
+      <div className="bg-[#090D16] border-b border-slate-800 px-6 py-2.5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 font-mono text-xs shadow-inner">
+        {/* 1. CAPITALE TOTALE */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+          <div>
+            <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1">
+              <Wallet className="w-3 h-3 text-indigo-400" /> Capitale Totale
+            </div>
+            <div className="text-sm font-bold text-white mt-0.5">${totalBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${tradingMode === 'live' ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-indigo-950 text-indigo-400 border border-indigo-800'}`}>
+            {tradingMode.toUpperCase()}
+          </span>
+        </div>
+
+        {/* 2. CAPITALE INVESTITO & MARGINE */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
+          <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1">
+            <PieChart className="w-3 h-3 text-amber-400" /> Capitale Investito
+          </div>
+          <div className="text-sm font-bold text-amber-300 mt-0.5">${totalInvested.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-[9px] text-slate-400 truncate">Margine: ${totalMarginUsed.toFixed(2)}</div>
+        </div>
+
+        {/* 3. CAPITALE DISPONIBILE */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
+          <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1">
+            <DollarSign className="w-3 h-3 text-emerald-400" /> Liquidità Disponibile
+          </div>
+          <div className="text-sm font-bold text-emerald-400 mt-0.5">${cashAvailable.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-[9px] text-slate-400">
+            {totalBalance > 0 ? `${((cashAvailable / totalBalance) * 100).toFixed(1)}% del totale` : '100%'}
+          </div>
+        </div>
+
+        {/* 4. POSIZIONI APERTE */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
+          <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1">
+            <Briefcase className="w-3 h-3 text-sky-400" /> Posizioni Aperte
+          </div>
+          <div className="text-sm font-bold text-white mt-0.5">{positions.length} asset attivi</div>
+          <div className="text-[9px] text-slate-400">
+            Esposizione: {totalBalance > 0 ? `${((totalInvested / totalBalance) * 100).toFixed(1)}%` : '0%'}
+          </div>
+        </div>
+
+        {/* 5. VARIAZIONE GIORNALIERA */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
+          <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center justify-between">
+            <span>Var. Giornaliera</span>
+            {dailyPnLVal >= 0 ? <ArrowUpRight className="w-3 h-3 text-emerald-400" /> : <ArrowDownRight className="w-3 h-3 text-rose-400" />}
+          </div>
+          <div className={`text-sm font-bold mt-0.5 ${dailyPnLVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {dailyPnLVal >= 0 ? '+' : ''}${dailyPnLVal.toFixed(2)}
+          </div>
+          <div className={`text-[9px] font-semibold ${dailyPnLVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {dailyPnLPct >= 0 ? '+' : ''}{dailyPnLPct.toFixed(2)}%
+          </div>
+        </div>
+
+        {/* 6. VARIAZIONE STORICA */}
+        <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
+          <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center justify-between">
+            <span>Var. Storica Totale</span>
+            {historicalPnLVal >= 0 ? <TrendingUp className="w-3 h-3 text-emerald-400" /> : <TrendingDown className="w-3 h-3 text-rose-400" />}
+          </div>
+          <div className={`text-sm font-bold mt-0.5 ${historicalPnLVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {historicalPnLVal >= 0 ? '+' : ''}${historicalPnLVal.toFixed(2)}
+          </div>
+          <div className={`text-[9px] font-semibold ${historicalPnLVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {historicalPnLPct >= 0 ? '+' : ''}{historicalPnLPct.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+
+      {/* Gemini Signals Ticker */}
+      <div className="px-6 pt-2 bg-[#0B0F17]">
+        <GeminiSignalsTicker />
       </div>
 
       {/* Terminal Workspace Body */}
@@ -243,7 +1008,13 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-indigo-400" /> Watchlist Mercati ({tradingMode.toUpperCase()})
             </span>
-            <span className="text-[10px] font-mono text-slate-500">{topAssets.length} asset</span>
+            <button
+              onClick={fetchMomentumAssets}
+              className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer"
+              title="Aggiorna Watchlist Momentum"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
           </div>
 
           <div className="relative mb-3">
@@ -255,7 +1026,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             />
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[480px]">
             {topAssets.map(ast => (
               <div
                 key={ast.symbol}
@@ -285,7 +1056,214 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         </div>
 
         {/* Center/Main Column: Active Tab Content */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
+        <div className="lg:col-span-3 flex flex-col gap-4">
+          
+          {/* TAB: POSIZIONI APERTE & MARGINI */}
+          {activeTab === 'positions' && (
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-amber-400" /> Posizioni Aperte e Margini Impegnati ({tradingMode.toUpperCase()})
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-sans mt-0.5">
+                    Monitora in tempo reale il valore di mercato, il margine impegnato e gestisci le strategie di rischio (Prudente, Conservativa, Aggressiva).
+                  </p>
+                </div>
+                <button
+                  onClick={refreshBackendStatus}
+                  className="p-2 bg-[#0E1526] hover:bg-slate-800 border border-slate-700 rounded-xl text-slate-300 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-indigo-400" /> Aggiorna
+                </button>
+              </div>
+
+              {positions.length === 0 ? (
+                <div className="bg-[#090D16] border border-slate-800 rounded-xl p-8 text-center space-y-3 my-auto">
+                  <Shield className="w-10 h-10 text-slate-600 mx-auto" />
+                  <div className="text-slate-300 font-bold text-sm">Nessuna posizione aperta al momento</div>
+                  <p className="text-slate-500 font-sans text-xs max-w-sm mx-auto">
+                    Il bot sta monitorando il mercato in modalità {tradingMode.toUpperCase()}. Quando le condizioni saranno favorevoli, aprirà posizioni automaticamente.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                        <th className="py-2.5 px-3">Asset</th>
+                        <th className="py-2.5 px-3">Quantità</th>
+                        <th className="py-2.5 px-3">Prezzo Carico</th>
+                        <th className="py-2.5 px-3">Prezzo Attuale</th>
+                        <th className="py-2.5 px-3">Valore Mercato</th>
+                        <th className="py-2.5 px-3">Strategia Rischio</th>
+                        <th className="py-2.5 px-3">P&L Giornaliero</th>
+                        <th className="py-2.5 px-3">P&L Totale</th>
+                        <th className="py-2.5 px-3 text-right">Azione</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {positions.map((pos: any) => {
+                        const qty = parseFloat(pos.qty || '0');
+                        const avgEntry = parseFloat(pos.avg_entry_price || '0');
+                        const currentPrice = parseFloat(pos.current_price || '0');
+                        const marketVal = parseFloat(pos.market_value || '0');
+                        const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+                        const unrealizedPLPC = parseFloat(pos.unrealized_plpc || '0') * 100;
+                        const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
+                        const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
+                        const isClosing = closingSymbols.includes(pos.symbol);
+                        const currentStrategy = pos.strategy || 'Conservativa';
+
+                        return (
+                          <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
+                            <td className="py-3 px-3">
+                              <span className="font-bold text-white text-xs">{pos.symbol}</span>
+                              <span className="block text-[9px] text-slate-500 uppercase">{pos.exchange || 'NASDAQ/NYSE'}</span>
+                            </td>
+                            <td className="py-3 px-3 font-semibold text-slate-200">
+                              {qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}
+                            </td>
+                            <td className="py-3 px-3 text-slate-300">${avgEntry.toFixed(2)}</td>
+                            <td className="py-3 px-3 font-bold text-white">${currentPrice.toFixed(2)}</td>
+                            <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
+                            <td className="py-3 px-3">
+                              <select
+                                value={currentStrategy}
+                                onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
+                                className="bg-[#0E1526] border border-slate-700 text-xs text-indigo-300 rounded px-2 py-1 focus:outline-none"
+                              >
+                                <option value="Prudente">Prudente</option>
+                                <option value="Conservativa">Conservativa</option>
+                                <option value="Aggressiva">Aggressiva</option>
+                              </select>
+                            </td>
+                            <td className={`py-3 px-3 font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)}
+                              <span className="block text-[9px]">({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(2)}%)</span>
+                            </td>
+                            <td className={`py-3 px-3 font-bold ${unrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {unrealizedPL >= 0 ? '+' : ''}${unrealizedPL.toFixed(2)}
+                              <span className="block text-[9px]">({unrealizedPLPC >= 0 ? '+' : ''}{unrealizedPLPC.toFixed(2)}%)</span>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <button
+                                disabled={isClosing}
+                                onClick={() => handleClosePosition(pos.symbol)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                  isClosing 
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                    : 'bg-rose-600/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/40'
+                                }`}
+                              >
+                                {isClosing ? 'Chiusura...' : 'Chiudi'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: PARAMETRI BOT & RISCHIO */}
+          {activeTab === 'settings' && (
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-5 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4 overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Settings className="w-4 h-4 text-indigo-400" /> Parametri di Trading del Bot & Gestione Rischio
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-sans mt-0.5">
+                    I parametri modificati qui vengono salvati direttamente sul server e sincronizzati con il bot di trading.
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded-lg font-bold text-[10px]">
+                  ALLINEATO COL BACKEND
+                </span>
+              </div>
+
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-[#10172A] p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+                    <label className="text-[11px] text-slate-300 font-bold block">
+                      Max Posizioni Contemporanee
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={maxPosInput}
+                      onChange={e => setMaxPosInput(Number(e.target.value))}
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-[9px] text-slate-500 block">Numero massimo di posizioni aperte contemporaneamente dal bot.</span>
+                  </div>
+
+                  <div className="bg-[#10172A] p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+                    <label className="text-[11px] text-slate-300 font-bold block">
+                      Timeframe Analisi (Minuti)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={tfInput}
+                      onChange={e => setTfInput(Number(e.target.value))}
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-[9px] text-slate-500 block">Frequenza dell'algoritmo di analisi candele.</span>
+                  </div>
+
+                  <div className="bg-[#10172A] p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+                    <label className="text-[11px] text-slate-300 font-bold block">
+                      Rischio Massimo per Trade (%)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min={0.1}
+                      max={100}
+                      value={riskInput}
+                      onChange={e => setRiskInput(Number(e.target.value))}
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-rose-400 font-bold focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-[9px] text-slate-500 block">Percentuale massima di Capitale investibile per singolo ordine.</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
+                  <div className="text-[10px] text-slate-400 font-sans">
+                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({currentStatus?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({currentStatus?.timeframe ?? 15}m)</strong>, <strong>Rischio ({currentStatus?.riskPercentage ?? 10}%)</strong>.
+                  </div>
+                  <button
+                    disabled={savingSettings}
+                    onClick={handleSaveBotSettings}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold transition cursor-pointer shadow-lg flex items-center gap-2"
+                  >
+                    {savingSettings ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {savingSettings ? 'Salvataggio...' : 'Salva Parametri Bot'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Embedded Unified API & LLM Settings Component */}
+              <div className="pt-2">
+                <LLMSettings />
+              </div>
+            </div>
+          )}
+
+          {/* TAB: MONITOR & SCANNER ALPACA */}
+          {activeTab === 'monitor' && (
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1">
+              <AlpacaMonitorModule />
+            </div>
+          )}
+
           {activeTab === 'terminal' && (
             <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 min-h-[420px]">
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
@@ -306,7 +1284,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                 </div>
               </div>
 
-              <div className="flex-1 w-full min-h-[340px]">
+              <div className="flex-1 w-full min-h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={mockChartData}>
                     <defs>
@@ -322,6 +1300,47 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                     <Area type="monotone" dataKey="price" stroke="#818cf8" strokeWidth={2.5} fillOpacity={1} fill="url(#proChartGrad)" />
                   </AreaChart>
                 </ResponsiveContainer>
+              </div>
+
+              {/* RIEPILOGO RAPIDO POSIZIONI SOTTO IL GRAFICO */}
+              <div className="mt-4 pt-3 border-t border-slate-800 font-mono text-xs">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                    <Briefcase className="w-3.5 h-3.5 text-amber-400" /> Posizioni Aperte nel Portafoglio ({positions.length})
+                  </span>
+                  <button
+                    onClick={() => setActiveTab('positions')}
+                    className="text-indigo-400 hover:text-indigo-300 text-[11px] font-bold underline cursor-pointer"
+                  >
+                    Vedi dettaglio margini →
+                  </button>
+                </div>
+                {positions.length === 0 ? (
+                  <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800/80 text-slate-500 text-[11px]">
+                    Nessuna posizione aperta in {tradingMode.toUpperCase()}. Liquidità completamente disponibile (${cashAvailable.toFixed(2)}).
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {positions.slice(0, 4).map((pos: any) => {
+                      const mVal = parseFloat(pos.market_value || '0');
+                      const pl = parseFloat(pos.unrealized_pl || '0');
+                      return (
+                        <div key={pos.symbol} className="bg-[#090D16] p-2.5 rounded-xl border border-slate-800 flex justify-between items-center">
+                          <div>
+                            <span className="font-bold text-white">{pos.symbol}</span>
+                            <span className="text-[10px] text-slate-400 block">{pos.qty} azioni @ ${parseFloat(pos.avg_entry_price || '0').toFixed(2)}</span>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-amber-300">${mVal.toFixed(2)}</div>
+                            <div className={`text-[10px] font-bold ${pl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {pl >= 0 ? '+' : ''}${pl.toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -360,218 +1379,366 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             </div>
           )}
 
+          {/* TAB: AI NEURAL MATRIX & REGOLE */}
           {activeTab === 'ai' && (
-            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-3">
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4 overflow-y-auto">
               <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-indigo-400" /> AI Sentiment Matrix & Neural Prediction
+                <Cpu className="w-4 h-4 text-indigo-400" /> AI Neural Matrix & Regole Correttive
               </h2>
+
+              {/* Regole Correttive AI Manager */}
               <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400">Confidence Score:</span>
-                  <span className="text-emerald-400 font-bold text-sm">89.4% (Bullish Momentum)</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">
+                    Gestione Regole Correttive AI (Google Sheets Sincronizzato)
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSyncFeedbackFromSheets}
+                      className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer border border-indigo-500/40"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Sync da Sheets
+                    </button>
+                    <button
+                      onClick={handleExportFeedbackToSheets}
+                      className="px-2.5 py-1 bg-emerald-600/30 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer border border-emerald-500/40"
+                    >
+                      <Save className="w-3 h-3" /> Esporta su Sheets
+                    </button>
+                  </div>
                 </div>
-                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                  <div className="bg-gradient-to-r from-emerald-500 to-indigo-500 h-full w-[89%]" />
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ruleInput}
+                    onChange={(e) => setRuleInput(e.target.value)}
+                    placeholder="Esempio: Non aprire posizioni su titoli con RSI > 80..."
+                    className="flex-1 bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    disabled={feedbackLoading}
+                    onClick={handleAddRule}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold transition cursor-pointer"
+                  >
+                    Aggiungi Regola
+                  </button>
                 </div>
-                <p className="text-slate-300 leading-relaxed font-sans pt-2">
-                  L'algoritmo neurale rileva forti segnali di accumulo istituzionale su {selectedAsset.symbol} con correlazione macroeconomica positiva sui tassi d'interesse FED e volumi di scambio in aumento del +24%.
-                </p>
+
+                {activeFeedbackRules.length > 0 && (
+                  <div className="space-y-1.5 pt-2">
+                    <span className="text-[10px] text-slate-400 font-bold block uppercase">Regole Attive ({activeFeedbackRules.length}):</span>
+                    <div className="space-y-1 max-h-36 overflow-y-auto">
+                      {activeFeedbackRules.map((rule, idx) => (
+                        <div key={idx} className="bg-[#10172A] p-2 rounded-lg border border-slate-800 flex items-center justify-between">
+                          <span className="text-slate-300 text-[11px]">{rule}</span>
+                          <button
+                            onClick={() => handleDeleteRule(idx)}
+                            className="text-rose-400 hover:text-rose-300 p-1 rounded transition cursor-pointer"
+                            title="Elimina regola"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Ultimi Ragionamenti AI */}
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-2">
+                <span className="text-xs font-bold text-slate-200 uppercase tracking-wide block">
+                  Ultimi Ragionamenti Generati da Gemini / LLM ({tradingMode.toUpperCase()})
+                </span>
+                {reasoningLogs.length === 0 ? (
+                  <div className="text-slate-500 text-xs font-sans">Nessun log di ragionamento presente al momento.</div>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {reasoningLogs.slice(0, 10).map((log, i) => (
+                      <div key={i} className="bg-[#10172A] p-2.5 rounded-lg border border-slate-800 text-slate-300 text-[11px] font-sans leading-relaxed">
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Log Operativi Bot */}
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-2">
+                <span className="text-xs font-bold text-slate-200 uppercase tracking-wide block">
+                  Log Operativi e Tracciamento Decisionale ({tradingMode.toUpperCase()})
+                </span>
+                {operationalLogs.length === 0 ? (
+                  <div className="text-slate-500 text-xs font-sans">Nessun log operativo registrato.</div>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto font-mono text-[10px] text-slate-400">
+                    {operationalLogs.slice(-20).reverse().map((l, i) => (
+                      <div key={i} className="border-b border-slate-800/40 pb-1">
+                        {l}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
+          {/* TAB: DEBRIEFING & REPORT */}
           {activeTab === 'debrief' && (
-            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-3">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-indigo-400" /> Debriefing & Regole di Trading IA
-              </h2>
-              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-3">
-                <p className="text-slate-300 font-sans">
-                  Qui puoi generare e visualizzare il report analitico avanzato basato sulle performance storiche e sui log delle decisioni del bot.
-                </p>
-                <button
-                  onClick={() => showToast('Generazione debriefing IA avviata con successo')}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition cursor-pointer shadow-md"
-                >
-                  Genera Report Debriefing Periodo
-                </button>
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4 overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-indigo-400" /> Debriefing Analitico & Report di Periodo IA
+                </h2>
+                <div className="flex gap-2">
+                  <button
+                    disabled={debriefLoading}
+                    onClick={handleGenerateDebrief}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 shadow"
+                  >
+                    {debriefLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {debriefLoading ? 'Generazione...' : 'Debrief Giornaliero'}
+                  </button>
+                </div>
               </div>
+
+              {/* Selezione Intervallo Date per Report Personalizzato */}
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-3">
+                <span className="text-xs font-bold text-slate-200 uppercase tracking-wide block">
+                  Genera Debriefing su Intervallo Personalizzato
+                </span>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Data Inizio</label>
+                    <input
+                      type="date"
+                      value={rangeStartDate}
+                      onChange={(e) => setRangeStartDate(e.target.value)}
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Data Fine</label>
+                    <input
+                      type="date"
+                      value={rangeEndDate}
+                      onChange={(e) => setRangeEndDate(e.target.value)}
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={rangeLoading}
+                      onClick={handleGenerateRangeDebrief}
+                      className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-bold transition cursor-pointer"
+                    >
+                      {rangeLoading ? 'Elaborazione...' : 'Genera Report Periodo'}
+                    </button>
+                    <button
+                      onClick={handleDownloadCustomReport}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-bold transition cursor-pointer flex items-center gap-1"
+                      title="Scarica report TXT"
+                    >
+                      <Download className="w-3.5 h-3.5 text-indigo-400" />
+                      TXT
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Display Debrief Result */}
+              {debriefResult ? (
+                <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-3 font-sans text-xs">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="font-bold text-emerald-400 text-sm font-mono flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" /> Report Debriefing Generato
+                    </span>
+                    <button
+                      onClick={exportDebriefPDF}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer font-mono"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Scarica PDF
+                    </button>
+                  </div>
+                  <div className="text-slate-300 leading-relaxed max-h-96 overflow-y-auto pr-2">
+                    <ReactMarkdown>{debriefResult}</ReactMarkdown>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-[#090D16] p-6 rounded-xl border border-slate-800 text-center text-slate-500 font-sans">
+                  Nessun report generato per questa sessione. Clicca su "Debrief Giornaliero" o "Genera Report Periodo" per avviare l'analisi IA.
+                </div>
+              )}
             </div>
           )}
 
+          {/* TAB: PROVIDER LLM & CREDENZIALI */}
           {activeTab === 'api' && (
             <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4 overflow-y-auto">
               <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Key className="w-4 h-4 text-indigo-400" /> Schema Importazione API & Provider LLM (Multi-Model & Alpaca)
+                <Key className="w-4 h-4 text-indigo-400" /> Gestione Unificata Credenziali API, Google Drive & Sheets
               </h2>
-              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-4">
-                <div className="text-slate-400 text-[11px]">
-                  Configura le chiavi API per i diversi provider LLM supportati (Gemini, Mistral, Anthropic, DeepSeek, Groq) e le credenziali Alpaca Paper / Live.
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {['Gemini', 'Mistral', 'Anthropic', 'DeepSeek', 'Groq'].map((provider) => (
-                    <div key={provider} className="bg-[#10172A] p-3 rounded-xl border border-slate-800 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-white uppercase">{provider}</span>
-                        <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 text-[10px]">CONFIGURATO</span>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">API Key</label>
-                        <input
-                          type="password"
-                          placeholder="************************"
-                          className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Modello Preferito</label>
-                        <input
-                          type="text"
-                          defaultValue={provider === 'Gemini' ? 'gemini-2.5-pro' : provider === 'Anthropic' ? 'claude-3-5-sonnet' : 'default'}
-                          className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="pt-2 border-t border-slate-800 space-y-3">
-                  <h3 className="font-bold text-white text-xs">Credenziali Alpaca Broker API</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Alpaca Paper Key / Secret</label>
-                      <input
-                        type="password"
-                        placeholder="PK... / Secret..."
-                        className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Alpaca Live Key / Secret</label>
-                      <input
-                        type="password"
-                        placeholder="AK... / Secret..."
-                        className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-800 space-y-3">
-                  <h3 className="font-bold text-white text-xs flex items-center gap-1.5">
-                    <Upload className="w-3.5 h-3.5 text-indigo-400" /> Importa Configurazione & Chiavi API da File Sheet
-                  </h3>
-                  <div className="flex items-center gap-3 bg-[#0E1526] p-3 rounded-xl border border-slate-800">
-                    <input
-                      type="file"
-                      accept=".xlsx, .xls, .csv, .json"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          showToast(`Sheet "${e.target.files[0].name}" importato con successo!`);
-                        }
-                      }}
-                      className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 file:cursor-pointer cursor-pointer"
-                    />
-                    <span className="text-[10px] text-slate-500">Seleziona un file Sheet (.xlsx, .csv) o JSON di backup per ripristinare credenziali e parametri</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-3">
-                  <button
-                    onClick={() => showToast('Configurazione API e Schema LLM salvati con successo')}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition cursor-pointer shadow-md"
-                  >
-                    Salva Configurazione API
-                  </button>
-                  <button
-                    onClick={() => showToast('Backup configurazione esportato su JSON')}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold transition cursor-pointer border border-slate-700"
-                  >
-                    Esporta Backup JSON
-                  </button>
-                </div>
-              </div>
+              <p className="text-[11px] text-slate-400 font-sans">
+                Gestisci le chiavi API Alpaca (Paper/Live), i provider LLM (Gemini, Mistral, Anthropic, DeepSeek, Groq) e la sincronizzazione automatica a due colonne con Google Sheets ed il salvataggio persistente su Google Drive.
+              </p>
+              <LLMSettings />
             </div>
           )}
 
-          {activeTab === 'settings' && (
-            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Settings className="w-4 h-4 text-indigo-400" /> Parametri Bot, Posizioni, Timeframe & Failover LLM
-              </h2>
-              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="bg-[#10172A] p-3 rounded-xl border border-slate-800">
-                    <label className="text-[10px] text-slate-400 block mb-1">Max Posizioni Contemporanee</label>
-                    <input
-                      type="number"
-                      defaultValue={10}
-                      className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-bold"
-                    />
-                  </div>
-                  <div className="bg-[#10172A] p-3 rounded-xl border border-slate-800">
-                    <label className="text-[10px] text-slate-400 block mb-1">Timeframe Analisi (min)</label>
-                    <input
-                      type="number"
-                      defaultValue={15}
-                      className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-bold"
-                    />
-                  </div>
-                  <div className="bg-[#10172A] p-3 rounded-xl border border-slate-800">
-                    <label className="text-[10px] text-slate-400 block mb-1">Rischio per Operazione (%)</label>
-                    <input
-                      type="number"
-                      defaultValue={2.5}
-                      className="w-full bg-[#0E1526] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-rose-400 font-bold"
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-[#10172A] p-3 rounded-xl border border-slate-800 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-300 font-bold">Failover Automatico Provider LLM</span>
-                    <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 text-[10px]">ATTIVO</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 font-sans">
-                    Se il provider primario (es. Gemini) fallisce o risponde con errore di rate limit, il sistema passa automaticamente al provider secondario in sequenza (Mistral, Anthropic, DeepSeek, Groq).
-                  </p>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={() => showToast('Parametri bot e preferenze LLM aggiornati con successo')}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition cursor-pointer shadow-md"
-                  >
-                    Salva Parametri Bot
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
+          {/* TAB: TELEMETRIA & STORICO */}
           {activeTab === 'analytics' && (
-            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-3">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Shield className="w-4 h-4 text-indigo-400" /> Telemetria di Rischio e Margini Portafoglio
-              </h2>
-              <div className="grid grid-cols-2 gap-3">
+            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-4 overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-indigo-400" /> Telemetria di Rischio, Performance & Storico Operazioni ({tradingMode.toUpperCase()})
+                </h2>
+                <button
+                  onClick={exportClosedTradesCSV}
+                  disabled={closedTradesList.length === 0}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+                >
+                  <Download className="w-3.5 h-3.5" /> Esporta CSV Storico
+                </button>
+              </div>
+
+              {/* Key Metrics Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-slate-400">Value at Risk (VaR 95%):</div>
-                  <div className="text-white font-bold text-sm mt-1">-$142.50</div>
+                  <div className="text-slate-400 text-[10px]">Win Rate %</div>
+                  <div className="text-emerald-400 font-bold text-base mt-0.5">
+                    {performanceMetrics.winRate.toFixed(1)}%
+                  </div>
+                  <div className="text-[9px] text-slate-500">
+                    {performanceMetrics.totalWinCount} W / {performanceMetrics.totalLossCount} L
+                  </div>
                 </div>
+
                 <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-slate-400">Leverage Effettivo:</div>
-                  <div className="text-emerald-400 font-bold text-sm mt-1">1.0x (Cash Secured)</div>
+                  <div className="text-slate-400 text-[10px]">Profit Factor</div>
+                  <div className="text-indigo-400 font-bold text-base mt-0.5">
+                    {performanceMetrics.profitFactor.toFixed(2)}
+                  </div>
+                  <div className="text-[9px] text-slate-500">
+                    Gains: ${performanceMetrics.totalProfit.toFixed(2)}
+                  </div>
                 </div>
+
                 <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-slate-400">Sharpe Ratio:</div>
-                  <div className="text-indigo-400 font-bold text-sm mt-1">2.41</div>
+                  <div className="text-slate-400 text-[10px]">Max Drawdown (%)</div>
+                  <div className="text-rose-400 font-bold text-base mt-0.5">
+                    -{performanceMetrics.maxDrawdownPercent.toFixed(2)}%
+                  </div>
+                  <div className="text-[9px] text-slate-500">
+                    -${performanceMetrics.maxDrawdownAmount.toFixed(2)}
+                  </div>
                 </div>
+
                 <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-slate-400">Max Drawdown:</div>
-                  <div className="text-rose-400 font-bold text-sm mt-1">-3.12%</div>
+                  <div className="text-slate-400 text-[10px]">Operazioni Chiuse</div>
+                  <div className="text-white font-bold text-base mt-0.5">
+                    {closedTradesList.length}
+                  </div>
+                  <div className="text-[9px] text-slate-500">
+                    Modalità: {tradingMode.toUpperCase()}
+                  </div>
                 </div>
+              </div>
+
+              {/* Equity Curve Chart */}
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-2">
+                <span className="text-xs font-bold text-slate-200 uppercase tracking-wide block">
+                  Andamento Saldo Portafoglio (Equity Curve)
+                </span>
+                <div className="h-48 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={
+                      performanceMetrics.pnlHistory.length > 0 
+                        ? performanceMetrics.pnlHistory.map(item => ({ time: item.date, price: item.balance, volume: item.pnl }))
+                        : mockChartData
+                    }>
+                      <defs>
+                        <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.5} />
+                      <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#64748b" domain={['auto', 'auto']} tick={{ fontSize: 10 }} />
+                      <Tooltip contentStyle={{ backgroundColor: '#090D16', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc', fontSize: '12px' }} />
+                      <Area type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#eqGrad)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Filtered Closed Trades Table */}
+              <div className="bg-[#090D16] p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">
+                    Storico Operazioni Chiuse
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Filtra simbolo..."
+                      value={closedSymbolFilter}
+                      onChange={(e) => setClosedSymbolFilter(e.target.value)}
+                      className="bg-[#0E1526] border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                    />
+                    <input
+                      type="date"
+                      value={closedStartDate}
+                      onChange={(e) => setClosedStartDate(e.target.value)}
+                      className="bg-[#0E1526] border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                    />
+                    <input
+                      type="date"
+                      value={closedEndDate}
+                      onChange={(e) => setClosedEndDate(e.target.value)}
+                      className="bg-[#0E1526] border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {closedTradesList.length === 0 ? (
+                  <div className="text-slate-500 text-center py-6 font-sans">
+                    Nessuna operazione chiusa registrata nell'intervallo selezionato.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                          <th className="py-2 px-3">Asset</th>
+                          <th className="py-2 px-3">Quantità</th>
+                          <th className="py-2 px-3">Prezzo Ingresso</th>
+                          <th className="py-2 px-3">Prezzo Uscita</th>
+                          <th className="py-2 px-3">PnL Realizzato</th>
+                          <th className="py-2 px-3">Data Chiusura</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 text-xs">
+                        {closedTradesList.map((t, idx) => {
+                          const pnl = parseFloat(t.unrealized_pl || t.realized_pl || '0');
+                          return (
+                            <tr key={idx} className="hover:bg-[#0E1526]">
+                              <td className="py-2 px-3 font-bold text-white">{t.symbol}</td>
+                              <td className="py-2 px-3 text-slate-300">{t.qty}</td>
+                              <td className="py-2 px-3 text-slate-300">${parseFloat(t.avg_entry_price || '0').toFixed(2)}</td>
+                              <td className="py-2 px-3 text-slate-300">${parseFloat(t.current_price || t.close_price || '0').toFixed(2)}</td>
+                              <td className={`py-2 px-3 font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-slate-500 text-[10px]">{t.closed_at || t.timestamp || 'Recente'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -579,112 +1746,30 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           {activeTab === 'news' && (
             <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-3">
               <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-indigo-400" /> Ultime Notizie & Wire Finanziari
+                <Globe className="w-4 h-4 text-indigo-400" /> Live Market Wire & Sentiment Feed
               </h2>
               <div className="space-y-2">
-                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800 space-y-1">
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>REUTERS • 4 min fa</span>
-                    <span className="text-emerald-400 font-bold">IMPULSO POSITIVO</span>
+                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
+                  <div className="text-indigo-400 font-bold text-[10px]">BLOOMBERG TERMINAL WIRE</div>
+                  <div className="text-white font-bold mt-1">FED sostiene la stabilità dei tassi per il trimestre in corso</div>
+                  <div className="text-slate-400 text-[11px] mt-1 font-sans">
+                    L'impatto sui mercati azionari tecnologici rimane positivo con continuazione del rally sui semiconduttori.
                   </div>
-                  <p className="text-slate-200 font-sans font-medium text-xs">
-                    I mercati azionari globali registrano nuovi massimi grazie ai dati sull'inflazione USA in linea con le attese degli analisti.
-                  </p>
                 </div>
-                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800 space-y-1">
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>BLOOMBERG • 18 min fa</span>
-                    <span className="text-indigo-400 font-bold">ANALISI TECNICA</span>
+                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
+                  <div className="text-emerald-400 font-bold text-[10px]">REUTERS FINANCIAL MARKET</div>
+                  <div className="text-white font-bold mt-1">Settore AI & Chip mostra volumi record in apertura mercato</div>
+                  <div className="text-slate-400 text-[11px] mt-1 font-sans">
+                    Forte spinta rialzista registrata sui principali ticker semiconduttori ed etf di settore.
                   </div>
-                  <p className="text-slate-200 font-sans font-medium text-xs">
-                    {selectedAsset.symbol} supera le resistenze chiave di breve periodo con volumi record registrati nel settore tecnologico.
-                  </p>
                 </div>
               </div>
             </div>
           )}
-        </div>
 
-        {/* Right Column: Order Book & Quick Stats */}
-        <div className="lg:col-span-1 bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl font-mono">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-indigo-400" /> Book Ordini ({tradingMode.toUpperCase()})
-          </span>
-
-          <div className="bg-[#090D16] rounded-xl border border-slate-800 p-3 space-y-3 flex-1 flex flex-col justify-between text-xs">
-            <div>
-              <div className="text-[10px] text-rose-400 font-bold uppercase mb-1">Vendite (Asks)</div>
-              <div className="space-y-1">
-                {mockOrderBook.asks.slice(0, 4).map((a, i) => (
-                  <div key={i} className="flex justify-between text-slate-400">
-                    <span className="text-rose-400 font-bold">${a.price.toFixed(2)}</span>
-                    <span>{a.size}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="py-2 my-1 border-y border-slate-800 text-center">
-              <span className="text-sm font-bold text-white">${selectedAsset.price.toFixed(2)}</span>
-              <span className="text-[10px] text-emerald-400 block">{selectedAsset.change} (Ultimo Prezzo)</span>
-            </div>
-
-            <div>
-              <div className="text-[10px] text-emerald-400 font-bold uppercase mb-1">Acquisti (Bids)</div>
-              <div className="space-y-1">
-                {mockOrderBook.bids.slice(0, 4).map((b, i) => (
-                  <div key={i} className="flex justify-between text-slate-400">
-                    <span className="text-emerald-400 font-bold">${b.price.toFixed(2)}</span>
-                    <span>{b.size}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-800">
-              <div className="text-[10px] text-slate-500 mb-1">Stato Bot Collegato</div>
-              <div className={`p-2 rounded-lg border text-[11px] font-bold flex items-center justify-between ${isBotRunning ? 'bg-emerald-950/40 border-emerald-800 text-emerald-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}>
-                <span>{isBotRunning ? 'BOT ATTIVO' : 'BOT FERMO'}</span>
-                <span className={`w-2 h-2 rounded-full ${isBotRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} />
-              </div>
-            </div>
-          </div>
         </div>
 
       </div>
-
-      {/* Panic Button Confirmation Modal */}
-      {showPanicModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#10172A] border border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center gap-3 text-rose-500">
-              <AlertTriangle className="w-8 h-8 animate-bounce" />
-              <h3 className="text-lg font-bold">ATTENZIONE: PANIC LIQUIDATION</h3>
-            </div>
-            <p className="text-xs text-slate-300 font-mono leading-relaxed">
-              Stai per attivare la procedura di emergenza: chiusura immediata di tutte le posizioni aperte e cancellazione di tutti gli ordini pendenti nella modalità <strong className="text-white uppercase">{tradingMode}</strong>.
-            </p>
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setShowPanicModal(false)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
-              >
-                Annulla
-              </button>
-              <button
-                onClick={() => {
-                  setShowPanicModal(false);
-                  showToast('⚠️ PANIC LIQUIDATION ESEGUITA CON SUCCESSO!');
-                }}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-lg"
-              >
-                Conferma Liquidazione
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-
