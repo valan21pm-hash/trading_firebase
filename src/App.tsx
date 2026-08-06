@@ -368,7 +368,7 @@ const downloadOperationsPDF = (mode: 'paper' | 'live', positions: any[], activit
     const recentDecisions = dailyLogicLogs.slice(-25).reverse();
 
     recentDecisions.forEach((log: any) => {
-      const dateText = new Date(log.timestamp).toLocaleTimeString('it-IT');
+      const dateText = new Date(log.timestamp).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
       const reasoningText = log.reasoning || '';
       
       const splitReasoning = doc.splitTextToSize(reasoningText, 78);
@@ -1280,7 +1280,7 @@ function AccountPanel({
               {[...account.dailyLogicLogs].reverse().slice(0, 10).map((log, i) => (
                 <div key={i} className="text-xs border-l-2 border-blue-400 pl-2 py-1">
                   <div className="flex justify-between text-gray-500 mb-1">
-                    <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    <span>{new Date(log.timestamp).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                     <span className="font-bold">{log.symbol} ({log.action})</span>
                   </div>
                   <div className="text-gray-700">{log.reasoning}</div>
@@ -2286,7 +2286,7 @@ export default function App() {
                         <table className="w-full text-left border-collapse text-[11px]">
                           <thead>
                             <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
-                              <th className="py-1 px-2">Ora</th>
+                              <th className="py-1 px-2">Data / Ora</th>
                               <th className="py-1 px-2">Simbolo</th>
                               <th className="py-1 px-2">Decisione</th>
                               <th className="py-1 px-2 text-right">Prezzo</th>
@@ -2301,8 +2301,8 @@ export default function App() {
                                 const act = (log.action || '').toUpperCase();
                                 return (
                                   <tr key={idx} className="hover:bg-slate-100/30">
-                                    <td className="py-1 px-2 text-slate-500 font-mono">
-                                      {new Date(log.timestamp).toLocaleTimeString('it-IT')}
+                                    <td className="py-1 px-2 text-slate-500 font-mono whitespace-nowrap">
+                                      {new Date(log.timestamp).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                     </td>
                                     <td className="py-1 px-2 font-bold text-slate-900">{log.symbol}</td>
                                     <td className="py-1 px-2">

@@ -128,7 +128,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
       const res = await fetch('/api/status');
       if (res.ok) {
         const data = await res.json();
-        setCurrentStatus(data);
+        setCurrentStatus(data.status ? data.status : data);
       }
     } catch (err) {
       // silent network catch
@@ -225,17 +225,18 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   // Sync inputs when status updates from server
   useEffect(() => {
     if (currentStatus) {
-      if (currentStatus.maxConcurrentPositions !== undefined) {
-        setMaxPosInput(currentStatus.maxConcurrentPositions);
+      const statusObj = currentStatus.status ? currentStatus.status : currentStatus;
+      if (statusObj.maxConcurrentPositions !== undefined) {
+        setMaxPosInput(statusObj.maxConcurrentPositions);
       }
-      if (currentStatus.timeframe !== undefined) {
-        setTfInput(currentStatus.timeframe);
+      if (statusObj.timeframe !== undefined) {
+        setTfInput(statusObj.timeframe);
       }
-      if (currentStatus.riskPercentage !== undefined) {
-        setRiskInput(currentStatus.riskPercentage);
+      if (statusObj.riskPercentage !== undefined) {
+        setRiskInput(statusObj.riskPercentage);
       }
-      if (currentStatus.tradingMode) {
-        setTradingMode(currentStatus.tradingMode);
+      if (statusObj.tradingMode) {
+        setTradingMode(statusObj.tradingMode);
       }
     }
   }, [currentStatus]);
@@ -245,10 +246,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const statusObj = currentStatus?.status ? currentStatus.status : currentStatus;
+
   // Determine if bot is active for the current selected mode
   const isBotActiveInCurrentMode = tradingMode === 'paper' 
-    ? !!(currentStatus?.paperActive || currentStatus?.paper?.isRunning)
-    : !!(currentStatus?.liveActive || currentStatus?.live?.isRunning);
+    ? !!(statusObj?.paperActive || statusObj?.paper?.isRunning)
+    : !!(statusObj?.liveActive || statusObj?.live?.isRunning);
 
   // 1. TOGGLE BOT HANDLER
   const handleToggleBot = async () => {
@@ -262,8 +265,9 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
 
       if (res.ok) {
         const freshData = await res.json();
-        setCurrentStatus(freshData);
-        const isActiveNow = tradingMode === 'paper' ? freshData.paperActive : freshData.liveActive;
+        const nextStatus = freshData.status ? freshData.status : freshData;
+        setCurrentStatus(nextStatus);
+        const isActiveNow = tradingMode === 'paper' ? nextStatus.paperActive : nextStatus.liveActive;
         showToast(`✅ Bot (${tradingMode.toUpperCase()}) ora è ${isActiveNow ? 'ATTIVO 🟢' : 'FERMO 🔴'}`);
       } else {
         showToast('❌ Impossibile modificare lo stato del bot dal server.');
@@ -619,7 +623,8 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   // Dynamic Performance Metrics Calculation
   const performanceMetrics = useMemo(() => {
     const activities = operationsData?.activities || [];
-    const dailyPnL = currentStatus?.[tradingMode]?.dailyPnL || [];
+    const statusVal = currentStatus?.status ? currentStatus.status : currentStatus;
+    const dailyPnL = statusVal?.[tradingMode]?.dailyPnL || [];
 
     // Aggregate calculations
     let totalWinCount = 0;
@@ -675,11 +680,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   }, [operationsData, currentStatus, tradingMode]);
 
   // Real financial calculations from active account
-  const accountData = currentStatus?.[tradingMode] || { balance: 0, cash: 0, positions: [], dailyPnL: [] };
-  const positions: any[] = accountData.positions || [];
+  const accountData = (currentStatus?.status ? currentStatus.status : currentStatus)?.[tradingMode] || { balance: 0, cash: 0, positions: [], dailyPnL: [] };
+  const rawPositions: any[] = accountData.positions || [];
+  const positions: any[] = rawPositions.length > 0 ? rawPositions : (operationsData?.positions || []);
   const reasoningLogs: string[] = accountData.reasoningLogs || [];
   const operationalLogs: string[] = accountData.logs || [];
-  const activeFeedbackRules: string[] = currentStatus?.activeFeedbackRules || currentStatus?.rules || [];
+  const activeFeedbackRules: string[] = statusObj?.activeFeedbackRules || statusObj?.rules || statusObj?.userFeedbackRules || [];
 
   // Financial KPIs
   const totalBalance = accountData.balance || 0;
@@ -1237,7 +1243,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
 
                 <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
                   <div className="text-[10px] text-slate-400 font-sans">
-                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({currentStatus?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({currentStatus?.timeframe ?? 15}m)</strong>, <strong>Rischio ({currentStatus?.riskPercentage ?? 10}%)</strong>.
+                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({statusObj?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({statusObj?.timeframe ?? 15}m)</strong>, <strong>Rischio ({statusObj?.riskPercentage ?? 10}%)</strong>.
                   </div>
                   <button
                     disabled={savingSettings}
@@ -1451,13 +1457,23 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                 <span className="text-xs font-bold text-slate-200 uppercase tracking-wide block">
                   Ultimi Ragionamenti Generati da Gemini / LLM ({tradingMode.toUpperCase()})
                 </span>
-                {reasoningLogs.length === 0 ? (
+                {((accountData.dailyLogicLogs && accountData.dailyLogicLogs.length > 0) ? accountData.dailyLogicLogs : (operationsData?.dailyLogicLogs || [])).length === 0 ? (
                   <div className="text-slate-500 text-xs font-sans">Nessun log di ragionamento presente al momento.</div>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {reasoningLogs.slice(0, 10).map((log, i) => (
-                      <div key={i} className="bg-[#10172A] p-2.5 rounded-lg border border-slate-800 text-slate-300 text-[11px] font-sans leading-relaxed">
-                        {log}
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {[...((accountData.dailyLogicLogs && accountData.dailyLogicLogs.length > 0) ? accountData.dailyLogicLogs : (operationsData?.dailyLogicLogs || []))].reverse().slice(0, 15).map((log: any, i: number) => (
+                      <div key={i} className="bg-[#10172A] p-2.5 rounded-lg border border-slate-800 text-slate-300 text-[11px] font-sans leading-relaxed space-y-1">
+                        <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 border-b border-slate-800/80 pb-1">
+                          <span className="text-indigo-400 font-semibold">
+                            {log.timestamp ? new Date(log.timestamp).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Data N/D'}
+                          </span>
+                          {log.symbol && (
+                            <span className="font-bold text-white px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
+                              {log.symbol} {log.action ? `(${log.action})` : ''}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-slate-200">{typeof log === 'string' ? log : (log.reasoning || JSON.stringify(log))}</p>
                       </div>
                     ))}
                   </div>
