@@ -2680,8 +2680,20 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           }
         } else if (availableSlots <= 0) {
           addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`);
+          addLogicLog(mode, {
+            timestamp: new Date().toISOString(),
+            symbol: 'PORTFOLIO',
+            action: 'HOLD',
+            reasoning: `Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`
+          });
         } else {
           addLog(mode as 'paper' | 'live', `[Mercato] Nessun asset con sentiment positivo (> 0.2) identificato in questo ciclo.`);
+          addLogicLog(mode, {
+            timestamp: new Date().toISOString(),
+            symbol: 'MARKET',
+            action: 'SCAN',
+            reasoning: 'Analisi di mercato completata: nessun asset con sentiment positivo (> 0.20) identificato in questo ciclo.'
+          });
         }
       }
     }
@@ -2702,15 +2714,15 @@ async function executeTradingCycle(force: boolean = false) {
   }
   isTradingRunning = true;
   try {
-    const anyActive = botStatus.active;
-  if (!anyActive && !force) {
-    addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
-    return;
-  }
-  
-  const now = Date.now();
+    const anyActive = botStatus.active || botStatus.paperActive || botStatus.liveActive;
+    if (!anyActive && !force) {
+      addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
+      return;
+    }
+    
+    const now = Date.now();
 
-  if (botStatus.active || force) {
+    if (anyActive || force) {
     const alpacaTimeframeMs = (botStatus.timeframe || 5) * 60 * 1000;
     if (force || lastAlpacaRunTime === 0 || (now - lastAlpacaRunTime >= alpacaTimeframeMs)) {
       lastAlpacaRunTime = now;
