@@ -3417,7 +3417,11 @@ app.get('/api/status', async (req, res) => {
         if (accResponse.ok) {
           const account = await accResponse.json();
           botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
+          botData[mode].cash = parseFloat(account.cash !== undefined ? account.cash : (account.buying_power || '0'));
           botData[mode].accountNumber = account.account_number;
+        } else {
+          const totalInvested = positions.reduce((sum: number, p: any) => sum + parseFloat(p.market_value || '0'), 0);
+          botData[mode].cash = Math.max(0, (botData[mode].balance || 0) - totalInvested);
         }
 
         // Recuperiamo anche lo storico del portafoglio per mostrare l'andamento reale
@@ -3498,8 +3502,15 @@ app.get('/api/status', async (req, res) => {
       };
     }
     
+    const totalInvestedInAcc = positions.reduce((sum: number, p: any) => sum + parseFloat(p.market_value || '0'), 0);
+    const calculatedCash = Math.max(0, (botData[mode].balance || 0) - totalInvestedInAcc);
+    const finalCash = (conf.isConfigured && botData[mode].cash !== undefined && !isNaN(botData[mode].cash) && botData[mode].cash > 0 && !(botData[mode].cash === 100 && botData[mode].balance > 1000))
+      ? botData[mode].cash
+      : calculatedCash;
+    
     return {
       ...botData[mode],
+      cash: finalCash,
       dailyPnL: dailyPnLList,
       modeLabel: conf.isConfigured 
         ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 

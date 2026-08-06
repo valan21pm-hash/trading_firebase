@@ -692,7 +692,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   const totalInvested = positions.reduce((acc, pos) => acc + (parseFloat(pos.market_value || '0') || 0), 0);
   const totalMarginUsed = positions.reduce((acc, pos) => acc + (parseFloat(pos.cost_basis || pos.market_value || '0') || 0), 0);
   
-  const cashAvailable = accountData.cash !== undefined && accountData.cash !== null && !isNaN(accountData.cash)
+  const cashAvailable = (accountData.cash !== undefined && accountData.cash !== null && !isNaN(accountData.cash) && !(accountData.cash === 100 && totalBalance > 1000))
     ? accountData.cash
     : Math.max(0, totalBalance - totalInvested);
 
