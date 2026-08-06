@@ -687,21 +687,59 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   const operationalLogs: string[] = accountData.logs || [];
   const activeFeedbackRules: string[] = statusObj?.activeFeedbackRules || statusObj?.rules || statusObj?.userFeedbackRules || [];
 
-  // Financial KPIs
-  const totalBalance = accountData.balance || 0;
-  const totalInvested = positions.reduce((acc, pos) => acc + (parseFloat(pos.market_value || '0') || 0), 0);
-  const totalMarginUsed = positions.reduce((acc, pos) => acc + (parseFloat(pos.cost_basis || pos.market_value || '0') || 0), 0);
-  
-  const cashAvailable = (accountData.cash !== undefined && accountData.cash !== null && !isNaN(accountData.cash) && !(accountData.cash === 100 && totalBalance > 1000))
-    ? accountData.cash
-    : Math.max(0, totalBalance - totalInvested);
+  // Helper to extract reliable market value for a position
+  const getPosMarketValue = (pos: any): number => {
+    if (pos.market_value !== undefined && pos.market_value !== null) {
+      const val = parseFloat(pos.market_value);
+      if (!isNaN(val) && val !== 0) return val;
+    }
+    if (pos.currentValue !== undefined && pos.currentValue !== null) {
+      const val = parseFloat(pos.currentValue);
+      if (!isNaN(val) && val !== 0) return val;
+    }
+    const qty = parseFloat(pos.qty || '0');
+    const price = parseFloat(pos.current_price || pos.avg_entry_price || '0');
+    if (!isNaN(qty) && !isNaN(price)) return qty * price;
+    return 0;
+  };
 
-  const dailyPnLVal = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_intraday_pl || '0') || 0), 0);
-  const dailyPnLPct = totalBalance > 0 ? (dailyPnLVal / totalBalance) * 100 : 0;
+  // Helper to extract reliable cost basis / margin for a position
+  const getPosCostBasis = (pos: any): number => {
+    if (pos.cost_basis !== undefined && pos.cost_basis !== null) {
+      const val = parseFloat(pos.cost_basis);
+      if (!isNaN(val) && val !== 0) return val;
+    }
+    if (pos.nominalInvestment !== undefined && pos.nominalInvestment !== null) {
+      const val = parseFloat(pos.nominalInvestment);
+      if (!isNaN(val) && val !== 0) return val;
+    }
+    const qty = parseFloat(pos.qty || '0');
+    const price = parseFloat(pos.avg_entry_price || '0');
+    if (!isNaN(qty) && !isNaN(price)) return qty * price;
+    return 0;
+  };
+
+  // Financial KPIs
+  const totalInvested = positions.reduce((acc, pos) => acc + getPosMarketValue(pos), 0);
+  const totalMarginUsed = positions.reduce((acc, pos) => acc + getPosCostBasis(pos), 0);
 
   const initialRefBalance = accountData.dailyPnL && accountData.dailyPnL.length > 0 && accountData.dailyPnL[0]?.balance
     ? accountData.dailyPnL[0].balance
-    : (tradingMode === 'paper' ? 100000 : totalBalance);
+    : (tradingMode === 'paper' ? 100000 : 50);
+
+  const rawBalance = accountData.balance;
+  const totalBalance = (rawBalance !== undefined && rawBalance !== null && !isNaN(rawBalance) && rawBalance > 0)
+    ? rawBalance
+    : ((accountData.cash && accountData.cash > 0) ? accountData.cash + totalInvested : initialRefBalance);
+  
+  // Exact remaining liquid cash
+  const calculatedCash = Math.max(0, totalBalance - totalInvested);
+  const cashAvailable = (accountData.cash !== undefined && accountData.cash !== null && !isNaN(accountData.cash) && accountData.cash > 0 && Math.abs(accountData.cash - calculatedCash) < 10)
+    ? accountData.cash
+    : calculatedCash;
+
+  const dailyPnLVal = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_intraday_pl || '0') || 0), 0);
+  const dailyPnLPct = totalBalance > 0 ? (dailyPnLVal / totalBalance) * 100 : 0;
 
   const totalUnrealizedPL = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_pl || '0') || 0), 0);
   const historicalPnLVal = (totalBalance - initialRefBalance) + totalUnrealizedPL;
@@ -1328,7 +1366,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {positions.slice(0, 4).map((pos: any) => {
-                      const mVal = parseFloat(pos.market_value || '0');
+                      const mVal = getPosMarketValue(pos);
                       const pl = parseFloat(pos.unrealized_pl || '0');
                       return (
                         <div key={pos.symbol} className="bg-[#090D16] p-2.5 rounded-xl border border-slate-800 flex justify-between items-center">
