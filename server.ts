@@ -3409,9 +3409,8 @@ app.get("/api/gemini-signals", async (req, res) => {
   }
   return res.json([]);
 });
-app.get('/api/status', async (req, res) => {
-  try {
-    const paperConf = getAlpacaConfig('paper');
+async function getStatusData() {
+  const paperConf = getAlpacaConfig('paper');
   const liveConf = getAlpacaConfig('live');
   
   const getAccountData = async (mode: 'paper' | 'live', conf: any) => {
@@ -3587,7 +3586,7 @@ app.get('/api/status', async (req, res) => {
   const paperData = await getAccountData('paper', paperConf);
   const liveData = await getAccountData('live', liveConf);
 
-  res.json({
+  return {
     status: { 
       active: botStatus.active,
       paperActive: botStatus.paperActive,
@@ -3608,7 +3607,13 @@ app.get('/api/status', async (req, res) => {
       paper: paperData,
       live: liveData
     }
-  });
+  };
+}
+
+app.get('/api/status', async (req, res) => {
+  try {
+    const data = await getStatusData();
+    res.json(data);
   } catch (err: any) {
     const errorMsg = err?.message || err?.toString() || 'Errore interno del server durante il recupero dello stato';
     console.error('[Status API Error]:', err);
@@ -3775,7 +3780,7 @@ app.post('/api/watchlist/remove', async (req, res) => {
   });
 });
 
-app.post('/api/toggle', (req, res) => {
+app.post('/api/toggle', async (req, res) => {
   const { target } = req.body || {};
   
   if (target === 'paper') {
@@ -3814,7 +3819,13 @@ app.post('/api/toggle', (req, res) => {
   
   saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on toggle:', err));
   
-  res.redirect(303, '/api/status');
+  try {
+    const data = await getStatusData();
+    res.json(data);
+  } catch (err: any) {
+    const errorMsg = err?.message || err?.toString() || 'Errore interno del server durante la modifica dello stato';
+    res.status(500).json({ success: false, error: errorMsg });
+  }
 });
 
 app.post('/api/set-trading-mode', (req, res) => {
@@ -4314,7 +4325,7 @@ app.post('/api/panic-liquidate', async (req, res) => {
   });
 });
 
-app.post('/api/reset', (req, res) => {
+app.post('/api/reset', async (req, res) => {
   const { isConfigured } = getAlpacaConfig('paper');
   botStatus = {
     active: false,
@@ -4339,7 +4350,13 @@ app.post('/api/reset', (req, res) => {
   
   addLog('system', 'Sistema ripristinato a €100.00');
   
-  res.redirect(303, '/api/status');
+  try {
+    const data = await getStatusData();
+    res.json(data);
+  } catch (err: any) {
+    const errorMsg = err?.message || err?.toString() || 'Errore interno del server durante il ripristino';
+    res.status(500).json({ success: false, error: errorMsg });
+  }
 });
 
 app.post('/api/study-markets', async (req, res) => {

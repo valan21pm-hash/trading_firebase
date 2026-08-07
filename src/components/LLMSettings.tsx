@@ -104,11 +104,17 @@ export function LLMSettings() {
         method: 'POST',
         headers
       });
-      const data = await res.json();
-      if (data.success) {
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
+      }
+      if (res.ok && data.success) {
         setSheetsSyncMsg(data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
       } else {
-        throw new Error(data.error || 'Errore durante l\'esportazione server');
+        throw new Error(data.error || data.message || 'Errore durante l\'esportazione server');
       }
     } catch (err: any) {
       if (err.message && err.message.includes('unauthorized-domain')) {
@@ -152,12 +158,18 @@ export function LLMSettings() {
         method: 'POST',
         headers
       });
-      const data = await res.json();
-      if (data.success) {
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
+      }
+      if (res.ok && data.success) {
         setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata con successo!');
         await loadAllCredentials();
       } else {
-        throw new Error(data.error || 'Errore sincronizzazione server');
+        throw new Error(data.error || data.message || 'Errore sincronizzazione server');
       }
     } catch (err: any) {
       if (err.message && err.message.includes('unauthorized-domain')) {
