@@ -3325,6 +3325,53 @@ app.all(['/run-strategy', '/api/trigger'], async (req, res) => {
   }
 });
 
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'Trading Bot FastAPI & Node.js Bridge',
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    ig_configured: !!(process.env.IG_API_KEY && process.env.IG_USERNAME),
+    gemini_configured: !!process.env.GEMINI_API_KEY
+  });
+});
+
+app.post('/evaluate-trade', async (req, res) => {
+  try {
+    const { symbol = 'EURUSD', current_price = 1.0850, timeframe = '15m', indicators = {}, account = {}, custom_rules = [] } = req.body;
+    
+    // Perform market analysis using Gemini AI
+    const { score: sentimentScore, reasoning } = await getMarketSentiment(symbol);
+    
+    let action = 'HOLD';
+    let confidence = 0.70;
+    if (sentimentScore > 0.2) {
+      action = 'BUY';
+      confidence = 0.85;
+    } else if (sentimentScore < -0.2) {
+      action = 'SELL';
+      confidence = 0.82;
+    }
+
+    const price = parseFloat(current_price);
+    const sl = action === 'BUY' ? price * 0.992 : (action === 'SELL' ? price * 1.008 : undefined);
+    const tp = action === 'BUY' ? price * 1.016 : (action === 'SELL' ? price * 0.984 : undefined);
+
+    return res.json({
+      symbol,
+      action,
+      confidence,
+      reasoning: `[FastAPI / Gemini Evaluator] ${reasoning}`,
+      suggested_stop_loss: sl ? parseFloat(sl.toFixed(4)) : undefined,
+      suggested_take_profit: tp ? parseFloat(tp.toFixed(4)) : undefined,
+      suggested_position_size: account.available_cash ? parseFloat((account.available_cash * 0.05).toFixed(2)) : 250.00,
+      market_source: 'IG_MARKETS'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Errore durante la valutazione: ${err.message}` });
+  }
+});
+
 app.post('/api/analyze-market', async (req, res) => {
   const { symbol } = req.body;
   const { score: sentimentScore, reasoning } = await getMarketSentiment(symbol);
