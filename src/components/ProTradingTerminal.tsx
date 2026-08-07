@@ -789,8 +789,8 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
 
       {/* Top Ticker Marquee / Bar */}
       <div className="bg-[#131B2E] border-b border-slate-800 px-4 py-1.5 flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-6 overflow-x-auto no-scrollbar py-0.5">
-          <div className="flex items-center gap-2 text-amber-400 font-bold">
+        <div className="flex items-center gap-6 overflow-x-auto no-scrollbar py-0.5 flex-1 md:flex-initial">
+          <div className="flex items-center gap-2 text-amber-400 font-bold whitespace-nowrap shrink-0">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
             PRO TRADING TERMINAL v4.2
           </div>
@@ -802,48 +802,58 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-4 text-slate-400 shrink-0">
+        <div className="hidden md:flex items-center gap-4 text-slate-400 shrink-0">
           <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-indigo-400" /> {tickerTime} UTC</span>
           <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800 text-[10px] font-bold">LIVE FEED</span>
         </div>
       </div>
 
       {/* Main Terminal Header with Panic, Loop, Paper/Live controls */}
-      <div className="bg-[#0E1526] border-b border-slate-800 px-6 py-3 flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-4 flex-wrap">
+      <div className="bg-[#0E1526] border-b border-slate-800 px-4 py-3 md:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Row 1: Selected Asset Info & Exit Button */}
+        <div className="flex items-center justify-between w-full md:w-auto gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400">
+            <div className="p-2 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 shrink-0">
               <Activity className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                {selectedAsset.symbol} <span className="text-xs font-normal text-slate-400 font-mono">({selectedAsset.name})</span>
+              <h1 className="text-base md:text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                {selectedAsset.symbol} <span className="text-[10px] md:text-xs font-normal text-slate-400 font-mono">({selectedAsset.name})</span>
               </h1>
-              <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+              <div className="flex items-center gap-2 md:gap-3 text-[10px] md:text-xs font-mono text-slate-400">
                 <span>Vol: <strong className="text-slate-200">{selectedAsset.volume}</strong></span>
                 <span>
-                  Stato Bot ({tradingMode.toUpperCase()}): {' '}
-                  <strong className={isBotActiveInCurrentMode ? 'text-emerald-400' : 'text-rose-400'}>
-                    {isBotActiveInCurrentMode ? 'ATTIVO 🟢' : 'INATTIVO 🔴'}
+                  Stato: <strong className={isBotActiveInCurrentMode ? 'text-emerald-400' : 'text-rose-400'}>
+                    {isBotActiveInCurrentMode ? 'ATTIVO 🟢' : 'FERMO 🔴'}
                   </strong>
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="h-8 w-px bg-slate-800 mx-2 hidden lg:block" />
+          {/* Mobile Exit Button */}
+          <button
+            onClick={onClose}
+            className="flex md:hidden items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition shadow-md border border-slate-700 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+            <span>Esci</span>
+          </button>
+        </div>
 
+        {/* Row 2: Action Controls Row */}
+        <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
           {/* Paper / Live Toggle */}
-          <div className="flex items-center bg-[#131B2E] p-1 rounded-xl border border-slate-800">
+          <div className="flex items-center bg-[#131B2E] p-0.5 rounded-xl border border-slate-800 shrink-0">
             <button
               onClick={() => handleSwitchMode('paper')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer font-mono ${tradingMode === 'paper' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer font-mono ${tradingMode === 'paper' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Paper
             </button>
             <button
               onClick={() => handleSwitchMode('live')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer font-mono ${tradingMode === 'live' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer font-mono ${tradingMode === 'live' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Live
             </button>
@@ -852,47 +862,47 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           {/* REAL Loop Start / Stop Control */}
           <button
             onClick={handleToggleBot}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer font-mono ${
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition cursor-pointer font-mono shrink-0 ${
               isBotActiveInCurrentMode
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg animate-pulse'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
             }`}
           >
-            {isBotActiveInCurrentMode ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-            {isBotActiveInCurrentMode ? `Ferma Bot (${tradingMode.toUpperCase()})` : `Avvia Bot (${tradingMode.toUpperCase()})`}
+            {isBotActiveInCurrentMode ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+            <span>{isBotActiveInCurrentMode ? 'Ferma Bot' : 'Avvia Bot'}</span>
           </button>
 
           {/* Panic Button */}
           <button
             onClick={() => setShowPanicModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600/90 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition shadow-lg cursor-pointer font-mono border border-rose-500"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-600/90 hover:bg-rose-700 text-white rounded-xl text-[11px] font-bold transition shadow-lg cursor-pointer font-mono border border-rose-500 shrink-0"
           >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            PANIC BUTTON
+            <AlertTriangle className="w-3 h-3" />
+            <span>PANIC</span>
           </button>
 
           {/* Backup Import / Export Quick Buttons */}
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer font-mono border border-slate-700" title="Ripristina backup JSON">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <label className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold transition cursor-pointer font-mono border border-slate-700" title="Ripristina backup JSON">
               <Upload className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Importa JSON</span>
+              <span className="hidden sm:inline">Importa</span>
               <input type="file" accept=".json" onChange={handleImportBackupJSON} className="hidden" />
             </label>
             <button
               onClick={handleExportBackupJSON}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer font-mono border border-slate-700"
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold transition cursor-pointer font-mono border border-slate-700"
               title="Scarica backup JSON completo"
             >
               <Download className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Esporta JSON</span>
+              <span className="hidden sm:inline">Esporta</span>
             </button>
           </div>
         </div>
 
-        {/* Exit Pro Terminal Button */}
+        {/* Desktop Exit Button */}
         <button
           onClick={onClose}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition shadow-md border border-slate-700 cursor-pointer"
+          className="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition shadow-md border border-slate-700 cursor-pointer shrink-0"
         >
           <X className="w-4 h-4 text-rose-400" />
           Torna alla Dashboard Classica
@@ -1047,8 +1057,8 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-4 p-4 overflow-y-auto bg-[#0B0F17]">
         
         {/* Left Column: Watchlist & Asset Selector */}
-        <div className="lg:col-span-1 bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl">
-          <div className="flex items-center justify-between mb-3">
+        <div className="order-2 lg:order-1 lg:col-span-1 bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl max-h-[350px] lg:max-h-none">
+          <div className="flex items-center justify-between mb-3 shrink-0">
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-indigo-400" /> Watchlist Mercati ({tradingMode.toUpperCase()})
             </span>
@@ -1061,7 +1071,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             </button>
           </div>
 
-          <div className="relative mb-3">
+          <div className="relative mb-3 shrink-0">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -1070,7 +1080,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             />
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[480px]">
+          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[220px] lg:max-h-[480px]">
             {topAssets.map(ast => (
               <div
                 key={ast.symbol}
@@ -1100,7 +1110,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         </div>
 
         {/* Center/Main Column: Active Tab Content */}
-        <div className="lg:col-span-3 flex flex-col gap-4">
+        <div className="order-1 lg:order-2 lg:col-span-3 flex flex-col gap-4">
           
           {/* TAB: POSIZIONI APERTE & MARGINI */}
           {activeTab === 'positions' && (
@@ -1131,84 +1141,173 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
-                        <th className="py-2.5 px-3">Asset</th>
-                        <th className="py-2.5 px-3">Quantità</th>
-                        <th className="py-2.5 px-3">Prezzo Carico</th>
-                        <th className="py-2.5 px-3">Prezzo Attuale</th>
-                        <th className="py-2.5 px-3">Valore Mercato</th>
-                        <th className="py-2.5 px-3">Strategia Rischio</th>
-                        <th className="py-2.5 px-3">P&L Giornaliero</th>
-                        <th className="py-2.5 px-3">P&L Totale</th>
-                        <th className="py-2.5 px-3 text-right">Azione</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {positions.map((pos: any) => {
-                        const qty = parseFloat(pos.qty || '0');
-                        const avgEntry = parseFloat(pos.avg_entry_price || '0');
-                        const currentPrice = parseFloat(pos.current_price || '0');
-                        const marketVal = parseFloat(pos.market_value || '0');
-                        const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
-                        const unrealizedPLPC = parseFloat(pos.unrealized_plpc || '0') * 100;
-                        const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
-                        const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
-                        const isClosing = closingSymbols.includes(pos.symbol);
-                        const currentStrategy = pos.strategy || 'Conservativa';
+                <>
+                  {/* Desktop view: Table */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                          <th className="py-2.5 px-3">Asset</th>
+                          <th className="py-2.5 px-3">Quantità</th>
+                          <th className="py-2.5 px-3">Prezzo Carico</th>
+                          <th className="py-2.5 px-3">Prezzo Attuale</th>
+                          <th className="py-2.5 px-3">Valore Mercato</th>
+                          <th className="py-2.5 px-3">Strategia Rischio</th>
+                          <th className="py-2.5 px-3">P&L Giornaliero</th>
+                          <th className="py-2.5 px-3">P&L Totale</th>
+                          <th className="py-2.5 px-3 text-right">Azione</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {positions.map((pos: any) => {
+                          const qty = parseFloat(pos.qty || '0');
+                          const avgEntry = parseFloat(pos.avg_entry_price || '0');
+                          const currentPrice = parseFloat(pos.current_price || '0');
+                          const marketVal = parseFloat(pos.market_value || '0');
+                          const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+                          const unrealizedPLPC = parseFloat(pos.unrealized_plpc || '0') * 100;
+                          const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
+                          const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
+                          const isClosing = closingSymbols.includes(pos.symbol);
+                          const currentStrategy = pos.strategy || 'Conservativa';
 
-                        return (
-                          <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
-                            <td className="py-3 px-3">
-                              <span className="font-bold text-white text-xs">{pos.symbol}</span>
-                              <span className="block text-[9px] text-slate-500 uppercase">{pos.exchange || 'NASDAQ/NYSE'}</span>
-                            </td>
-                            <td className="py-3 px-3 font-semibold text-slate-200">
-                              {qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}
-                            </td>
-                            <td className="py-3 px-3 text-slate-300">${avgEntry.toFixed(2)}</td>
-                            <td className="py-3 px-3 font-bold text-white">${currentPrice.toFixed(2)}</td>
-                            <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
-                            <td className="py-3 px-3">
+                          return (
+                            <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
+                              <td className="py-3 px-3">
+                                <span className="font-bold text-white text-xs">{pos.symbol}</span>
+                                <span className="block text-[9px] text-slate-500 uppercase">{pos.exchange || 'NASDAQ/NYSE'}</span>
+                              </td>
+                              <td className="py-3 px-3 font-semibold text-slate-200">
+                                {qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}
+                              </td>
+                              <td className="py-3 px-3 text-slate-300">${avgEntry.toFixed(2)}</td>
+                              <td className="py-3 px-3 font-bold text-white">${currentPrice.toFixed(2)}</td>
+                              <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
+                              <td className="py-3 px-3">
+                                <select
+                                  value={currentStrategy}
+                                  onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
+                                  className="bg-[#0E1526] border border-slate-700 text-xs text-indigo-300 rounded px-2 py-1 focus:outline-none"
+                                >
+                                  <option value="Prudente">Prudente</option>
+                                  <option value="Conservativa">Conservativa</option>
+                                  <option value="Aggressiva">Aggressiva</option>
+                                </select>
+                              </td>
+                              <td className={`py-3 px-3 font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)}
+                                <span className="block text-[9px]">({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(2)}%)</span>
+                              </td>
+                              <td className={`py-3 px-3 font-bold ${unrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {unrealizedPL >= 0 ? '+' : ''}${unrealizedPL.toFixed(2)}
+                                <span className="block text-[9px]">({unrealizedPLPC >= 0 ? '+' : ''}{unrealizedPLPC.toFixed(2)}%)</span>
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                <button
+                                  disabled={isClosing}
+                                  onClick={() => handleClosePosition(pos.symbol)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                    isClosing 
+                                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                      : 'bg-rose-600/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/40'
+                                  }`}
+                                >
+                                  {isClosing ? 'Chiusura...' : 'Chiudi'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile view: Cards list */}
+                  <div className="block md:hidden space-y-3">
+                    {positions.map((pos: any) => {
+                      const qty = parseFloat(pos.qty || '0');
+                      const avgEntry = parseFloat(pos.avg_entry_price || '0');
+                      const currentPrice = parseFloat(pos.current_price || '0');
+                      const marketVal = parseFloat(pos.market_value || '0');
+                      const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+                      const unrealizedPLPC = parseFloat(pos.unrealized_plpc || '0') * 100;
+                      const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
+                      const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
+                      const isClosing = closingSymbols.includes(pos.symbol);
+                      const currentStrategy = pos.strategy || 'Conservativa';
+
+                      return (
+                        <div key={pos.symbol} className="bg-[#090D16] border border-slate-800 rounded-xl p-3.5 space-y-3">
+                          {/* Header: Symbol & P&L Totale */}
+                          <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                            <div>
+                              <span className="font-bold text-sm text-white">{pos.symbol}</span>
+                              <span className="text-[9px] text-slate-500 ml-2 font-mono">{pos.exchange || 'NASDAQ'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded ${unrealizedPL >= 0 ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-rose-950/80 text-rose-400 border border-rose-800/50'}`}>
+                                {unrealizedPL >= 0 ? '+' : ''}${unrealizedPL.toFixed(2)} ({unrealizedPLPC >= 0 ? '+' : ''}{unrealizedPLPC.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Details Grid */}
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-3 text-[11px] font-mono">
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">Quantità</span>
+                              <span className="font-semibold text-slate-200">{qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">Valore Mercato</span>
+                              <span className="font-semibold text-amber-300">${marketVal.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">P. Carico</span>
+                              <span className="text-slate-300">${avgEntry.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">P. Attuale</span>
+                              <span className="text-white font-bold">${currentPrice.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">P&L Giornaliero</span>
+                              <span className={`font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)} ({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(1)}%)
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[9px] uppercase">Strategia</span>
                               <select
                                 value={currentStrategy}
                                 onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
-                                className="bg-[#0E1526] border border-slate-700 text-xs text-indigo-300 rounded px-2 py-1 focus:outline-none"
+                                className="bg-[#0E1526] border border-slate-700 text-[10px] text-indigo-300 rounded px-1.5 py-0.5 mt-0.5 focus:outline-none"
                               >
                                 <option value="Prudente">Prudente</option>
                                 <option value="Conservativa">Conservativa</option>
                                 <option value="Aggressiva">Aggressiva</option>
                               </select>
-                            </td>
-                            <td className={`py-3 px-3 font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)}
-                              <span className="block text-[9px]">({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(2)}%)</span>
-                            </td>
-                            <td className={`py-3 px-3 font-bold ${unrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {unrealizedPL >= 0 ? '+' : ''}${unrealizedPL.toFixed(2)}
-                              <span className="block text-[9px]">({unrealizedPLPC >= 0 ? '+' : ''}{unrealizedPLPC.toFixed(2)}%)</span>
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              <button
-                                disabled={isClosing}
-                                onClick={() => handleClosePosition(pos.symbol)}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
-                                  isClosing 
-                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                                    : 'bg-rose-600/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/40'
-                                }`}
-                              >
-                                {isClosing ? 'Chiusura...' : 'Chiudi'}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
+                          </div>
+
+                          {/* Footer Button: Close Position */}
+                          <div className="pt-2 border-t border-slate-800/60 flex justify-end">
+                            <button
+                              disabled={isClosing}
+                              onClick={() => handleClosePosition(pos.symbol)}
+                              className={`w-full py-1.5 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
+                                isClosing 
+                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                  : 'bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/20'
+                              }`}
+                            >
+                              {isClosing ? 'Chiusura posizione in corso...' : 'Chiudi Posizione'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -1761,37 +1860,65 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                     Nessuna operazione chiusa registrata nell'intervallo selezionato.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
-                          <th className="py-2 px-3">Asset</th>
-                          <th className="py-2 px-3">Quantità</th>
-                          <th className="py-2 px-3">Prezzo Ingresso</th>
-                          <th className="py-2 px-3">Prezzo Uscita</th>
-                          <th className="py-2 px-3">PnL Realizzato</th>
-                          <th className="py-2 px-3">Data Chiusura</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 text-xs">
-                        {closedTradesList.map((t, idx) => {
-                          const pnl = parseFloat(t.unrealized_pl || t.realized_pl || '0');
-                          return (
-                            <tr key={idx} className="hover:bg-[#0E1526]">
-                              <td className="py-2 px-3 font-bold text-white">{t.symbol}</td>
-                              <td className="py-2 px-3 text-slate-300">{t.qty}</td>
-                              <td className="py-2 px-3 text-slate-300">${parseFloat(t.avg_entry_price || '0').toFixed(2)}</td>
-                              <td className="py-2 px-3 text-slate-300">${parseFloat(t.current_price || t.close_price || '0').toFixed(2)}</td>
-                              <td className={`py-2 px-3 font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <>
+                    {/* Desktop view: Table */}
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-[#0E1526] text-slate-400 text-[10px] uppercase border-b border-slate-800">
+                            <th className="py-2 px-3">Asset</th>
+                            <th className="py-2 px-3">Quantità</th>
+                            <th className="py-2 px-3">Prezzo Ingresso</th>
+                            <th className="py-2 px-3">Prezzo Uscita</th>
+                            <th className="py-2 px-3">PnL Realizzato</th>
+                            <th className="py-2 px-3">Data Chiusura</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-xs">
+                          {closedTradesList.map((t, idx) => {
+                            const pnl = parseFloat(t.unrealized_pl || t.realized_pl || '0');
+                            return (
+                              <tr key={idx} className="hover:bg-[#0E1526]">
+                                <td className="py-2 px-3 font-bold text-white">{t.symbol}</td>
+                                <td className="py-2 px-3 text-slate-300">{t.qty}</td>
+                                <td className="py-2 px-3 text-slate-300">${parseFloat(t.avg_entry_price || '0').toFixed(2)}</td>
+                                <td className="py-2 px-3 text-slate-300">${parseFloat(t.current_price || t.close_price || '0').toFixed(2)}</td>
+                                <td className={`py-2 px-3 font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                                </td>
+                                <td className="py-2 px-3 text-slate-500 text-[10px]">{t.closed_at || t.timestamp || 'Recente'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile view: Adaptive grid cards */}
+                    <div className="block md:hidden space-y-2">
+                      {closedTradesList.map((t, idx) => {
+                        const pnl = parseFloat(t.unrealized_pl || t.realized_pl || '0');
+                        return (
+                          <div key={idx} className="bg-[#0E1526] border border-slate-800/80 rounded-xl p-3 space-y-2 font-mono text-[11px]">
+                            <div className="flex justify-between items-center border-b border-slate-800/50 pb-1.5">
+                              <span className="font-bold text-white text-xs">{t.symbol}</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${pnl >= 0 ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40' : 'bg-rose-950/80 text-rose-400 border border-rose-800/40'}`}>
                                 {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-                              </td>
-                              <td className="py-2 px-3 text-slate-500 text-[10px]">{t.closed_at || t.timestamp || 'Recente'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-y-1 gap-x-2 text-slate-300">
+                              <div>Quantità: <span className="text-white font-semibold">{t.qty}</span></div>
+                              <div>Entrata: <span className="text-white">${parseFloat(t.avg_entry_price || '0').toFixed(2)}</span></div>
+                              <div>Uscita: <span className="text-white">${parseFloat(t.current_price || t.close_price || '0').toFixed(2)}</span></div>
+                              <div className="text-slate-400 text-[9px] truncate" title={t.closed_at || t.timestamp || 'Recente'}>
+                                Chiuso: {t.closed_at || t.timestamp || 'Recente'}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
