@@ -2073,7 +2073,9 @@ app.post('/api/sheets/sync', async (req, res) => {
       userFeedbackRules: botStatus.userFeedbackRules || []
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    const errMsg = err?.message || err?.toString() || 'Errore interno del server durante la sincronizzazione';
+    console.error('[Google Sheets Sync Error]:', err);
+    res.status(500).json({ success: false, error: errMsg });
   }
 });
 
@@ -2092,7 +2094,9 @@ app.post('/api/sheets/backup-credentials', async (req, res) => {
       res.status(500).json({ success: false, error: 'Impossibile inviare i dati a Google Sheets' });
     }
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    const errMsg = err?.message || err?.toString() || 'Errore interno del server durante l\'esportazione';
+    console.error('[Google Sheets Backup Error]:', err);
+    res.status(500).json({ success: false, error: errMsg });
   }
 });
 
@@ -3406,7 +3410,8 @@ app.get("/api/gemini-signals", async (req, res) => {
   return res.json([]);
 });
 app.get('/api/status', async (req, res) => {
-  const paperConf = getAlpacaConfig('paper');
+  try {
+    const paperConf = getAlpacaConfig('paper');
   const liveConf = getAlpacaConfig('live');
   
   const getAccountData = async (mode: 'paper' | 'live', conf: any) => {
@@ -3547,17 +3552,17 @@ app.get('/api/status', async (req, res) => {
     } else {
       // Se abbiamo dati storici, sovrascriviamo l'ultimo elemento (oggi) con i valori calcolati in tempo reale dai titoli attivi
       const lastIndex = dailyPnLList.length - 1;
-      const actualBalance = botData[mode].balance;
-      const actualUnrealized = positions.reduce((sum: number, posItem: any) => sum + parseFloat(posItem.unrealized_pl || '0'), 0);
-      const actualTotalPnL = parseFloat((actualBalance - baseValue).toFixed(2));
-      const actualRealized = parseFloat((actualTotalPnL - actualUnrealized).toFixed(2));
+      const actualBalance = typeof botData[mode].balance === 'number' ? botData[mode].balance : (botData[mode].balance ? parseFloat(botData[mode].balance) : baseValue);
+      const actualUnrealized = positions.reduce((sum: number, posItem: any) => sum + (parseFloat(posItem.unrealized_pl) || 0), 0);
+      const actualTotalPnL = actualBalance - baseValue;
+      const actualRealized = actualTotalPnL - actualUnrealized;
 
       dailyPnLList[lastIndex] = {
-        date: dailyPnLList[lastIndex].date,
+        date: dailyPnLList[lastIndex]?.date || new Date().toISOString().split('T')[0],
         balance: actualBalance,
-        pnl: actualTotalPnL,
-        realized: parseFloat(actualRealized.toFixed(2)),
-        unrealized: parseFloat(actualUnrealized.toFixed(2))
+        pnl: isNaN(actualTotalPnL) ? 0 : parseFloat(actualTotalPnL.toFixed(2)),
+        realized: isNaN(actualRealized) ? 0 : parseFloat(actualRealized.toFixed(2)),
+        unrealized: isNaN(actualUnrealized) ? 0 : parseFloat(actualUnrealized.toFixed(2))
       };
     }
     
@@ -3604,6 +3609,11 @@ app.get('/api/status', async (req, res) => {
       live: liveData
     }
   });
+  } catch (err: any) {
+    const errorMsg = err?.message || err?.toString() || 'Errore interno del server durante il recupero dello stato';
+    console.error('[Status API Error]:', err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
 });
 
 // Nuovi endpoint per la gestione degli asset con momentum e watchlist suggeriti
