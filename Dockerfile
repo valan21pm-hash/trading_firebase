@@ -1,42 +1,36 @@
-# Stage 1: Build React frontend
-FROM node:20-slim AS frontend-builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci || npm install
-COPY . .
-RUN npm run build
-
-# Stage 2: Python FastAPI Runtime
-FROM python:3.11-slim
-
-# Variabili d'ambiente per evitare il buffering e file .pyc
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8080
+# Stage 1: Build the full-stack Node.js application
+FROM node:20-slim
 
 WORKDIR /app
 
+# Install standard system utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm ci || npm install
 
-# Copia i file generati del frontend React dallo Stage 1
-COPY --from=frontend-builder /app/dist ./dist
-
-# Copia il codice sorgente dell'applicazione Python
+# Copy all application source code
 COPY . .
 
-# Utente non-root per sicurezza
+# Run production build (Vite build + esbuild bundling of server.ts)
+RUN npm run build
+
+# Configure environment variables
+ENV NODE_ENV=production \
+    PORT=8080
+
+# Expose production port
+EXPOSE 8080
+
+# Create a non-root user for security
 RUN adduser --disabled-password --gecos "" appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
 
-EXPOSE 8080
-
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Start the Node.js Express server
+CMD ["sh", "-c", "node dist/server.cjs"]
 
