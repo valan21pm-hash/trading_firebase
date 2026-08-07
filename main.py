@@ -22,21 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/", status_code=status.HTTP_200_OK)
-def root():
-    """
-    Root endpoint for FastAPI service status.
-    """
-    return {
-        "status": "ok",
-        "service": settings.app_name,
-        "version": "1.0.0",
-        "endpoints": {
-            "health": "/health",
-            "evaluate_trade": "/evaluate-trade",
-            "documentation": "/docs"
-        }
-    }
+# Remove @app.get("/") JSON endpoint to allow static/SPA frontend rendering on root path
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 @app.get("/api/status", status_code=status.HTTP_200_OK)
