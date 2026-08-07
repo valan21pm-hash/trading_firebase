@@ -282,7 +282,7 @@ export class GoogleSheetsService {
   public static async syncKeysFromSheet(targetSheetId: string = SHEET_ID): Promise<Record<string, string> | null> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId, ['Chiavi', 'Keys', 'Credentials']);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['API KEYS', 'Chiavi', 'Keys', 'Credentials']);
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: targetSheetId,
         range: `${sheetName}!A:B`,
@@ -320,7 +320,7 @@ export class GoogleSheetsService {
   public static async exportKeysToSheet(keysObj: Record<string, string>, targetSheetId: string = SHEET_ID): Promise<boolean> {
     try {
       const sheets = this.getSheetsClient();
-      const sheetName = await this.getFirstSheetName(targetSheetId, ['Chiavi', 'Keys', 'Credentials']);
+      const sheetName = await this.getFirstSheetName(targetSheetId, ['API KEYS', 'Chiavi', 'Keys', 'Credentials']);
       
       const values = [['Nome Chiave', 'Valore Chiave']];
       for (const [key, value] of Object.entries(keysObj)) {

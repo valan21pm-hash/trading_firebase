@@ -2036,19 +2036,44 @@ app.post('/api/sheets/sync', async (req, res) => {
         return undefined;
       };
 
-      // Update local keys from the Google Sheet
+      // 1. Update LLM configurations in memory and Firestore
       const llmConfigs = LLMProviderService.getInstance().getConfigs();
       for (const [provider, config] of Object.entries(llmConfigs)) {
-        const val = getKey([`API ${provider}`, `${provider} API Key`, `${provider} Key`, provider]);
+        const val = getKey([
+          `API ${provider}`,
+          `${provider} API Key`,
+          `${provider} Key`,
+          provider,
+          `${provider}_api_key`,
+          `api_${provider}`,
+          `${provider}_key`
+        ]);
         if (val) {
           LLMProviderService.getInstance().updateConfig(provider as any, { apiKey: val });
+          
+          if (db) {
+            try {
+              const docRef = db.collection('settings').doc('llm');
+              const doc = await docRef.get();
+              const currentData = doc.exists ? doc.data() : {};
+              currentData[provider] = {
+                ...currentData[provider],
+                apiKey: val
+              };
+              await docRef.set(currentData);
+              console.log(`[Google Sheets Sync] LLM provider ${provider} key saved to Firestore.`);
+            } catch (fsErr: any) {
+              console.error(`[Google Sheets Sync Error] Failed saving ${provider} LLM key to Firestore:`, fsErr.message);
+            }
+          }
         }
       }
 
-      const paperApiKey = getKey(['Alpaca Paper API Key', 'ALPACA_PAPER_API_KEY', 'Paper API Key']);
-      const paperSecretKey = getKey(['Alpaca Paper Secret Key', 'ALPACA_PAPER_SECRET_KEY', 'Paper Secret Key']);
-      const liveApiKey = getKey(['Alpaca Live API Key', 'ALPACA_LIVE_API_KEY', 'Live API Key']);
-      const liveSecretKey = getKey(['Alpaca Live Secret Key', 'ALPACA_LIVE_SECRET_KEY', 'Live Secret Key']);
+      // 2. Extract Alpaca keys
+      const paperApiKey = getKey(['Alpaca Paper API Key', 'ALPACA_PAPER_API_KEY', 'Paper API Key', 'Alpaca Paper Key', 'ALPACA_PAPER_KEY', 'paper_key', 'paper_api_key', 'paperkey']);
+      const paperSecretKey = getKey(['Alpaca Paper Secret Key', 'ALPACA_PAPER_SECRET_KEY', 'Paper Secret Key', 'Alpaca Paper Secret', 'ALPACA_PAPER_SECRET', 'paper_secret', 'paper_secret_key', 'papersecretkey']);
+      const liveApiKey = getKey(['Alpaca Live API Key', 'ALPACA_LIVE_API_KEY', 'Live API Key', 'Alpaca Live Key', 'ALPACA_LIVE_KEY', 'Alpaca Real Key', 'Alpaca Real API Key', 'live_key', 'live_api_key', 'livekey']);
+      const liveSecretKey = getKey(['Alpaca Live Secret Key', 'ALPACA_LIVE_SECRET_KEY', 'Live Secret Key', 'Alpaca Live Secret', 'ALPACA_LIVE_SECRET', 'Alpaca Real Secret', 'Alpaca Real Secret Key', 'live_secret', 'live_secret_key', 'livesecretkey']);
 
       if (paperApiKey) resolvedCredentials.paper.apiKey = paperApiKey;
       if (paperSecretKey) resolvedCredentials.paper.secretKey = paperSecretKey;
@@ -2057,6 +2082,55 @@ app.post('/api/sheets/sync', async (req, res) => {
 
       if (resolvedCredentials.paper.apiKey && resolvedCredentials.paper.secretKey) resolvedCredentials.paper.isConfigured = true;
       if (resolvedCredentials.live.apiKey && resolvedCredentials.live.secretKey) resolvedCredentials.live.isConfigured = true;
+
+      // 3. Update local fallback credentials so they are returned in /api/trading/credentials
+      if (!localCredentialsFallback['alpaca']) localCredentialsFallback['alpaca'] = {};
+      if (!localCredentialsFallback['alpaca']['paper']) localCredentialsFallback['alpaca']['paper'] = {};
+      if (!localCredentialsFallback['alpaca']['real']) localCredentialsFallback['alpaca']['real'] = {};
+      if (!localCredentialsFallback['alpaca']['live']) localCredentialsFallback['alpaca']['live'] = {};
+
+      if (paperApiKey) localCredentialsFallback['alpaca']['paper'].apiKey = paperApiKey;
+      if (paperSecretKey) localCredentialsFallback['alpaca']['paper'].secretKey = paperSecretKey;
+      if (liveApiKey) {
+        localCredentialsFallback['alpaca']['real'].apiKey = liveApiKey;
+        localCredentialsFallback['alpaca']['live'].apiKey = liveApiKey;
+      }
+      if (liveSecretKey) {
+        localCredentialsFallback['alpaca']['real'].secretKey = liveSecretKey;
+        localCredentialsFallback['alpaca']['live'].secretKey = liveSecretKey;
+      }
+
+      saveLocalCredentialsFallback(localCredentialsFallback);
+
+      // 4. Save Alpaca credentials to Firestore
+      if (db) {
+        try {
+          const docRef = db.collection('broker_credentials').doc('config');
+          const doc = await docRef.get();
+          let currentData = doc.exists ? doc.data() : {};
+          
+          if (!currentData['alpaca']) currentData['alpaca'] = {};
+          if (!currentData['alpaca']['paper']) currentData['alpaca']['paper'] = {};
+          if (!currentData['alpaca']['real']) currentData['alpaca']['real'] = {};
+          if (!currentData['alpaca']['live']) currentData['alpaca']['live'] = {};
+
+          if (paperApiKey) currentData['alpaca']['paper'].apiKey = paperApiKey;
+          if (paperSecretKey) currentData['alpaca']['paper'].secretKey = paperSecretKey;
+          if (liveApiKey) {
+            currentData['alpaca']['real'].apiKey = liveApiKey;
+            currentData['alpaca']['live'].apiKey = liveApiKey;
+          }
+          if (liveSecretKey) {
+            currentData['alpaca']['real'].secretKey = liveSecretKey;
+            currentData['alpaca']['live'].secretKey = liveSecretKey;
+          }
+
+          await docRef.set(currentData);
+          console.log('[Google Sheets Sync] Alpaca keys saved to Firestore.');
+        } catch (fsErr: any) {
+          console.error('[Google Sheets Sync Error] Failed saving Alpaca keys to Firestore:', fsErr.message);
+        }
+      }
     }
 
     if (db) {
