@@ -78,47 +78,58 @@ export function LLMSettings() {
     setSheetsSyncMsg(null);
     setBackupError(null);
     try {
+      // Prova prima la sincronizzazione diretta lato server (usando le credenziali OAuth attive sul server)
       let currentToken = token;
-      if (needsAuth || !currentToken) {
-        setIsLoggingIn(true);
+      const makeRequest = async (tokenVal: string | null) => {
+        const headers: Record<string, string> = {};
+        if (tokenVal) {
+          headers['Authorization'] = `Bearer ${tokenVal}`;
+        }
+        const res = await fetch('/api/sheets/backup-credentials', { 
+          method: 'POST',
+          headers
+        });
+        let data: any = {};
         try {
-          const result = await googleSignIn();
-          if (result) {
-            currentToken = result.accessToken;
-            setToken(currentToken);
-            setNeedsAuth(false);
+          data = await res.json();
+        } catch (jsonErr) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
+        }
+        return { ok: res.ok, status: res.status, data };
+      };
+
+      let result = await makeRequest(currentToken);
+
+      // Se fallisce con permessi o non autorizzato, e non abbiamo provato il login client, prova il login client come fallback
+      if (!result.ok && (result.status === 401 || result.status === 403 || (result.data && (result.data.error || '').includes('permission')))) {
+        if (!currentToken) {
+          setIsLoggingIn(true);
+          try {
+            const loginRes = await googleSignIn();
+            if (loginRes) {
+              currentToken = loginRes.accessToken;
+              setToken(currentToken);
+              setNeedsAuth(false);
+              // Riprova con il nuovo token client
+              result = await makeRequest(currentToken);
+            }
+          } catch (popupErr: any) {
+            console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with fallback:', popupErr.message);
+          } finally {
+            setIsLoggingIn(false);
           }
-        } catch (popupErr: any) {
-          console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with server-side export:', popupErr.message);
-        } finally {
-          setIsLoggingIn(false);
         }
       }
 
-      const headers: Record<string, string> = {};
-      if (currentToken) {
-        headers['Authorization'] = `Bearer ${currentToken}`;
-      }
-
-      const res = await fetch('/api/sheets/backup-credentials', { 
-        method: 'POST',
-        headers
-      });
-      let data: any = {};
-      try {
-        data = await res.json();
-      } catch (jsonErr) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
-      }
-      if (res.ok && data.success) {
-        setSheetsSyncMsg(data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
+      if (result.ok && result.data.success) {
+        setSheetsSyncMsg(result.data.message || 'Chiavi API esportate con successo su Google Sheets nella scheda API KEYS!');
       } else {
-        throw new Error(data.error || data.message || 'Errore durante l\'esportazione server');
+        throw new Error(result.data.error || result.data.message || 'Errore durante l\'esportazione server. Assicurati che l\'API di Google Sheets sia abilitata e che il server sia autorizzato.');
       }
     } catch (err: any) {
       if (err.message && err.message.includes('unauthorized-domain')) {
-        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è tra i domini autorizzati in Firebase Console. Aggiungi '${window.location.hostname}' in Firebase Console > Authentication > Settings > Authorized Domains.`);
+        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è tra i domini autorizzati in Firebase Console.`);
       } else {
         setBackupError('Errore esportazione Sheets: ' + (err.message || 'Impossibile inviare dati'));
       }
@@ -132,48 +143,59 @@ export function LLMSettings() {
     setSheetsSyncMsg(null);
     setBackupError(null);
     try {
+      // Prova prima la sincronizzazione diretta lato server (usando le credenziali OAuth attive sul server)
       let currentToken = token;
-      if (needsAuth || !currentToken) {
-        setIsLoggingIn(true);
+      const makeRequest = async (tokenVal: string | null) => {
+        const headers: Record<string, string> = {};
+        if (tokenVal) {
+          headers['Authorization'] = `Bearer ${tokenVal}`;
+        }
+        const res = await fetch('/api/sheets/sync', { 
+          method: 'POST',
+          headers
+        });
+        let data: any = {};
         try {
-          const result = await googleSignIn();
-          if (result) {
-            currentToken = result.accessToken;
-            setToken(currentToken);
-            setNeedsAuth(false);
+          data = await res.json();
+        } catch (jsonErr) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
+        }
+        return { ok: res.ok, status: res.status, data };
+      };
+
+      let result = await makeRequest(currentToken);
+
+      // Se fallisce con permessi o non autorizzato, e non abbiamo provato il login client, prova il login client come fallback
+      if (!result.ok && (result.status === 401 || result.status === 403 || (result.data && (result.data.error || '').includes('permission')))) {
+        if (!currentToken) {
+          setIsLoggingIn(true);
+          try {
+            const loginRes = await googleSignIn();
+            if (loginRes) {
+              currentToken = loginRes.accessToken;
+              setToken(currentToken);
+              setNeedsAuth(false);
+              // Riprova con il nuovo token client
+              result = await makeRequest(currentToken);
+            }
+          } catch (popupErr: any) {
+            console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with fallback:', popupErr.message);
+          } finally {
+            setIsLoggingIn(false);
           }
-        } catch (popupErr: any) {
-          console.warn('[Sheets Auth] Client login popup skipped/failed, proceeding with server-side sync:', popupErr.message);
-        } finally {
-          setIsLoggingIn(false);
         }
       }
 
-      const headers: Record<string, string> = {};
-      if (currentToken) {
-        headers['Authorization'] = `Bearer ${currentToken}`;
-      }
-
-      const res = await fetch('/api/sheets/sync', { 
-        method: 'POST',
-        headers
-      });
-      let data: any = {};
-      try {
-        data = await res.json();
-      } catch (jsonErr) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Errore server (${res.status}): ${text.substring(0, 100) || 'Risposta non valida'}`);
-      }
-      if (res.ok && data.success) {
-        setSheetsSyncMsg(data.message || 'Sincronizzazione da Google Sheets completata con successo!');
+      if (result.ok && result.data.success) {
+        setSheetsSyncMsg(result.data.message || 'Sincronizzazione da Google Sheets completata con successo!');
         await loadAllCredentials();
       } else {
-        throw new Error(data.error || data.message || 'Errore sincronizzazione server');
+        throw new Error(result.data.error || result.data.message || 'Errore sincronizzazione server. Assicurati che l\'API di Google Sheets sia abilitata e che il server sia autorizzato.');
       }
     } catch (err: any) {
       if (err.message && err.message.includes('unauthorized-domain')) {
-        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è registrato tra i domini autorizzati. Registra '${window.location.hostname}' nella console Firebase in Authentication > Settings > Authorized Domains.`);
+        setBackupError(`Errore Firebase Auth (auth/unauthorized-domain): Il dominio attuale (${window.location.hostname}) non è registrato tra i domini autorizzati.`);
       } else {
         setBackupError('Errore sincronizzazione Sheets: ' + (err.message || 'Impossibile completare la sincronizzazione'));
       }
