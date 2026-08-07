@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -1445,6 +1445,7 @@ export default function App() {
   const [isMotivationCollapsed, setIsMotivationCollapsed] = useState(false);
   const [isFeedbackCollapsed, setIsFeedbackCollapsed] = useState(false);
   const [isLogicLogsCollapsed, setIsLogicLogsCollapsed] = useState(false);
+  const [isApiSettingsCollapsed, setIsApiSettingsCollapsed] = useState(false);
 
   // Stato per la Sezione Operazioni Chiuse con Filtro Data
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
@@ -2037,6 +2038,19 @@ export default function App() {
               Versione Nuova
             </button>
 
+            {/* Bottone Gestione API & Google Sheets */}
+            <button
+              onClick={() => {
+                setIsApiSettingsCollapsed(false);
+                const el = document.getElementById('api-settings-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 text-slate-100 hover:bg-slate-900 rounded-xl text-xs font-bold shadow-md active:scale-95 transition-all cursor-pointer border-none"
+            >
+              <Key className="w-3.5 h-3.5 text-emerald-400" />
+              API & Google Sheets
+            </button>
+
             <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
              <button
                onClick={() => setSelectedTab('paper')}
@@ -2111,6 +2125,31 @@ export default function App() {
               setConfirmCloseSymbol={setConfirmCloseSymbol}
               fetchStatus={fetchStatus}
             />
+          )}
+        </div>
+
+        {/* SEZIONE CONFIGURAZIONE API, LLM E GOOGLE SHEETS / DRIVE */}
+        <div id="api-settings-section" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
+            <div 
+              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1" 
+              onClick={() => setIsApiSettingsCollapsed(!isApiSettingsCollapsed)}
+            >
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Key className="w-5 h-5 text-indigo-600" />
+                <span>Configurazione Chiavi API, Fornitori LLM & Integrazione Google Sheets / Drive</span>
+                {isApiSettingsCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Configura le tue chiavi API (Gemini, Alpaca, IG Markets, Anthropic, DeepSeek), esporta e sincronizza in tempo reale i log e le regole di trading con i fogli Google Sheets e Google Drive.
+              </p>
+            </div>
+          </div>
+
+          {!isApiSettingsCollapsed && (
+            <div className="pt-2">
+              <LLMSettings />
+            </div>
           )}
         </div>
 
