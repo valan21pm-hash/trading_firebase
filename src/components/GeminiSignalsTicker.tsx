@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ShoppingCart, Plus } from 'lucide-react';
 
 interface GeminiSignal {
   asset: string;
@@ -8,7 +9,11 @@ interface GeminiSignal {
   reasoning: string;
 }
 
-export const GeminiSignalsTicker: React.FC = () => {
+interface GeminiSignalsTickerProps {
+  onOpenForceBuy?: (symbol: string) => void;
+}
+
+export const GeminiSignalsTicker: React.FC<GeminiSignalsTickerProps> = ({ onOpenForceBuy }) => {
   const [signals, setSignals] = useState<GeminiSignal[]>([]);
 
   useEffect(() => {
@@ -30,7 +35,7 @@ export const GeminiSignalsTicker: React.FC = () => {
     };
     
     fetchSignals();
-    const interval = setInterval(fetchSignals, 60000); // Ogni 15 sec
+    const interval = setInterval(fetchSignals, 15000); // Ogni 15 sec
 
     return () => clearInterval(interval);
   }, []);
@@ -38,23 +43,35 @@ export const GeminiSignalsTicker: React.FC = () => {
   if (signals.length === 0) return null;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 mt-4 overflow-hidden">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Gemini AI Live Signals</span>
-        <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 my-5 overflow-hidden shadow-xl">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Analisi Sentiment & Segnali Gemini AI</span>
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+        </div>
+        <span className="text-[11px] text-slate-400 font-mono">Aggiornato in tempo reale</span>
       </div>
-      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700">
         {signals.map((sig) => (
-          <div key={sig.asset} className="flex-shrink-0 bg-slate-800/50 p-2 rounded-md border border-slate-700 min-w-[200px]">
-            <div className="flex justify-between items-center mb-1">
-              <span className="font-bold text-white text-sm">{sig.asset}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                sig.action === 'BUY' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
-                sig.action === 'SELL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                'bg-slate-500/20 text-slate-400 border border-slate-500/30'
-              }`}>{sig.action} ({(sig.confidence ?? 0).toFixed(0)}%)</span>
+          <div key={sig.asset} className="flex-shrink-0 bg-slate-950/80 p-3 rounded-xl border border-slate-800 min-w-[220px] flex flex-col justify-between gap-2 shadow-inner">
+            <div className="flex justify-between items-center">
+              <span className="font-bold text-white text-base font-mono">{sig.asset}</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                sig.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' :
+                sig.action === 'SELL' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' :
+                'bg-slate-700/40 text-slate-300 border border-slate-600/40'
+              }`}>{sig.action} ({sig.score >= 0 ? `+${sig.score.toFixed(2)}` : sig.score.toFixed(2)})</span>
             </div>
-            <p className="text-xs text-slate-400 truncate" title={sig.reasoning}>{sig.reasoning}</p>
+            <p className="text-xs text-slate-300 line-clamp-2" title={sig.reasoning}>{sig.reasoning}</p>
+            {onOpenForceBuy && (
+              <button
+                onClick={() => onOpenForceBuy(sig.asset)}
+                className="w-full mt-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Forza Acquisto {sig.asset}</span>
+              </button>
+            )}
           </div>
         ))}
       </div>

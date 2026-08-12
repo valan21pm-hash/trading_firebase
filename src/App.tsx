@@ -746,7 +746,8 @@ function AccountPanel({
   closingSymbols,
   confirmCloseSymbol,
   setConfirmCloseSymbol,
-  fetchStatus
+  fetchStatus,
+  onOpenForceBuy
 }: { 
   status: BotStatus | null;
   account: AccountData; 
@@ -759,6 +760,7 @@ function AccountPanel({
   confirmCloseSymbol: { symbol: string; type: 'paper' | 'live' } | null;
   setConfirmCloseSymbol: (state: { symbol: string; type: 'paper' | 'live' } | null) => void;
   fetchStatus: () => Promise<void>;
+  onOpenForceBuy?: (symbol?: string) => void;
 }) {
   if (!account) return null;
 
@@ -1149,7 +1151,17 @@ function AccountPanel({
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
-            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Posizioni Aperte</h3>
+            <div className="flex items-center justify-between mb-2 border-b pb-1">
+              <h3 className="text-sm font-medium text-gray-900">Posizioni Aperte</h3>
+              <button
+                onClick={() => onOpenForceBuy && onOpenForceBuy()}
+                className="px-2.5 py-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition shadow-sm flex items-center gap-1 cursor-pointer"
+                title="Forza l'acquisto di quote a mercato su Alpaca"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Forza Acquisto</span>
+              </button>
+            </div>
             <div className="space-y-2">
               {account.positions.map((pos, i) => {
                 const qtyNum = parseFloat(pos.qty);
@@ -1160,9 +1172,10 @@ function AccountPanel({
                   <div key={i} className="flex flex-col bg-slate-50 p-3 rounded-lg border border-slate-100 gap-2.5">
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center text-sm gap-2 sm:gap-4">
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                        <div>
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-gray-900 text-base">{pos.symbol}</span>
-                          <span className="text-gray-500 text-xs block sm:inline sm:ml-2">({formattedQty} quote)</span>
+                          <SentimentBadge symbol={pos.symbol} signals={status?.geminiSignals} showReasoning={true} />
+                          <span className="text-gray-500 text-xs block sm:inline">({formattedQty} quote)</span>
                         </div>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
                           <div>
@@ -1179,7 +1192,7 @@ function AccountPanel({
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 self-end sm:self-auto">
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
                         <div className={`font-semibold flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                           <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
                           {pos.unrealized_plpc !== undefined && (
@@ -1189,8 +1202,17 @@ function AccountPanel({
                           )}
                         </div>
 
+                        <button
+                          onClick={() => onOpenForceBuy && onOpenForceBuy(pos.symbol)}
+                          className="px-2 py-1 text-xs font-bold rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-300 transition-colors cursor-pointer flex items-center gap-1"
+                          title="Forza l'acquisto di ulteriori quote"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Acquista</span>
+                        </button>
+
                         {confirmCloseSymbol?.symbol === pos.symbol && confirmCloseSymbol?.type === type ? (
-                          <div className="flex items-center gap-1.5 ml-2 bg-red-50 p-1 rounded-md border border-red-200">
+                          <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-md border border-red-200">
                             <button
                               onClick={() => onClosePosition(pos.symbol, type)}
                               disabled={closingSymbols.includes(pos.symbol)}
@@ -1211,7 +1233,7 @@ function AccountPanel({
                           <button
                             onClick={() => setConfirmCloseSymbol({ symbol: pos.symbol, type })}
                             disabled={closingSymbols.includes(pos.symbol)}
-                            className="ml-2 p-1 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                            className="p-1 px-2 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
                             title="Chiudi Posizione"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -2121,6 +2143,9 @@ export default function App() {
           </div>
         )}
 
+        {/* Live Sentiment & AI Signals Ticker */}
+        <GeminiSignalsTicker onOpenForceBuy={handleOpenForceBuy} />
+
         {/* Selected Panel */}
         <div>
           {selectedTab === 'paper' && status?.paper && (
@@ -2136,6 +2161,7 @@ export default function App() {
               confirmCloseSymbol={confirmCloseSymbol}
               setConfirmCloseSymbol={setConfirmCloseSymbol}
               fetchStatus={fetchStatus}
+              onOpenForceBuy={handleOpenForceBuy}
             />
           )}
           {selectedTab === 'live' && status?.live && (
@@ -2151,6 +2177,7 @@ export default function App() {
               confirmCloseSymbol={confirmCloseSymbol}
               setConfirmCloseSymbol={setConfirmCloseSymbol}
               fetchStatus={fetchStatus}
+              onOpenForceBuy={handleOpenForceBuy}
             />
           )}
         </div>
