@@ -46,6 +46,15 @@ export interface AccountData {
   logs: string[];
 }
 
+export interface GeminiSignal {
+  asset: string;
+  score: number;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  reasoning: string;
+  timestamp?: string;
+}
+
 export interface BotStatus {
   active: boolean; // For legacy compatibility
   paperActive: boolean;
@@ -53,6 +62,7 @@ export interface BotStatus {
   lastCheck: string | null;
   userFeedbackRules?: string[];
   monitoredSymbols?: string[];
+  geminiSignals?: GeminiSignal[];
   latestDailyReport?: string;
   latestDailyDebrief?: {
     analysis: string;

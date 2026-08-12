@@ -1,15 +1,17 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence } from 'motion/react';
-import type { BotStateResponse, BotStatus, AccountData } from './types';
+import type { BotStateResponse, BotStatus, AccountData, GeminiSignal } from './types';
 import { getAccessToken } from './auth';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 import { LLMSettings } from './components/LLMSettings';
 import { ProTradingTerminal } from './components/ProTradingTerminal';
+import { SentimentBadge } from './components/SentimentBadge';
+import { ForceBuyModal } from './components/ForceBuyModal';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -807,7 +809,7 @@ function AccountPanel({
     if (status) {
       setMaxPos(status.maxConcurrentPositions ?? 10);
       setTf(status.timeframe ?? 15);
-      setRisk(status.riskPercentage ?? 10);
+      setRisk(status.riskPercentage ?? 95);
     }
   }, [status]);
 
@@ -929,21 +931,21 @@ function AccountPanel({
   return (
     <div className={`flex-1 border rounded-xl overflow-hidden ${type === 'live' ? 'border-emerald-200' : 'border-indigo-200'} bg-white shadow-sm`}>
       <div 
-        className={`p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center cursor-pointer select-none`}
+        className={`p-3 sm:p-4 border-b ${type === 'live' ? 'bg-emerald-50 border-emerald-100' : 'bg-indigo-50 border-indigo-100'} flex flex-col sm:flex-row gap-3 sm:gap-4 justify-between items-start sm:items-center cursor-pointer select-none`}
         onClick={() => setIsAccountCollapsed(!isAccountCollapsed)}
       >
-        <div className="flex items-center gap-3">
-            <h2 className={`font-semibold ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <h2 className={`font-semibold text-sm sm:text-base ${type === 'live' ? 'text-emerald-800' : 'text-indigo-800'} flex items-center gap-2`}>
               {type === 'live' ? <TrendingUp className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
               {title}
               {isAccountCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4" />}
             </h2>
-            <span className={`px-2 py-1 text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+            <span className={`px-2 py-0.5 sm:py-1 text-[11px] sm:text-xs font-bold rounded-md ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
               {isActive ? 'ATTIVO' : 'FERMO'}
             </span>
         </div>
-        <div className="flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
-          <div className="text-xs text-slate-600 hidden md:flex items-center gap-2">
+        <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2 sm:gap-4" onClick={(e) => e.stopPropagation()}>
+          <div className="text-xs text-slate-600 flex items-center gap-1.5 sm:gap-2">
             <span>Iniziale: <strong className="text-slate-900">${initialCapital.toFixed(2)}</strong></span>
             <span className={`px-1.5 py-0.5 rounded font-bold ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
               {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
@@ -951,40 +953,40 @@ function AccountPanel({
           </div>
           <button
               onClick={() => onToggle(type)}
-              className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+              className={`flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg font-medium text-xs sm:text-sm transition-all ${
               isActive
                   ? 'bg-red-50 text-red-700 hover:bg-red-100'
                   : type === 'live' ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
               }`}
           >
               {isActive ? (
-              <><Square className="w-4 h-4 fill-current" /> Ferma Bot {type === 'live' ? 'Live' : 'Paper'}</>
+              <><Square className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" /> Ferma Bot {type === 'live' ? 'Live' : 'Paper'}</>
               ) : (
-              <><Play className="w-4 h-4 fill-current" /> Avvia Bot {type === 'live' ? 'Live' : 'Paper'}</>
+              <><Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" /> Avvia Bot {type === 'live' ? 'Live' : 'Paper'}</>
               )}
           </button>
         </div>
       </div>
 
-      <div className={`p-4 space-y-6 ${isAccountCollapsed ? 'hidden' : ''}`}>
+      <div className={`p-3 sm:p-4 space-y-4 sm:space-y-6 ${isAccountCollapsed ? 'hidden' : ''}`}>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-            <div className="text-sm text-gray-500">Saldo Equity & Performance</div>
-            <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-xs sm:text-sm text-gray-500">Saldo Equity & Performance</div>
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <div className="text-xs text-gray-500">Iniziale: <span className="font-semibold text-gray-800">${initialCapital.toFixed(2)}</span></div>
               <div className={`text-xs font-bold px-2 py-1 rounded-md ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}% ({(pnlDiff >= 0 ? '+' : '') + '$' + pnlDiff.toFixed(2)})
               </div>
-              <div className="text-2xl font-bold text-gray-900">${currentBalance.toFixed(2)}</div>
+              <div className="text-xl sm:text-2xl font-bold text-gray-900">${currentBalance.toFixed(2)}</div>
             </div>
           </div>
 
-        <div className="flex justify-between items-start text-sm">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs sm:text-sm gap-1 sm:gap-2">
           <div className="text-gray-500 font-medium">Broker</div>
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col sm:items-end">
             <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
               {account.modeLabel}
             </div>
-            <div className="flex gap-2 justify-end mt-1">
+            <div className="flex gap-2 justify-start sm:justify-end mt-1 flex-wrap">
               <button
                 onClick={() => {
                   setShowLlmSettings(!showLlmSettings);
@@ -1042,16 +1044,16 @@ function AccountPanel({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Rischio per Operazione (%)</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Target Allocazione Capitale (%)</label>
                 <input
                   type="number"
-                  min="1"
+                  min="10"
                   max="100"
                   value={risk}
                   onChange={(e) => setRisk(Number(e.target.value))}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
                 />
-                <span className="text-[9px] text-slate-500 mt-0.5 block">Quota allocabile dell'equity per singolo trade.</span>
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Quota totale dell'equity distribuita sul mercato (fino al 95%).</span>
               </div>
             </div>
 
@@ -1096,46 +1098,46 @@ function AccountPanel({
           const dailyTotalPnL = dailyRealized + dailyUnrealized;
 
           return (
-            <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 mt-2 space-y-2">
+            <div className="bg-gray-50/50 p-2.5 sm:p-3 rounded-xl border border-gray-100 mt-2 space-y-2">
               {/* Riga 1: Totale Cumulativo (Storico) */}
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center">
+                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
+                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {totalRealized >= 0 ? '+' : ''}{totalRealized.toFixed(2)}$
                   </div>
                 </div>
-                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
+                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {totalUnrealized >= 0 ? '+' : ''}{totalUnrealized.toFixed(2)}$
                   </div>
                 </div>
-                <div className="bg-slate-50/80 p-2 rounded-lg border border-slate-100">
-                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
+                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}$
                   </div>
                 </div>
               </div>
 
               {/* Riga 2: Giornaliero (Oggi fino a questo momento) */}
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Realizzato</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center">
+                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL G. Realizzato</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {dailyRealized >= 0 ? '+' : ''}{dailyRealized.toFixed(2)}$
                   </div>
                 </div>
-                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Giornaliero Non Realizzato</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL G. Non Realizzato</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {dailyUnrealized >= 0 ? '+' : ''}{dailyUnrealized.toFixed(2)}$
                   </div>
                 </div>
-                <div className="bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale Netto Giornaliero</div>
-                  <div className={`text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
+                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale G. Netto</div>
+                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {dailyTotalPnL >= 0 ? '+' : ''}{dailyTotalPnL.toFixed(2)}$
                   </div>
                 </div>
@@ -1409,6 +1411,13 @@ export default function App() {
   const [showPanicConfirm, setShowPanicConfirm] = useState(false);
   const [panicLoading, setPanicLoading] = useState(false);
   const [showProTerminal, setShowProTerminal] = useState(false);
+  const [forceBuyModalOpen, setForceBuyModalOpen] = useState(false);
+  const [forceBuySymbol, setForceBuySymbol] = useState('');
+
+  const handleOpenForceBuy = (sym?: string) => {
+    setForceBuySymbol(sym || '');
+    setForceBuyModalOpen(true);
+  };
 
   // Valutazioni su periodi superiori al giorno con scelta degli intervalli di tempo
   const [rangeStartDate, setRangeStartDate] = useState(() => {
@@ -1769,8 +1778,12 @@ export default function App() {
           console.warn('Expected JSON response from /api/operations, received alternative content type.');
         }
       }
-    } catch (err) {
-      console.error('Error fetching operations:', err);
+    } catch (err: any) {
+      if (err?.name === 'TypeError' && err?.message?.includes('fetch')) {
+        console.warn('[Network Notice] Connessione al server in corso, prossimo ripristino in automatico...');
+      } else {
+        console.error('Error fetching operations:', err);
+      }
     } finally {
       if (!silent) setOperationsLoading(false);
     }
@@ -1946,8 +1959,12 @@ export default function App() {
       }
       // Silently fetch operations data to keep lists updated in real-time
       fetchOperations(true);
-    } catch (error) {
-      console.error('Error fetching bot status:', error);
+    } catch (error: any) {
+      if (error?.name === 'TypeError' && error?.message?.includes('fetch')) {
+        console.warn('[Network Notice] Aggiornamento stato bot temporaneamente in attesa del server...');
+      } else {
+        console.error('Error fetching bot status:', error);
+      }
     } finally {
       setLoading(false);
     }
@@ -2005,25 +2022,25 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 p-4 sm:p-8 font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gray-50 text-gray-900 p-3 sm:p-8 font-sans">
+      <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex-1">
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
-              <Activity className="w-6 h-6 text-blue-600" />
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
+              <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
               Pannello di Controllo Trading
             </h1>
-            <p className="text-sm text-gray-500 mt-1">Gestisci separatamente i conti Simulazione (Paper) e Reale (Live)</p>
+            <p className="text-xs sm:text-sm text-gray-500 mt-1">Gestisci separatamente i conti Simulazione (Paper) e Reale (Live)</p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
 
             {/* Bottone di Panico / Panic Button */}
             <button
               onClick={() => setShowPanicConfirm(true)}
-              className="flex items-center gap-2 px-3.5 py-2 bg-red-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer border-none"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-red-600 text-white rounded-xl text-[11px] sm:text-xs font-bold shadow-md hover:bg-red-700 active:scale-95 transition-all cursor-pointer border-none flex-1 sm:flex-none"
             >
               <Flame className="w-3.5 h-3.5 animate-pulse" />
               PANIC BUTTON
@@ -2032,10 +2049,20 @@ export default function App() {
             {/* Versione Nuova / Pro Terminal Button */}
             <button
               onClick={() => setShowProTerminal(true)}
-              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl text-xs font-bold shadow-md hover:from-indigo-700 hover:to-violet-700 active:scale-95 transition-all cursor-pointer border-none"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl text-[11px] sm:text-xs font-bold shadow-md hover:from-indigo-700 hover:to-violet-700 active:scale-95 transition-all cursor-pointer border-none flex-1 sm:flex-none"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
               Versione Nuova
+            </button>
+
+            {/* Bottone Forza Acquisto Manuale */}
+            <button
+              onClick={() => handleOpenForceBuy()}
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-[11px] sm:text-xs font-bold shadow-md hover:bg-emerald-500 active:scale-95 transition-all cursor-pointer border-none flex-1 sm:flex-none"
+              title="Forza l'acquisto di quote su uno strumento"
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              Forza Acquisto
             </button>
 
             {/* Bottone Gestione API & Google Sheets */}
@@ -2045,16 +2072,16 @@ export default function App() {
                 const el = document.getElementById('api-settings-section');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 text-slate-100 hover:bg-slate-900 rounded-xl text-xs font-bold shadow-md active:scale-95 transition-all cursor-pointer border-none"
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-slate-800 text-slate-100 hover:bg-slate-900 rounded-xl text-[11px] sm:text-xs font-bold shadow-md active:scale-95 transition-all cursor-pointer border-none w-full sm:w-auto"
             >
               <Key className="w-3.5 h-3.5 text-emerald-400" />
               API & Google Sheets
             </button>
 
-            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+            <div className="flex gap-1.5 sm:gap-2 bg-gray-100 p-1 rounded-xl w-full sm:w-auto">
              <button
                onClick={() => setSelectedTab('paper')}
-               className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
+               className={`flex-1 sm:flex-initial px-3 sm:px-6 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all text-center ${
                  selectedTab === 'paper' 
                    ? 'bg-white text-indigo-700 shadow-sm' 
                    : 'text-gray-500 hover:text-gray-700'
@@ -2064,7 +2091,7 @@ export default function App() {
              </button>
              <button
                onClick={() => setSelectedTab('live')}
-               className={`px-6 py-2 text-sm font-medium rounded-lg transition-all ${
+               className={`flex-1 sm:flex-initial px-3 sm:px-6 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all text-center ${
                  selectedTab === 'live' 
                    ? 'bg-white text-emerald-700 shadow-sm' 
                    : 'text-gray-500 hover:text-gray-700'
@@ -2199,15 +2226,17 @@ export default function App() {
                 </h3>
                 {operationsData.positions && operationsData.positions.length > 0 ? (
                   <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
-                    <table className="w-full text-left border-collapse text-xs">
+                    <table className="w-full min-w-[540px] text-left border-collapse text-xs">
                       <thead>
                         <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
-                          <th className="p-3">Simbolo</th>
-                          <th className="p-3 text-right">Quantità</th>
-                          <th className="p-3 text-right">Pzo Carico</th>
-                          <th className="p-3 text-right">Pzo Corrente</th>
-                          <th className="p-3 text-right">Val. Mercato</th>
-                          <th className="p-3 text-right">Gain / Loss Latente</th>
+                          <th className="p-2 sm:p-3">Simbolo</th>
+                          <th className="p-2 sm:p-3 text-right">Quantità</th>
+                          <th className="p-2 sm:p-3 text-right">Pzo Carico</th>
+                          <th className="p-2 sm:p-3 text-right">Pzo Corrente</th>
+                          <th className="p-2 sm:p-3 text-right">Val. Mercato</th>
+                          <th className="p-2 sm:p-3">Sentiment IA</th>
+                          <th className="p-2 sm:p-3 text-right">Gain / Loss Latente</th>
+                          <th className="p-2 sm:p-3 text-right">Azione</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium">
@@ -2220,15 +2249,28 @@ export default function App() {
                           const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
                           return (
                             <tr key={idx} className="hover:bg-slate-100/30 text-slate-700">
-                              <td className="p-3 font-bold text-slate-900">{pos.symbol}</td>
-                              <td className="p-3 text-right font-mono">{qtyVal.toFixed(4)}</td>
-                              <td className="p-3 text-right font-mono">${avgVal.toFixed(2)}</td>
-                              <td className="p-3 text-right font-mono">${currVal.toFixed(2)}</td>
-                              <td className="p-3 text-right font-mono font-semibold">${mktVal.toFixed(2)}</td>
-                              <td className={`p-3 text-right font-mono font-bold ${
+                              <td className="p-2 sm:p-3 font-bold text-slate-900">{pos.symbol}</td>
+                              <td className="p-2 sm:p-3 text-right font-mono">{qtyVal.toFixed(4)}</td>
+                              <td className="p-2 sm:p-3 text-right font-mono">${avgVal.toFixed(2)}</td>
+                              <td className="p-2 sm:p-3 text-right font-mono">${currVal.toFixed(2)}</td>
+                              <td className="p-2 sm:p-3 text-right font-mono font-semibold">${mktVal.toFixed(2)}</td>
+                              <td className="p-2 sm:p-3">
+                                <SentimentBadge symbol={pos.symbol} signals={status?.geminiSignals} showReasoning={true} />
+                              </td>
+                              <td className={`p-2 sm:p-3 text-right font-mono font-bold ${
                                 pl > 0 ? 'text-green-600' : pl < 0 ? 'text-red-600' : 'text-slate-500'
                               }`}>
                                 {pl > 0 ? '+' : ''}${pl.toFixed(2)} ({pl > 0 ? '+' : ''}{plpc.toFixed(2)}%)
+                              </td>
+                              <td className="p-2 sm:p-3 text-right">
+                                <button
+                                  onClick={() => handleOpenForceBuy(pos.symbol)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold transition cursor-pointer inline-flex items-center gap-1 shadow-sm"
+                                  title="Forza l'acquisto di ulteriori quote"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Acquista
+                                </button>
                               </td>
                             </tr>
                           );
@@ -2257,15 +2299,15 @@ export default function App() {
                   <>
                     {operationsData.activities && operationsData.activities.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill').length > 0 ? (
                       <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
-                    <table className="w-full text-left border-collapse text-xs">
+                    <table className="w-full min-w-[580px] text-left border-collapse text-xs">
                       <thead>
                         <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
-                          <th className="p-3">Data / Ora</th>
-                          <th className="p-3">Simbolo</th>
-                          <th className="p-3">Azione</th>
-                          <th className="p-3 text-right">Quantità</th>
-                          <th className="p-3 text-right">Prezzo Eseguito</th>
-                          <th className="p-3 text-right">Controvalore</th>
+                          <th className="p-2 sm:p-3">Data / Ora</th>
+                          <th className="p-2 sm:p-3">Simbolo</th>
+                          <th className="p-2 sm:p-3">Azione</th>
+                          <th className="p-2 sm:p-3 text-right">Quantità</th>
+                          <th className="p-2 sm:p-3 text-right">Prezzo Eseguito</th>
+                          <th className="p-2 sm:p-3 text-right">Controvalore</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -2279,20 +2321,20 @@ export default function App() {
                             const amt = (fillQty * fillPrice).toFixed(2);
                             return (
                               <tr key={idx} className="hover:bg-slate-100/30">
-                                <td className="p-3 text-slate-500 font-mono">
+                                <td className="p-2 sm:p-3 text-slate-500 font-mono">
                                   {new Date(fill.transaction_time || fill.timestamp).toLocaleString('it-IT')}
                                 </td>
-                                <td className="p-3 font-bold text-slate-900">{fill.symbol}</td>
-                                <td className="p-3">
+                                <td className="p-2 sm:p-3 font-bold text-slate-900">{fill.symbol}</td>
+                                <td className="p-2 sm:p-3">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                     isBuy ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                                   }`}>
                                     {isBuy ? 'ACQUISTO' : 'VENDITA'}
                                   </span>
                                 </td>
-                                <td className="p-3 text-right font-mono">{fillQty.toFixed(4)}</td>
-                                <td className="p-3 text-right font-mono">${fillPrice.toFixed(2)}</td>
-                                <td className="p-3 text-right font-mono font-semibold">${amt}</td>
+                                <td className="p-2 sm:p-3 text-right font-mono">{fillQty.toFixed(4)}</td>
+                                <td className="p-2 sm:p-3 text-right font-mono">${fillPrice.toFixed(2)}</td>
+                                <td className="p-2 sm:p-3 text-right font-mono font-semibold">${amt}</td>
                               </tr>
                             );
                           })}
@@ -2322,7 +2364,7 @@ export default function App() {
                   <>
                     {operationsData.dailyLogicLogs && operationsData.dailyLogicLogs.length > 0 ? (
                       <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
-                        <table className="w-full text-left border-collapse text-[11px]">
+                        <table className="w-full min-w-[500px] text-left border-collapse text-[11px]">
                           <thead>
                             <tr className="bg-slate-100/70 text-slate-500 font-semibold border-b border-slate-200">
                               <th className="py-1 px-2">Data / Ora</th>
@@ -2388,7 +2430,7 @@ export default function App() {
         </div>
 
         {/* SEZIONE OPERAZIONI CHIUSE (CON FILTRO PER DATA) */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
+        <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
             <div 
               className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1" 
@@ -2405,9 +2447,9 @@ export default function App() {
             </div>
 
             {/* Controlli Filtro Data e Simbolo */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full md:w-auto">
+              <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-slate-50 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 text-xs w-full sm:w-auto">
+                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <span className="text-slate-500 font-medium">Da:</span>
                 <input 
                   type="date" 
@@ -2425,7 +2467,7 @@ export default function App() {
               </div>
 
               {/* Preset Rapidi Date */}
-              <div className="flex gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+              <div className="flex gap-1 bg-slate-100 p-1 rounded-xl text-xs justify-between sm:justify-start w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={() => {
@@ -2433,7 +2475,7 @@ export default function App() {
                     setClosedStartDate(today);
                     setClosedEndDate(today);
                   }}
-                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs flex-1 sm:flex-none text-center"
                 >
                   Oggi
                 </button>
@@ -2446,7 +2488,7 @@ export default function App() {
                     setClosedStartDate(start.toISOString().split('T')[0]);
                     setClosedEndDate(end.toISOString().split('T')[0]);
                   }}
-                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs flex-1 sm:flex-none text-center"
                 >
                   7G
                 </button>
@@ -2459,7 +2501,7 @@ export default function App() {
                     setClosedStartDate(start.toISOString().split('T')[0]);
                     setClosedEndDate(end.toISOString().split('T')[0]);
                   }}
-                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs flex-1 sm:flex-none text-center"
                 >
                   30G
                 </button>
@@ -2469,21 +2511,21 @@ export default function App() {
                     setClosedStartDate('');
                     setClosedEndDate('');
                   }}
-                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                  className="px-2.5 py-1 bg-white rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs flex-1 sm:flex-none text-center"
                 >
                   Tutti
                 </button>
               </div>
 
               {/* Input Ricerca Simbolo */}
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   placeholder="Simbolo (es. AAPL)..."
                   value={closedSymbolFilter}
                   onChange={(e) => setClosedSymbolFilter(e.target.value.toUpperCase())}
-                  className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 placeholder:font-normal placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  className="w-full sm:w-auto pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 placeholder:font-normal placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 />
               </div>
 
@@ -2491,7 +2533,7 @@ export default function App() {
                 type="button"
                 onClick={fetchClosedPositions}
                 disabled={closedLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-2xs disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-2xs disabled:opacity-50 w-full sm:w-auto"
               >
                 <RotateCcw className={`w-3.5 h-3.5 ${closedLoading ? 'animate-spin' : ''}`} />
                 Filtra
@@ -2572,9 +2614,9 @@ export default function App() {
           </div>
 
           {/* Barriera Filtro PnL rapido */}
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 bg-slate-100/80 p-2 rounded-xl text-xs">
-            <div className="flex items-center gap-1.5 font-medium text-slate-600">
-              <Filter className="w-3.5 h-3.5 text-slate-500" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 bg-slate-100/80 p-2 rounded-xl text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 font-medium text-slate-600">
+              <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               <span>Filtro Esito:</span>
               <button
                 type="button"
@@ -2611,7 +2653,7 @@ export default function App() {
             </div>
           ) : filteredTrades.length > 0 ? (
             <div className="overflow-x-auto bg-slate-900 text-slate-200 rounded-xl border border-slate-800 shadow-xl">
-              <table className="w-full text-left border-collapse text-xs font-mono">
+              <table className="w-full min-w-[680px] text-left border-collapse text-xs font-mono">
                 <thead>
                   <tr className="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800 text-[11px] uppercase tracking-wider">
                     <th className="p-3">Data / Ora</th>
@@ -3335,11 +3377,19 @@ export default function App() {
               </h3>
               <div className="flex flex-wrap gap-2">
                 {status.monitoredSymbols.map((sym) => (
-                  <span 
+                  <div 
                     key={sym} 
-                    className="inline-flex items-center gap-1.5 bg-slate-900 border border-slate-800 pl-3 pr-1.5 py-1 rounded-full text-xs font-bold font-mono text-indigo-300"
+                    className="inline-flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl text-xs font-bold font-mono text-indigo-300"
                   >
-                    {sym}
+                    <span>{sym}</span>
+                    <SentimentBadge symbol={sym} signals={status?.geminiSignals} />
+                    <button
+                      onClick={() => handleOpenForceBuy(sym)}
+                      className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] rounded font-bold transition flex items-center gap-0.5 cursor-pointer"
+                      title="Forza acquisto manuale di quote"
+                    >
+                      <Plus className="w-2.5 h-2.5" /> Acquista
+                    </button>
                     <button 
                       onClick={() => handleToggleWatchlist(sym, true)}
                       className="p-1 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-full transition cursor-pointer"
@@ -3347,7 +3397,7 @@ export default function App() {
                     >
                       <X className="w-3 h-3" />
                     </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -3618,7 +3668,7 @@ export default function App() {
         )}
 
         {/* Sistema Notifiche Toast in Tempo Reale */}
-        <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+        <div className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-[100] flex flex-col gap-2 max-w-[calc(100vw-24px)] sm:max-w-sm w-full pointer-events-none">
           <AnimatePresence>
             {toasts.map((toast) => {
               const typeStyles = {
@@ -3694,6 +3744,16 @@ export default function App() {
             botStatus={status}
           />
         )}
+
+        {/* Force Buy Modal */}
+        <ForceBuyModal
+          isOpen={forceBuyModalOpen}
+          onClose={() => setForceBuyModalOpen(false)}
+          initialSymbol={forceBuySymbol}
+          initialMode={selectedTab}
+          onSuccess={fetchStatus}
+          showToast={showToast}
+        />
 
       </div>
     </div>

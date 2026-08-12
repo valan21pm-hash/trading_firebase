@@ -29,7 +29,7 @@ export class LLMProviderService {
     gemini: {
       provider: 'gemini',
       apiKey: process.env.GEMINI_API_KEY || '',
-      model: 'gemini-3.1-flash-lite'
+      model: 'gemini-2.5-flash'
     },
     mistral: {
       provider: 'mistral',
@@ -204,19 +204,52 @@ export class LLMProviderService {
       apiKey: key,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
     });
-    const model = config.model || 'gemini-3.1-flash-lite';
-    
+
+    const configuredModel = config.model && config.model.trim() !== '' ? config.model : 'gemini-2.5-flash';
+    const fallbackModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const candidateModels = Array.from(new Set([configuredModel, ...fallbackModels]));
+
     const requestConfig: any = {};
     if (options.responseJson) {
       requestConfig.responseMimeType = 'application/json';
     }
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-      config: requestConfig
-    });
-    return response.text || '';
+    let lastError: any = null;
+
+    for (const modelToUse of candidateModels) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelToUse,
+            contents: prompt,
+            config: requestConfig
+          });
+
+          if (response.text && response.text.trim() !== '') {
+            return response.text;
+          }
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err?.message || String(err);
+          const isTransient = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand') || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('500');
+
+          if (isTransient && attempt < 3) {
+            console.warn(`[Gemini Retry] Modello ${modelToUse} in forte domanda (tentativo ${attempt}/3). Attesa ${attempt * 1000}ms...`);
+            await new Promise(r => setTimeout(r, attempt * 1000));
+            continue;
+          }
+
+          if (isTransient) {
+            console.warn(`[Gemini Fallback] Modello ${modelToUse} temporaneamente non disponibile. Passaggio al modello successivo...`);
+            break;
+          }
+
+          throw err;
+        }
+      }
+    }
+
+    throw lastError || new Error('Tutti i tentativi con i modelli Gemini hanno fallito.');
   }
 
   private async queryMistral(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {

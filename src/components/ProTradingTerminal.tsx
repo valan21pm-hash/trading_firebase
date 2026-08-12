@@ -4,7 +4,7 @@ import {
   Layers, BarChart3, Globe, Cpu, Clock, AlertTriangle, 
   Search, ArrowUpRight, ArrowDownRight,
   Maximize2, PieChart, DollarSign, Eye, X, Play, Square, Settings, BookOpen, Key, Sparkles, Check, AlertCircle, Upload, Download,
-  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive
+  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive, Plus, ShoppingCart
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ReactMarkdown from 'react-markdown';
@@ -12,7 +12,10 @@ import { jsPDF } from 'jspdf';
 import { LLMSettings } from './LLMSettings';
 import { GeminiSignalsTicker } from './GeminiSignalsTicker';
 import { AlpacaMonitorModule } from './AlpacaMonitorModule';
+import { SentimentBadge } from './SentimentBadge';
+import { ForceBuyModal } from './ForceBuyModal';
 import { getAccessToken } from '../auth';
+import { GeminiSignal } from '../types';
 
 interface ProTradingTerminalProps {
   onClose: () => void;
@@ -81,13 +84,41 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   // Settings inputs state (synced with currentStatus)
   const [maxPosInput, setMaxPosInput] = useState<number>(botStatus?.maxConcurrentPositions || 10);
   const [tfInput, setTfInput] = useState<number>(botStatus?.timeframe || 15);
-  const [riskInput, setRiskInput] = useState<number>(botStatus?.riskPercentage || 10);
+  const [riskInput, setRiskInput] = useState<number>(botStatus?.riskPercentage || 95);
 
   // Loading and UI states
   const [savingSettings, setSavingSettings] = useState(false);
   const [showPanicModal, setShowPanicModal] = useState(false);
   const [panicLoading, setPanicLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Gemini Signals & Force Buy Modal States
+  const [geminiSignals, setGeminiSignals] = useState<GeminiSignal[]>(botStatus?.geminiSignals || []);
+  const [forceBuyModalOpen, setForceBuyModalOpen] = useState(false);
+  const [forceBuySymbol, setForceBuySymbol] = useState('');
+
+  const handleOpenForceBuy = (sym?: string) => {
+    setForceBuySymbol(sym || selectedAsset?.symbol || 'AAPL');
+    setForceBuyModalOpen(true);
+  };
+
+  useEffect(() => {
+    const fetchSignals = async () => {
+      try {
+        const res = await fetch('/api/gemini-signals');
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            if (Array.isArray(data)) setGeminiSignals(data);
+          }
+        }
+      } catch (e) {}
+    };
+    fetchSignals();
+    const interval = setInterval(fetchSignals, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Debriefing State
   const [debriefLoading, setDebriefLoading] = useState(false);
@@ -971,6 +1002,13 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         >
           <Globe className="w-3.5 h-3.5" /> Notizie & Wire
         </button>
+        <button
+          onClick={() => handleOpenForceBuy()}
+          className="px-3 py-1.5 rounded-lg transition font-bold cursor-pointer flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md border border-emerald-500/50"
+          title="Invia ordine di acquisto forzato istantaneo"
+        >
+          <ShoppingCart className="w-3.5 h-3.5" /> Forza Acquisto
+        </button>
       </div>
 
       {/* RIEPILOGO FINANZIARIO CAPITALE E MARGINI (STRISCIA KPI REALE) */}
@@ -1091,18 +1129,25 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                     : 'bg-[#0E1526] border-slate-800/60 hover:border-slate-700'
                 }`}
               >
-                <div>
+                <div className="flex flex-col gap-1">
                   <div className="font-bold text-sm text-white flex items-center gap-1.5">
                     {ast.symbol}
                     {ast.positive ? <ArrowUpRight className="w-3 h-3 text-emerald-400" /> : <ArrowDownRight className="w-3 h-3 text-rose-400" />}
                   </div>
-                  <div className="text-[10px] text-slate-400 truncate max-w-[110px]">{ast.name}</div>
+                  <SentimentBadge symbol={ast.symbol} signals={geminiSignals} />
                 </div>
-                <div className="text-right">
+                <div className="text-right flex flex-col items-end gap-1">
                   <div className="text-xs font-bold text-slate-200">${ast.price.toFixed(2)}</div>
-                  <div className={`text-[10px] font-semibold ${ast.positive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {ast.change}
-                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenForceBuy(ast.symbol);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/40 transition cursor-pointer flex items-center gap-0.5"
+                    title="Forza acquisto di quote"
+                  >
+                    <Plus className="w-2.5 h-2.5" /> Acquista
+                  </button>
                 </div>
               </div>
             ))}
@@ -1152,6 +1197,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           <th className="py-2.5 px-3">Prezzo Carico</th>
                           <th className="py-2.5 px-3">Prezzo Attuale</th>
                           <th className="py-2.5 px-3">Valore Mercato</th>
+                          <th className="py-2.5 px-3">Sentiment IA</th>
                           <th className="py-2.5 px-3">Strategia Rischio</th>
                           <th className="py-2.5 px-3">P&L Giornaliero</th>
                           <th className="py-2.5 px-3">P&L Totale</th>
@@ -1184,6 +1230,9 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <td className="py-3 px-3 font-bold text-white">${currentPrice.toFixed(2)}</td>
                               <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
                               <td className="py-3 px-3">
+                                <SentimentBadge symbol={pos.symbol} signals={geminiSignals} showReasoning={true} />
+                              </td>
+                              <td className="py-3 px-3">
                                 <select
                                   value={currentStrategy}
                                   onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
@@ -1203,17 +1252,27 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 <span className="block text-[9px]">({unrealizedPLPC >= 0 ? '+' : ''}{unrealizedPLPC.toFixed(2)}%)</span>
                               </td>
                               <td className="py-3 px-3 text-right">
-                                <button
-                                  disabled={isClosing}
-                                  onClick={() => handleClosePosition(pos.symbol)}
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
-                                    isClosing 
-                                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                                      : 'bg-rose-600/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/40'
-                                  }`}
-                                >
-                                  {isClosing ? 'Chiusura...' : 'Chiudi'}
-                                </button>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleOpenForceBuy(pos.symbol)}
+                                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/40 transition cursor-pointer flex items-center gap-1"
+                                    title="Forza acquisto di ulteriori quote"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    Acquista
+                                  </button>
+                                  <button
+                                    disabled={isClosing}
+                                    onClick={() => handleClosePosition(pos.symbol)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                      isClosing 
+                                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                        : 'bg-rose-600/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/40'
+                                    }`}
+                                  >
+                                    {isClosing ? 'Chiusura...' : 'Chiudi'}
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1289,18 +1348,25 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                             </div>
                           </div>
 
-                          {/* Footer Button: Close Position */}
-                          <div className="pt-2 border-t border-slate-800/60 flex justify-end">
+                          {/* Footer Button: Actions */}
+                          <div className="pt-2 border-t border-slate-800/60 flex items-center gap-2">
+                            <button
+                              onClick={() => handleOpenForceBuy(pos.symbol)}
+                              className="flex-1 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer text-center bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 flex items-center justify-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Acquista
+                            </button>
                             <button
                               disabled={isClosing}
                               onClick={() => handleClosePosition(pos.symbol)}
-                              className={`w-full py-1.5 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
                                 isClosing 
                                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
                                   : 'bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/20'
                               }`}
                             >
-                              {isClosing ? 'Chiusura posizione in corso...' : 'Chiudi Posizione'}
+                              {isClosing ? 'Chiusura...' : 'Chiudi'}
                             </button>
                           </div>
                         </div>
@@ -1363,24 +1429,24 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
 
                   <div className="bg-[#10172A] p-3.5 rounded-xl border border-slate-800 space-y-1.5">
                     <label className="text-[11px] text-slate-300 font-bold block">
-                      Rischio Massimo per Trade (%)
+                      Target Allocazione Capitale (%)
                     </label>
                     <input
                       type="number"
-                      step="0.5"
-                      min={0.1}
+                      step="1"
+                      min={10}
                       max={100}
                       value={riskInput}
                       onChange={e => setRiskInput(Number(e.target.value))}
-                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-rose-400 font-bold focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-emerald-400 font-bold focus:outline-none focus:border-indigo-500"
                     />
-                    <span className="text-[9px] text-slate-500 block">Percentuale massima di Capitale investibile per singolo ordine.</span>
+                    <span className="text-[9px] text-slate-500 block">Percentuale totale dell'equity distribuita sul mercato (fino al 95%).</span>
                   </div>
                 </div>
 
                 <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
                   <div className="text-[10px] text-slate-400 font-sans">
-                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({statusObj?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({statusObj?.timeframe ?? 15}m)</strong>, <strong>Rischio ({statusObj?.riskPercentage ?? 10}%)</strong>.
+                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({statusObj?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({statusObj?.timeframe ?? 15}m)</strong>, <strong>Allocazione Capitale ({statusObj?.riskPercentage ?? 95}%)</strong>.
                   </div>
                   <button
                     disabled={savingSettings}
@@ -1951,6 +2017,16 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         </div>
 
       </div>
+
+      {/* Modal Acquisto Forzato Manuale */}
+      <ForceBuyModal
+        isOpen={forceBuyModalOpen}
+        onClose={() => setForceBuyModalOpen(false)}
+        initialSymbol={forceBuySymbol}
+        initialMode={tradingMode}
+        onSuccess={fetchStatus}
+        showToast={(msg, type, title) => setToastMessage(`${title ? title + ': ' : ''}${msg}`)}
+      />
     </div>
   );
 }

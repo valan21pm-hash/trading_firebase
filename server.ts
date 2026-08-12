@@ -748,16 +748,14 @@ async function autoDetectCredentials() {
     fallbackLiveKey,
     process.env.APCA_LIVE_KEY,
     process.env.ALPACA_LIVE_API_KEY
-  ].filter(Boolean) as string[];
+  ].filter(k => Boolean(k) && k !== dbPaperKey && k !== fallbackPaperKey) as string[];
 
   const liveSecrets = [
     dbLiveSecret,
     fallbackLiveSecret,
     process.env.APCA_LIVE_SEC,
-    process.env.ALPACA_LIVE_SECRET_KEY,
-    process.env.APCA_PAPER_SEC,
-    process.env.ALPACA_PAPER_SECRET_KEY
-  ].filter(Boolean) as string[];
+    process.env.ALPACA_LIVE_SECRET_KEY
+  ].filter(s => Boolean(s) && s !== dbPaperSecret && s !== fallbackPaperSecret) as string[];
 
   let liveSuccess = false;
   for (const k of liveKeys) {
@@ -798,13 +796,13 @@ async function autoDetectCredentials() {
     console.log('[Auto-Detect] Falling back to configured Paper keys (unverified via probe).');
   }
 
-  if (!resolvedCredentials.live.isConfigured && (dbLiveKey || fallbackLiveKey) && (dbLiveSecret || fallbackLiveSecret)) {
+  if (!resolvedCredentials.live.isConfigured && dbLiveKey && dbLiveSecret && dbLiveKey !== dbPaperKey) {
     resolvedCredentials.live = {
-      apiKey: dbLiveKey || fallbackLiveKey,
-      secretKey: dbLiveSecret || fallbackLiveSecret,
+      apiKey: dbLiveKey,
+      secretKey: dbLiveSecret,
       isConfigured: true
     };
-    console.log('[Auto-Detect] Falling back to configured Live keys (unverified via probe).');
+    console.log('[Auto-Detect] Falling back to configured Live keys from DB.');
   }
 }
 
@@ -824,10 +822,12 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
   
   // Synchronous fallback to local credentials
   const envKey = isLive ? 'real' : 'paper';
-  const localCreds = localCredentialsFallback?.alpaca?.[envKey] || localCredentialsFallback?.alpaca?.[mode] || {};
+  const localCreds = isLive 
+    ? (localCredentialsFallback?.alpaca?.real || localCredentialsFallback?.alpaca?.live || {})
+    : (localCredentialsFallback?.alpaca?.paper || {});
   const localApiKey = localCreds.apiKey || localCreds.username || '';
   const localSecretKey = localCreds.secretKey || localCreds.password || '';
-  if (localApiKey && localSecretKey) {
+  if (localApiKey && localSecretKey && (!isLive || localApiKey !== (localCredentialsFallback?.alpaca?.paper?.apiKey))) {
     resolvedCredentials[mode] = { apiKey: localApiKey, secretKey: localSecretKey, isConfigured: true };
     return {
       isConfigured: true,
@@ -971,7 +971,7 @@ let botStatus: {
   defaultSL: -0.50,
   trailingStop: 1.0,
   timeframe: 15,
-  riskPercentage: 10,
+  riskPercentage: 95,
   maxConcurrentPositions: 10,
   llmPreferredProvider: 'gemini',
   llmFailoverEnabled: true,
@@ -1594,6 +1594,25 @@ const marketEvents: Record<string, string> = {
 
 // In-memory cache for sentiment analysis
 const sentimentCache = new Map<string, {score: number, reasoning: string}>();
+const inMemoryGeminiSignals = new Map<string, any>();
+
+async function getAllGeminiSignals(): Promise<any[]> {
+  const map = new Map<string, any>();
+  inMemoryGeminiSignals.forEach((v, k) => map.set(k, v));
+  if (db) {
+    try {
+      const snapshot = await db.collection('gemini_signals').get();
+      snapshot.forEach((doc: any) => {
+        const d = doc.data();
+        if (d && d.asset) {
+          map.set(d.asset, d);
+        }
+      });
+    } catch(e) {}
+  }
+  return Array.from(map.values());
+}
+
 let isQuotaExceeded = false;
 let quotaExceededTime = 0;
 
@@ -1709,6 +1728,16 @@ REGOLE FONDAMENTALI E MACRO:
       sentimentCache.set(cacheKey, result);
       results[sym] = result;
 
+      // Update in-memory signals cache
+      inMemoryGeminiSignals.set(sym, {
+        asset: sym,
+        score: resultScore,
+        action: resultScore >= 0.5 ? 'BUY' : resultScore <= -0.5 ? 'SELL' : 'HOLD',
+        confidence: Math.abs(resultScore) * 100,
+        reasoning: resultReasoning,
+        timestamp: new Date().toISOString()
+      });
+
       // Sync to Firestore for real-time frontend monitoring AND long-term cache
       if (db) {
         try {
@@ -1737,9 +1766,9 @@ REGOLE FONDAMENTALI E MACRO:
 
     return results;
   } catch (error: any) {
-    const message = error.message || String(error);
-    if (message.includes('429') || message.includes('503') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
-      console.warn(`[Sentiment Analysis] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Disabling further sentiment analysis.`);
+    const message = (error.message || String(error)).toLowerCase();
+    if (message.includes('429') || message.includes('503') || message.includes('resource_exhausted') || message.includes('quota') || message.includes('api key not valid') || message.includes('api_key_invalid')) {
+      console.warn(`[Sentiment Analysis] Limite quota API raggiunto (429/RESOURCE_EXHAUSTED). Attivazione fallback algoritmico.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
     } else {
@@ -2010,7 +2039,7 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
     }
     return result;
   } catch (err: any) {
-    console.error('[Google Sheets Error] Errore esportazione credenziali:', err.message);
+    console.warn('[Google Sheets] Esportazione credenziali non disponibile:', err.message);
     return false;
   }
 }
@@ -2063,7 +2092,7 @@ app.post('/api/sheets/sync', async (req, res) => {
               await docRef.set(currentData);
               console.log(`[Google Sheets Sync] LLM provider ${provider} key saved to Firestore.`);
             } catch (fsErr: any) {
-              console.error(`[Google Sheets Sync Error] Failed saving ${provider} LLM key to Firestore:`, fsErr.message);
+              console.warn(`[Google Sheets Sync] Failed saving ${provider} LLM key to Firestore:`, fsErr.message);
             }
           }
         }
@@ -2128,7 +2157,7 @@ app.post('/api/sheets/sync', async (req, res) => {
           await docRef.set(currentData);
           console.log('[Google Sheets Sync] Alpaca keys saved to Firestore.');
         } catch (fsErr: any) {
-          console.error('[Google Sheets Sync Error] Failed saving Alpaca keys to Firestore:', fsErr.message);
+          console.warn('[Google Sheets Sync] Failed saving Alpaca keys to Firestore:', fsErr.message);
         }
       }
     }
@@ -2143,13 +2172,13 @@ app.post('/api/sheets/sync', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Sincronizzazione con Google Sheets e ricaricamento stato completati con successo!',
+      message: keys ? 'Sincronizzazione con Google Sheets completata con successo!' : 'Nessuna chiave trovata nel foglio o foglio non accessibile.',
       userFeedbackRules: botStatus.userFeedbackRules || []
     });
   } catch (err: any) {
-    const errMsg = err?.message || err?.toString() || 'Errore interno del server durante la sincronizzazione';
-    console.error('[Google Sheets Sync Error]:', err);
-    res.status(500).json({ success: false, error: errMsg });
+    const errMsg = err?.message || err?.toString() || 'Errore durante la sincronizzazione con Google Sheets';
+    console.warn('[Google Sheets Sync]:', errMsg);
+    res.status(200).json({ success: false, error: errMsg });
   }
 });
 
@@ -2165,12 +2194,12 @@ app.post('/api/sheets/backup-credentials', async (req, res) => {
     if (ok) {
       res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets!' });
     } else {
-      res.status(500).json({ success: false, error: 'Impossibile inviare i dati a Google Sheets' });
+      res.json({ success: false, error: 'Google Sheets non accessibile o API non abilitata. Configura le chiavi direttamente in Impostazioni.' });
     }
   } catch (err: any) {
-    const errMsg = err?.message || err?.toString() || 'Errore interno del server durante l\'esportazione';
-    console.error('[Google Sheets Backup Error]:', err);
-    res.status(500).json({ success: false, error: errMsg });
+    const errMsg = err?.message || err?.toString() || 'Errore durante l\'esportazione delle chiavi';
+    console.warn('[Google Sheets Backup]:', errMsg);
+    res.json({ success: false, error: errMsg });
   }
 });
 
@@ -2315,7 +2344,18 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     });
     
     if (!response.ok) {
-      throw new Error(`Errore API: ${response.status} ${response.statusText}`);
+      if (response.status === 401) {
+        resolvedCredentials[mode].isConfigured = false;
+        if (mode === 'live') {
+          botStatus.liveActive = false;
+        } else {
+          botStatus.paperActive = false;
+        }
+        botStatus.active = botStatus.paperActive || botStatus.liveActive;
+        saveBotStatus().catch(() => {});
+        throw new Error(`Credenziali Alpaca (${labelTipoConto}) non valide o revocate (401 Unauthorized). Il bot sul conto ${labelTipoConto} è stato automaticamente MESSO IN PAUSA. Aggiorna le tue chiavi API nella scheda Impostazioni API per riattivarlo.`);
+      }
+      throw new Error(`Errore API Alpaca: ${response.status} ${response.statusText}`);
     }
     
     const account = await response.json();
@@ -2599,7 +2639,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           return b.score - a.score;
         });
 
-        // 2. Calcola quanti slot totali vogliamo occupare
+        // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95%)
         const maxPositions = botStatus.maxConcurrentPositions ?? 10;
         const currentSlotsFilled = openPositions.length;
         let availableSlots = maxPositions - currentSlotsFilled;
@@ -2608,19 +2648,30 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           availableSlots = Math.min(availableSlots, 1);
         }
 
-        if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0) {
-          let singlePositionSize = 5.0;
-          if (currentBuyingPower < 100) {
-            singlePositionSize = currentBuyingPower * 0.95; // 100% della liquidità disponibile (meno margine sicurezza)
-          } else if (mode === 'live') {
-            const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
-            singlePositionSize = Math.max(2.0, Math.min(10.0, calculatedSize));
-          } else {
-            const calculatedSize = Math.floor((botData[mode].balance / maxPositions) * 100) / 100;
-            singlePositionSize = Math.max(10.0, calculatedSize);
-          }
+        // Quota target di capitale totale da impiegare (default 95% dell'equity)
+        const targetCapitalPct = Math.min(95, Math.max(10, botStatus.riskPercentage ?? 95));
+        const targetCapitalRatio = targetCapitalPct / 100;
+        const targetCapitalUsage = totalAccountEquity * targetCapitalRatio;
 
-          addLog(mode as 'paper' | 'live', `[Allocazione Alpaca] Capitale: $${botData[mode].balance.toFixed(2)}. Allocazione per singola operazione: $${singlePositionSize.toFixed(2)}. Slot disponibili: ${availableSlots} su ${maxPositions}.`);
+        // Capitale attualmente investito nelle posizioni aperte
+        const currentlyInvested = openPositions.reduce((sum: number, p: any) => sum + Math.abs(parseFloat(p.market_value || '0')), 0);
+
+        // Capitale rimanente da allocare per raggiungere il target (es. 95%)
+        const remainingCapitalToTarget = Math.max(0, targetCapitalUsage - currentlyInvested);
+        const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget);
+
+        if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0 && allocatableBuyingPower > 2.0) {
+          const numCandidatesToFund = Math.min(availableSlots, positiveSymbolsWithSentiment.length);
+
+          // Calcola allocazione per singola operazione calibrata per distribuire il capitale al target 95%
+          let singlePositionSize = Math.floor((allocatableBuyingPower / numCandidatesToFund) * 100) / 100;
+
+          // Cap prudenziale per singola posizione (non più del 45% dell'equity a meno che maxPositions sia <= 2)
+          const maxSinglePositionCap = totalAccountEquity * (maxPositions <= 2 ? 0.90 : 0.45);
+          singlePositionSize = Math.min(singlePositionSize, maxSinglePositionCap);
+          singlePositionSize = Math.max(2.0, singlePositionSize);
+
+          addLog(mode as 'paper' | 'live', `[Allocazione Capitale ${targetCapitalPct}%] Equity: $${totalAccountEquity.toFixed(2)} | Target (${targetCapitalPct}%): $${targetCapitalUsage.toFixed(2)} | Attualmente Investito: $${currentlyInvested.toFixed(2)} | Rimanente al Target: $${remainingCapitalToTarget.toFixed(2)} | Allocazione per singola operazione: $${singlePositionSize.toFixed(2)} (${numCandidatesToFund} asset in questo ciclo).`);
 
           const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
           let slotsAllocated = 0;
@@ -2667,23 +2718,19 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               let amountToBuy = singlePositionSize;
               if (currentBuyingPower < 100) {
                 amountToBuy = currentBuyingPower;
-              } else if (mode === 'live') {
-                if (item.score > 0.6) {
-                  amountToBuy = singlePositionSize;
-                } else if (item.score > 0.4) {
-                  amountToBuy = Math.max(2.0, singlePositionSize * 0.75);
-                } else {
-                  amountToBuy = Math.max(2.0, singlePositionSize * 0.5);
-                }
+              } else if (item.score > 0.6) {
+                amountToBuy = singlePositionSize;
+              } else if (item.score > 0.4) {
+                amountToBuy = Math.max(2.0, singlePositionSize * 0.85);
               } else {
-                if (item.score > 0.6) {
-                  amountToBuy = singlePositionSize;
-                } else if (item.score > 0.4) {
-                  amountToBuy = Math.max(10.0, singlePositionSize * 0.75);
-                } else {
-                  amountToBuy = Math.max(10.0, singlePositionSize * 0.5);
-                }
+                amountToBuy = Math.max(2.0, singlePositionSize * 0.70);
               }
+
+              // Non superare mai il potere d'acquisto disponibile
+              amountToBuy = Math.min(amountToBuy, currentBuyingPower * 0.98);
+              amountToBuy = Math.floor(amountToBuy * 100) / 100;
+
+              if (amountToBuy < 2.0) continue;
 
               ordersToSubmit.push({
                 symbol: item.symbol,
@@ -3471,17 +3518,12 @@ app.get("/api/alpaca-positions", async (req, res) => {
 });
 
 app.get("/api/gemini-signals", async (req, res) => {
-  if (db) {
-    try {
-      const snapshot = await db.collection('gemini_signals').get();
-      const signals: any[] = [];
-      snapshot.forEach((doc: any) => signals.push(doc.data()));
-      return res.json(signals);
-    } catch(e) {
-       return res.json([]);
-    }
+  try {
+    const signals = await getAllGeminiSignals();
+    return res.json(signals);
+  } catch(e) {
+    return res.json([]);
   }
-  return res.json([]);
 });
 async function getStatusData() {
   const paperConf = getAlpacaConfig('paper');
@@ -3668,6 +3710,7 @@ async function getStatusData() {
       lastCheck: botStatus.lastCheck,
       userFeedbackRules: botStatus.userFeedbackRules,
       monitoredSymbols: botStatus.monitoredSymbols || [],
+      geminiSignals: await getAllGeminiSignals(),
       historicalProfits: botStatus.historicalProfits || 0,
       y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport,
@@ -3865,6 +3908,15 @@ app.post('/api/toggle', async (req, res) => {
       addLog('paper', 'Bot arrestato sul conto Simulazione (Paper).');
     }
   } else if (target === 'live') {
+    if (!botStatus.liveActive) {
+      const liveConf = getAlpacaConfig('live');
+      if (!liveConf.isConfigured || !liveConf.apiKey || !liveConf.secretKey) {
+        return res.status(400).json({
+          success: false,
+          error: 'Credenziali Alpaca per il conto Reale (Live) non configurate o non valide. Configura la tua API Key Live e Secret Key nelle Impostazioni API.'
+        });
+      }
+    }
     botStatus.liveActive = !botStatus.liveActive;
     if (botStatus.liveActive) {
       addLog('live', 'Bot avviato sul conto Reale (Live).');
@@ -3873,6 +3925,15 @@ app.post('/api/toggle', async (req, res) => {
     }
   } else if (target === 'both') {
     const nextState = !(botStatus.paperActive || botStatus.liveActive);
+    if (nextState) {
+      const liveConf = getAlpacaConfig('live');
+      if (!liveConf.isConfigured || !liveConf.apiKey || !liveConf.secretKey) {
+        return res.status(400).json({
+          success: false,
+          error: 'Impossibile avviare il conto Reale: credenziali Alpaca Live non configurate o non valide. Configurale nelle Impostazioni API.'
+        });
+      }
+    }
     botStatus.paperActive = nextState;
     botStatus.liveActive = nextState;
     if (nextState) {
@@ -4289,6 +4350,77 @@ app.post('/api/close-position', async (req, res) => {
   } catch (error: any) {
     addLog(mode as 'paper' | 'live', `[Manuale Errore] Errore di rete nella chiusura della posizione per ${symbol}: ${error.message}`);
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/force-buy', async (req, res) => {
+  const { symbol, qty, notional, mode: requestedMode } = req.body;
+  
+  if (!symbol || (!qty && !notional)) {
+    return res.status(400).json({ success: false, message: 'Parametri insufficienti. Specifica simbolo e quantita o ammontare $' });
+  }
+
+  const mode = requestedMode === 'live' ? 'live' : (requestedMode === 'paper' ? 'paper' : botStatus.tradingMode);
+  const conf = getAlpacaConfig(mode);
+
+  if (!conf.isConfigured) {
+    return res.status(400).json({ success: false, message: `Alpaca non configurato per la modalita ${mode}.` });
+  }
+
+  const formattedSymbol = String(symbol).trim().toUpperCase();
+  const labelTipoConto = mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)';
+
+  try {
+    const orderPayload: any = {
+      symbol: formattedSymbol,
+      side: 'buy',
+      type: 'market',
+      time_in_force: (qty && parseFloat(qty) > 0) ? 'gtc' : 'day'
+    };
+
+    if (qty && parseFloat(qty) > 0) {
+      orderPayload.qty = String(parseFloat(qty));
+    } else if (notional && parseFloat(notional) > 0) {
+      orderPayload.notional = parseFloat(notional).toFixed(2);
+    } else {
+      return res.status(400).json({ success: false, message: 'Quantita o Ammontare $ non validi.' });
+    }
+
+    addLog(mode as 'paper' | 'live', `[Acquisto Forzato] Inizio ordine di acquisto manuale per ${formattedSymbol} (${qty ? qty + ' quote' : '$' + notional}) su conto ${labelTipoConto}...`);
+
+    const orderResponse = await fetch(`${conf.baseUrl}/orders`, {
+      method: 'POST',
+      headers: {
+        'APCA-API-KEY-ID': conf.apiKey,
+        'APCA-API-SECRET-KEY': conf.secretKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(orderPayload)
+    });
+
+    if (orderResponse.ok) {
+      const orderData = await orderResponse.json();
+      addLog(mode as 'paper' | 'live', `[Acquisto Forzato Successo] Ordine inviato per ${formattedSymbol}! ID Ordine: ${orderData.id}`);
+      addLogicLog(mode as 'paper' | 'live', {
+        timestamp: new Date().toISOString(),
+        symbol: formattedSymbol,
+        action: 'BUY',
+        reasoning: `Acquisto Forzato dell'Utente (${qty ? qty + ' quote' : '$' + notional})`
+      });
+      return res.json({ success: true, message: `Acquisto forzato di ${formattedSymbol} inviato con successo!`, order: orderData });
+    } else {
+      const errText = await orderResponse.text();
+      let errMsg = errText;
+      try {
+        const parsedErr = JSON.parse(errText);
+        if (parsedErr.message) errMsg = parsedErr.message;
+      } catch (e) {}
+      addLog(mode as 'paper' | 'live', `[Acquisto Forzato Errore] Fallito acquisto per ${formattedSymbol}: ${errMsg}`);
+      return res.status(400).json({ success: false, message: `Errore Alpaca: ${errMsg}` });
+    }
+  } catch (err: any) {
+    console.error(`[Force Buy Exception] ${err?.message}`);
+    return res.status(500).json({ success: false, message: `Eccezione durante l'acquisto forzato: ${err?.message || err}` });
   }
 });
 
