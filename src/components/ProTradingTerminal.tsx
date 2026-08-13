@@ -10,6 +10,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import { LLMSettings } from './LLMSettings';
+import { SystemRiskRulesManager } from './SystemRiskRulesManager';
 import { GeminiSignalsTicker } from './GeminiSignalsTicker';
 import { AlpacaMonitorModule } from './AlpacaMonitorModule';
 import { SentimentBadge } from './SentimentBadge';
@@ -1457,6 +1458,19 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                     {savingSettings ? 'Salvataggio...' : 'Salva Parametri Bot'}
                   </button>
                 </div>
+              </div>
+
+              {/* Embedded Deterministic Risk Management Rules Component */}
+              <div className="pt-2">
+                <SystemRiskRulesManager
+                  initialRules={statusObj?.systemRiskRules}
+                  onRulesUpdated={() => {
+                    fetch('/api/status')
+                      .then(r => r.json())
+                      .then(d => setCurrentStatus(d))
+                      .catch(() => {});
+                  }}
+                />
               </div>
 
               {/* Embedded Unified API & LLM Settings Component */}

@@ -9,6 +9,7 @@ import { getAccessToken } from './auth';
 import { AlpacaMonitorModule } from './components/AlpacaMonitorModule';
 import { GeminiSignalsTicker } from './components/GeminiSignalsTicker';
 import { LLMSettings } from './components/LLMSettings';
+import { SystemRiskRulesManager } from './components/SystemRiskRulesManager';
 import { ProTradingTerminal } from './components/ProTradingTerminal';
 import { SentimentBadge } from './components/SentimentBadge';
 import { ForceBuyModal } from './components/ForceBuyModal';
@@ -3444,6 +3445,15 @@ export default function App() {
           )}
             </>
           )}
+        </div>
+
+        {/* System Risk Rules Manager */}
+        <div className="mt-6">
+          <SystemRiskRulesManager
+            initialRules={status?.systemRiskRules}
+            onRulesUpdated={fetchStatus}
+            showToast={showToast}
+          />
         </div>
 
         {/* Feedback Form */}

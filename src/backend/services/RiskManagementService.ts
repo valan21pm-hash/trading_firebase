@@ -1,3 +1,5 @@
+import { RiskRuleConfig } from "../../types";
+
 export interface Position {
   id: string;
   asset: string; // es. 'EURUSD', 'XAUUSD', 'AAPL', 'SPY', 'GLD'
@@ -9,6 +11,7 @@ export interface Position {
   sentimentScore?: number; // Score Sentiment corrente (da -1.0 a +1.0)
   previousSentimentScore?: number; // Score Sentiment precedente
   vix24hChangePct?: number; // Variazione % dell'indice VIX nelle ultime 24 ore (es. -2.5 per -2.5%)
+  entryTime?: number; // Timestamp di apertura della posizione in ms
 }
 
 export interface RiskConfig {
@@ -24,30 +27,17 @@ export interface RiskConfig {
 
 /**
  * Valuta se una singola posizione deve essere chiusa in base alle regole di risk management,
- * al target di attivazione, al trailing stop dinamico e all'interazione con il Sentiment LLM.
+ * al target di attivazione, al trailing stop dinamico, alla stagnazione temporale e all'interazione con il Sentiment LLM.
  */
 export class RiskManagementService {
   
-  /**
-   * Determina l'azione da intraprendere sulla singola posizione corrente basandosi sul prezzo d'ingresso,
-   * il prezzo massimo raggiunto (peakPrice), i parametri della strategia e lo Score di Sentiment.
-   * 
-   * Sinergia Stop Loss - Sentiment:
-   * 1. Dynamic Stop Loss:
-   *    - Sentiment Alto (> +0.40): Amplia la tolleranza allo Stop Loss (es. x1.33) per evitare shakeout da volatilità di breve.
-   *    - Sentiment Debole (0.00 <= S <= 0.20): Rstringe lo Stop Loss (es. x0.65) per tagliare rapidamente le perdite in assenza di spinta.
-   *    - Sentiment Negativo (< 0.00): Ristretto ulteriormente (es. x0.40).
-   * 2. Soft Stop / Early Warning:
-   *    - Se in perdita e il Sentiment crolla di >= 0.20 o scende <= +0.05, chiude anticipatamente la posizione.
-   * 3. Trailing Stop Accelerato dal Sentiment:
-   *    - Se la posizione è attivata ma il Sentiment scende (Divergenza), il Trailing Stop si stringe del 50% per blindare i profitti.
-   */
   public static evaluateClosure(
     position: Position, 
     _historicalProfits: number, 
-    config: RiskConfig
+    config: RiskConfig,
+    systemRules?: RiskRuleConfig[]
   ): { action: 'CLOSE'; reason: string } | null {
-    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct } = position;
+    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct, entryTime } = position;
 
     // Se non abbiamo un prezzo d'ingresso valido o un prezzo corrente, non possiamo calcolare i livelli
     if (!openPrice || openPrice <= 0 || !currentPrice || currentPrice <= 0) {
@@ -56,25 +46,79 @@ export class RiskManagementService {
 
     // Percentuali di profitto/perdita calcolate unicamente rispetto al prezzo medio d'ingresso della SINGOLA posizione
     const currentProfitPct = ((currentPrice - openPrice) / openPrice) * 100;
+    const ageMinutes = entryTime ? (Date.now() - entryTime) / (60 * 1000) : null;
 
-    // --- REGOLE SPECIFICHE DI RISCHIO E GESTIONE LIQUIDITA' / SENTIMENT ---
+    // --- 0. VALUTAZIONE DETERMINISTICA SULLE REGOLE DI SISTEMA SOTTOMESSE ---
+    if (systemRules && systemRules.length > 0) {
+      for (const rule of systemRules) {
+        if (!rule.enabled) continue;
 
-    // REGOLA 1: Se P&L <= -0.80% e Sentiment < 0.20 -> Chiusura preventiva per liberare slot per asset con Sentiment > 0.40
-    if (currentProfitPct <= -0.80 && sentimentScore !== undefined && sentimentScore < 0.20) {
-      return {
-        action: 'CLOSE',
-        reason: `[Chiusura Preventiva P&L -0.80%] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= -0.80%) e Sentiment debole (${sentimentScore.toFixed(2)} < 0.20). Chiusura preventiva per liberare slot per asset con Sentiment > 0.40.`
-      };
-    }
+        // Regola: PNL_PREVENTIVE_CLOSE
+        if (rule.type === 'PNL_PREVENTIVE_CLOSE') {
+          const maxLoss = rule.parameters.maxLossPct ?? -0.80;
+          const minSent = rule.parameters.minSentimentThreshold ?? 0.20;
+          if (currentProfitPct <= maxLoss && sentimentScore !== undefined && sentimentScore < minSent) {
+            return {
+              action: 'CLOSE',
+              reason: `[Regola Sistema: PNL_PREVENTIVE_CLOSE] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= ${maxLoss}%) e Sentiment debole (${sentimentScore.toFixed(2)} < ${minSent}). Chiusura preventiva per liberare slot per asset ad alto sentiment.`
+            };
+          }
+        }
 
-    // REGOLA 2: Se Sentiment < 0.15 -> Vendi immediatamente per liberare liquidità, a meno che VIX in calo > 2% nelle 24h
-    if (sentimentScore !== undefined && sentimentScore < 0.15) {
-      const isVixDroppingOver2Pct = vix24hChangePct !== undefined && vix24hChangePct < -2.0;
-      if (!isVixDroppingOver2Pct) {
-        const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
+        // Regola: SENTIMENT_LIQUIDITY_SELL
+        if (rule.type === 'SENTIMENT_LIQUIDITY_SELL') {
+          const minSent = rule.parameters.minSentimentThreshold ?? 0.15;
+          const vixThreshold = rule.parameters.vixDropExemptionPct ?? -2.0;
+
+          if (sentimentScore !== undefined && sentimentScore < minSent) {
+            const isVixDropping = vix24hChangePct !== undefined && vix24hChangePct < vixThreshold;
+            if (!isVixDropping) {
+              const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
+              return {
+                action: 'CLOSE',
+                reason: `[Regola Sistema: SENTIMENT_LIQUIDITY_SELL] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< ${minSent}) e VIX non in calo > ${Math.abs(vixThreshold)}% (VIX 24h: ${vixText}). Vendi immediatamente per liberare liquidità.`
+              };
+            }
+          }
+        }
+
+        // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop)
+        if (rule.type === 'TIME_STAGNATION_CLOSE' && ageMinutes !== null) {
+          const stagMins = rule.parameters.stagnationMinutes ?? 30;
+          const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.10;
+
+          if (ageMinutes >= stagMins && currentProfitPct <= stagMaxPnl) {
+            return {
+              action: 'CLOSE',
+              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${stagMins} min) con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
+            };
+          }
+        }
+      }
+    } else {
+      // --- REGOLE DEFAULT (se systemRules non viene passato) ---
+      if (currentProfitPct <= -0.80 && sentimentScore !== undefined && sentimentScore < 0.20) {
         return {
           action: 'CLOSE',
-          reason: `[Vendita Liquidità Sentiment < 0.15] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< 0.15) e VIX non in calo > 2% (VIX 24h: ${vixText}). Vendi immediatamente per liberare liquidità.`
+          reason: `[Chiusura Preventiva P&L -0.80%] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= -0.80%) e Sentiment debole (${sentimentScore.toFixed(2)} < 0.20). Chiusura preventiva per liberare slot.`
+        };
+      }
+
+      if (sentimentScore !== undefined && sentimentScore < 0.15) {
+        const isVixDroppingOver2Pct = vix24hChangePct !== undefined && vix24hChangePct < -2.0;
+        if (!isVixDroppingOver2Pct) {
+          const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
+          return {
+            action: 'CLOSE',
+            reason: `[Vendita Liquidità Sentiment < 0.15] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< 0.15) e VIX non in calo > 2% (VIX 24h: ${vixText}). Vendi immediatamente.`
+          };
+        }
+      }
+
+      if (ageMinutes !== null && ageMinutes >= 30 && currentProfitPct <= 0.10) {
+        return {
+          action: 'CLOSE',
+          reason: `[Chiusura Stagnazione Temporale] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min senza variazioni positive rilevanti (P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura automatica per evitare di rimanere bloccati.`
         };
       }
     }

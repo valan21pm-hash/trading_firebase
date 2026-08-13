@@ -104,7 +104,7 @@ export class GoogleSheetsService {
       });
       return true;
     } catch (err: any) {
-      console.error('[GoogleSheetsService] Errore in appendLogsToSheet:', this.formatError(err, targetSheetId));
+      console.warn('[GoogleSheetsService Avviso] appendLogsToSheet non disponibile:', this.formatError(err, targetSheetId));
       return false;
     }
   }
@@ -134,7 +134,7 @@ export class GoogleSheetsService {
       return rules;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
-      console.error('[GoogleSheetsService] Errore in syncFeedbackRulesFromSheet:', errMsg);
+      console.warn('[GoogleSheetsService Avviso] syncFeedbackRulesFromSheet:', errMsg);
       throw new Error(errMsg);
     }
   }
@@ -215,7 +215,7 @@ export class GoogleSheetsService {
       return true;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
-      console.error('[GoogleSheetsService] Errore in appendFeedbackRuleToSheet:', errMsg);
+      console.warn('[GoogleSheetsService Avviso] appendFeedbackRuleToSheet:', errMsg);
       throw new Error(errMsg);
     }
   }
@@ -274,7 +274,7 @@ export class GoogleSheetsService {
       return true;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
-      console.error('[GoogleSheetsService] Errore in exportFeedbackRulesToSheet:', errMsg);
+      console.warn('[GoogleSheetsService Avviso] exportFeedbackRulesToSheet:', errMsg);
       throw new Error(errMsg);
     }
   }
@@ -312,7 +312,7 @@ export class GoogleSheetsService {
       return keys;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
-      console.error('[GoogleSheetsService] Errore in syncKeysFromSheet:', errMsg);
+      console.warn('[GoogleSheetsService Avviso] syncKeysFromSheet:', errMsg);
       throw new Error(errMsg);
     }
   }
@@ -343,7 +343,7 @@ export class GoogleSheetsService {
       return true;
     } catch (err: any) {
       const errMsg = this.formatError(err, targetSheetId);
-      console.error('[GoogleSheetsService] Errore in exportKeysToSheet:', errMsg);
+      console.warn('[GoogleSheetsService Avviso] exportKeysToSheet:', errMsg);
       throw new Error(errMsg);
     }
   }

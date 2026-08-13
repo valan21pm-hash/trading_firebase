@@ -62,6 +62,65 @@ import { GoogleSheetsService } from './src/backend/services/GoogleSheetsService.
 import { RiskManagementService } from "./src/backend/services/RiskManagementService";
 import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
 import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js";
+import { RiskRuleConfig } from "./src/types.js";
+
+const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
+  {
+    id: 'pnl_preventive_close',
+    enabled: true,
+    type: 'PNL_PREVENTIVE_CLOSE',
+    parameters: {
+      maxLossPct: -0.80,
+      minSentimentThreshold: 0.20
+    }
+  },
+  {
+    id: 'sentiment_liquidity_sell',
+    enabled: true,
+    type: 'SENTIMENT_LIQUIDITY_SELL',
+    parameters: {
+      minSentimentThreshold: 0.15,
+      vixDropExemptionPct: -2.0
+    }
+  },
+  {
+    id: 'time_stagnation_close',
+    enabled: true,
+    type: 'TIME_STAGNATION_CLOSE',
+    parameters: {
+      stagnationMinutes: 30,
+      stagnationMaxPnlPct: 0.10
+    }
+  },
+  {
+    id: 'eod_buy_lock',
+    enabled: true,
+    type: 'EOD_BUY_LOCK',
+    parameters: {
+      eodWindowMinutes: 30
+    }
+  }
+];
+
+function isPurchaseAllowedBySystemRules(
+  minutesToClose: number | null,
+  isMarketSentimentDecreasing: boolean,
+  systemRules: RiskRuleConfig[] = []
+): { allowed: boolean; reason?: string } {
+  for (const rule of systemRules) {
+    if (!rule.enabled) continue;
+    if (rule.type === 'EOD_BUY_LOCK') {
+      const windowMins = rule.parameters.eodWindowMinutes ?? 30;
+      if (minutesToClose !== null && minutesToClose > 0 && minutesToClose <= windowMins && isMarketSentimentDecreasing) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: EOD_BUY_LOCK] Blocco nuovi acquisti: mancano ${minutesToClose.toFixed(1)}m alla chiusura e il sentiment aggregato è in calo per 2 cicli consecutivi.`
+        };
+      }
+    }
+  }
+  return { allowed: true };
+}
 
 let db: any = null;
 let firebaseApp: any = null;
@@ -364,8 +423,8 @@ app.post('/api/trading/credentials', async (req, res) => {
   }
 
   // Synchronize credentials to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
-  triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
-  exportCredentialsToGoogleSheets().catch(err => console.error('[GoogleSheets Auto-Export Error]:', err));
+  triggerChiaviApiDriveSync().catch(err => console.warn('[GoogleDrive Sync]:', err?.message || err));
+  exportCredentialsToGoogleSheets().catch(err => console.warn('[GoogleSheets Auto-Export]:', err?.message || err));
 
   if (!db) {
     return res.json({ success: true });
@@ -423,13 +482,15 @@ app.post('/api/feedback/reload', async (req, res) => {
       res.json({
         success: true,
         message: 'Stato, Regole, LLM e Credenziali Alpaca sincronizzati da Firebase!',
-        userFeedbackRules: botStatus.userFeedbackRules || []
+        userFeedbackRules: botStatus.userFeedbackRules || [],
+        systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
       });
     } else {
       res.json({
         success: true,
         message: 'Regole aggiornate dallo stato locale (DB non collegato)',
-        userFeedbackRules: botStatus.userFeedbackRules || []
+        userFeedbackRules: botStatus.userFeedbackRules || [],
+        systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
       });
     }
   } catch (e: any) {
@@ -437,8 +498,25 @@ app.post('/api/feedback/reload', async (req, res) => {
     res.json({
       success: true,
       message: 'Sincronizzato dallo stato locale (Quota Firebase/Rete temporaneamente non disponibile)',
-      userFeedbackRules: botStatus.userFeedbackRules || []
+      userFeedbackRules: botStatus.userFeedbackRules || [],
+      systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
     });
+  }
+});
+
+app.post('/api/settings/system-risk-rules', async (req, res) => {
+  try {
+    const { systemRiskRules } = req.body;
+    if (Array.isArray(systemRiskRules)) {
+      botStatus.systemRiskRules = systemRiskRules;
+      await saveBotStatus();
+      addLog('paper', `[Regole Sistema] Sincronizzate ${systemRiskRules.length} regole di rischio deterministiche.`);
+      res.json({ success: true, systemRiskRules: botStatus.systemRiskRules });
+    } else {
+      res.status(400).json({ success: false, error: 'Formato systemRiskRules non valido' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -584,8 +662,8 @@ app.post('/api/llm/configs', async (req, res) => {
   service.updateConfig(provider, updateData);
 
   // Synchronize keys to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
-  triggerChiaviApiDriveSync().catch(err => console.error('[GoogleDrive Error]:', err));
-  exportCredentialsToGoogleSheets().catch(err => console.error('[GoogleSheets Auto-Export Error]:', err));
+  triggerChiaviApiDriveSync().catch(err => console.warn('[GoogleDrive Sync]:', err?.message || err));
+  exportCredentialsToGoogleSheets().catch(err => console.warn('[GoogleSheets Auto-Export]:', err?.message || err));
 
   if (db) {
     try {
@@ -937,6 +1015,7 @@ let botStatus: {
   };
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   userFeedbackRules?: string[];
+  systemRiskRules?: RiskRuleConfig[];
   monitoredSymbols?: string[];
   lastGoogleSheetsLogSync?: string | null;
   historicalProfits?: number;
@@ -964,6 +1043,7 @@ let botStatus: {
   latestDailyDebrief: undefined,
   dailyLogicLogs: [],
   userFeedbackRules: [],
+  systemRiskRules: DEFAULT_SYSTEM_RISK_RULES,
   monitoredSymbols: [],
   historicalProfits: 2.50,
   y: 1,
@@ -1350,6 +1430,7 @@ async function saveBotStatus() {
       liveActive: botStatus.liveActive,
       tradingMode: botStatus.tradingMode,
       userFeedbackRules: botStatus.userFeedbackRules || [],
+      systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES,
       monitoredSymbols: botStatus.monitoredSymbols || [],
       historicalProfits: botStatus.historicalProfits || 0,
       y: botStatus.y || 1,
@@ -1426,6 +1507,7 @@ async function loadStateFromFirestore() {
       botStatus.liveActive = data.liveActive ?? botStatus.liveActive;
       botStatus.tradingMode = data.tradingMode ?? botStatus.tradingMode;
       botStatus.userFeedbackRules = data.userFeedbackRules ?? botStatus.userFeedbackRules;
+      botStatus.systemRiskRules = data.systemRiskRules ?? botStatus.systemRiskRules ?? DEFAULT_SYSTEM_RISK_RULES;
       botStatus.monitoredSymbols = data.monitoredSymbols ?? botStatus.monitoredSymbols;
       botStatus.historicalProfits = data.historicalProfits ?? botStatus.historicalProfits;
       botStatus.y = data.y ?? botStatus.y;
@@ -2593,6 +2675,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         params
       );
 
+      if (!positionEntryTimes[mode][symbol]) {
+        positionEntryTimes[mode][symbol] = Date.now();
+      }
+
       const riskDecision = RiskManagementService.evaluateClosure({
         id: symbol,
         asset: symbol,
@@ -2602,7 +2688,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         unrealizedProfit: profitAmt,
         highestPrice: peakPrice,
         sentimentScore: sentimentScore,
-        vix24hChangePct: vix24hChangePct
+        vix24hChangePct: vix24hChangePct,
+        entryTime: positionEntryTimes[mode][symbol]
       }, botStatus.historicalProfits || 0, {
         y: botStatus.y || 1,
         defaultSL: slDollar,
@@ -2611,7 +2698,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         targetTpPct: params.tpPct,
         slPct: params.slPct,
         isAlpaca: true
-      });
+      }, botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES);
 
       let shouldClose = false;
       let closeReason = '';
@@ -2688,21 +2775,23 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
     // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2)
     const isDecreasingSentiment = isMarketSentimentDecreasingTwoConsecutiveScans();
-    const isWithin30MinToClose = minutesToClose !== null && minutesToClose > 0 && minutesToClose <= 30;
+    const activeRules = botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES;
+    const purchasePermission = isPurchaseAllowedBySystemRules(
+      minutesToClose,
+      isDecreasingSentiment,
+      activeRules
+    );
 
     if (isPreCloseWindow) {
       addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
-    } else if (isDecreasingSentiment && isWithin30MinToClose) {
-      const len = aggregateSentimentHistory.length;
-      const s0 = aggregateSentimentHistory[len - 1].score;
-      const s1 = aggregateSentimentHistory[len - 2].score;
-      const s2 = aggregateSentimentHistory[len - 3].score;
-      addLog(mode as 'paper' | 'live', `[Regola 3 - Blocco Acquisti] Nuovi acquisti disabilitati: Sentiment di Mercato aggregato in calo per 2 scansioni consecutive (${s2.toFixed(2)} -> ${s1.toFixed(2)} -> ${s0.toFixed(2)}) e mancano meno di 30 minuti alla chiusura del mercato (${minutesToClose ? minutesToClose.toFixed(1) : 'N/A'} min).`);
+    } else if (!purchasePermission.allowed) {
+      const reason = purchasePermission.reason || '[Regola Sistema] Nuovi acquisti bloccati da regola di sistema.';
+      addLog(mode as 'paper' | 'live', reason);
       addLogicLog(mode, {
         timestamp: new Date().toISOString(),
         symbol: 'MERCATO_GLOBALE',
         action: 'SKIP',
-        reasoning: `Blocco acquisti EOD: Sentiment di mercato aggregato decrescente per 2 scansioni consecutive (${s2.toFixed(2)} -> ${s1.toFixed(2)} -> ${s0.toFixed(2)}) a < 30m dalla chiusura (${minutesToClose ? minutesToClose.toFixed(1) : 'N/A'} min).`
+        reasoning: reason
       });
     } else {
       // Controllo soglia critica liquidità (< 5% del valore totale)
@@ -3444,13 +3533,13 @@ app.post('/api/feedback', async (req, res) => {
     sendToGoogleSheets({
       eventType: 'correction_rule',
       data: { rule }
-    }).catch(err => console.error('[Google Sheets Error]', err));
-    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule addition:', err));
+    }).catch(err => console.warn('[Google Sheets Sync]:', err?.message || err));
+    saveBotStatus().catch(err => console.warn('[Firebase] Error saving status on feedback rule addition:', err?.message || err));
     
     try {
       await GoogleSheetsService.appendFeedbackRuleToSheet(rule);
     } catch (err: any) {
-      console.error('[GoogleSheets Auto-Export Feedback Error]:', err.message);
+      console.warn('[GoogleSheets Auto-Export Feedback]:', err.message);
     }
 
     res.json({ success: true, message: 'Regola aggiunta con successo e sincronizzata.' });
@@ -3472,12 +3561,12 @@ app.post('/api/feedback/delete', async (req, res) => {
   if (typeof index === 'number' && index >= 0 && index < botStatus.userFeedbackRules.length) {
     const deletedRule = botStatus.userFeedbackRules.splice(index, 1)[0];
     addLog('system', `[Feedback Utente] Rimossa regola: ${deletedRule}`);
-    saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on feedback rule deletion:', err));
+    saveBotStatus().catch(err => console.warn('[Firebase] Error saving status on feedback rule deletion:', err?.message || err));
     
     try {
       await GoogleSheetsService.exportFeedbackRulesToSheet(botStatus.userFeedbackRules);
     } catch (err: any) {
-      console.error('[GoogleSheets Auto-Export Feedback Error]:', err.message);
+      console.warn('[GoogleSheets Auto-Export Feedback]:', err.message);
     }
 
     res.json({ success: true, message: 'Regola rimossa con successo.', userFeedbackRules: botStatus.userFeedbackRules });
@@ -4878,6 +4967,10 @@ async function executeAlpacaRealtimeCheck() {
         params
       );
 
+      if (!positionEntryTimes[mode][symbol]) {
+        positionEntryTimes[mode][symbol] = Date.now();
+      }
+
       // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
       const signal = inMemoryGeminiSignals.get(symbol);
       const positionObj = {
@@ -4889,10 +4982,16 @@ async function executeAlpacaRealtimeCheck() {
         unrealizedProfit: unrealizedPL,
         highestPrice: highestPrice,
         sentimentScore: signal?.score,
-        vix24hChangePct: vix24hChangePct
+        vix24hChangePct: vix24hChangePct,
+        entryTime: positionEntryTimes[mode][symbol]
       };
 
-      const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, positionConfig);
+      const decision = RiskManagementService.evaluateClosure(
+        positionObj,
+        historicalProfits,
+        positionConfig,
+        botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
+      );
 
       if (decision && decision.action === 'CLOSE') {
         addLog(mode as 'paper' | 'live', `[Rischio Alpaca] Chiusura posizione per ${symbol}. Motivo: ${decision.reason}`);

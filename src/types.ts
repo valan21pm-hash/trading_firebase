@@ -1,3 +1,17 @@
+export interface RiskRuleConfig {
+  id: string;
+  enabled: boolean;
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE';
+  parameters: {
+    maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
+    minSentimentThreshold?: number; // es. 0.20 o 0.15
+    vixDropExemptionPct?: number;   // es. -2.0 per calo VIX > 2%
+    eodWindowMinutes?: number;      // es. 30 minuti prima della chiusura
+    stagnationMinutes?: number;     // es. 30 minuti di stasi/stagnazione
+    stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
+  };
+}
+
 export interface Position {
   asset_id: string;
   symbol: string;
@@ -61,6 +75,7 @@ export interface BotStatus {
   liveActive: boolean;
   lastCheck: string | null;
   userFeedbackRules?: string[];
+  systemRiskRules?: RiskRuleConfig[];
   monitoredSymbols?: string[];
   geminiSignals?: GeminiSignal[];
   latestDailyReport?: string;

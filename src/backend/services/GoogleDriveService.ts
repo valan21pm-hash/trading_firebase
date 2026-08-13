@@ -209,7 +209,7 @@ export class GoogleDriveService {
 
       return await this.saveJsonFile(STORIA_LOG_FILE, payload);
     } catch (err: any) {
-      console.error('[GoogleDrive Errore] Errore durante l\'append dei log su StoriaLOG.json:', err.message);
+      console.warn('[GoogleDrive Avviso] Errore durante l\'append dei log su StoriaLOG.json:', err.message);
       return false;
     }
   }
@@ -226,7 +226,7 @@ export class GoogleDriveService {
       };
       return await this.saveJsonFile(CHIAVI_API_FILE, payload);
     } catch (err: any) {
-      console.error('[GoogleDrive Errore] Impossibile salvare ChiaviAPI.json:', err.message);
+      console.warn('[GoogleDrive Avviso] Impossibile salvare ChiaviAPI.json:', err.message);
       return false;
     }
   }
