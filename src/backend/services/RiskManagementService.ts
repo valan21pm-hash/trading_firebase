@@ -84,13 +84,27 @@ export class RiskManagementService {
 
         // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop)
         if (rule.type === 'TIME_STAGNATION_CLOSE' && ageMinutes !== null) {
-          const stagMins = rule.parameters.stagnationMinutes ?? 30;
+          const baseStagMins = rule.parameters.stagnationMinutes ?? 30;
+          const highStagMins = rule.parameters.stagnationMinutesHighSentiment ?? 60;
           const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.10;
 
-          if (ageMinutes >= stagMins && currentProfitPct <= stagMaxPnl) {
+          // Tempo di stasi dinamico in base al sentiment:
+          // > 0.30 -> 60 minuti
+          // 0.20 - 0.29 (o default) -> 30 minuti
+          let effectiveStagMins = baseStagMins;
+          let sentimentDetail = '';
+
+          if (sentimentScore !== undefined && sentimentScore > 0.30) {
+            effectiveStagMins = highStagMins;
+            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} > 0.30 -> limite 60m)`;
+          } else if (sentimentScore !== undefined) {
+            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} -> limite 30m)`;
+          }
+
+          if (ageMinutes >= effectiveStagMins && currentProfitPct <= stagMaxPnl) {
             return {
               action: 'CLOSE',
-              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${stagMins} min) con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
+              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite)${sentimentDetail} con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
             };
           }
         }
@@ -115,10 +129,12 @@ export class RiskManagementService {
         }
       }
 
-      if (ageMinutes !== null && ageMinutes >= 30 && currentProfitPct <= 0.10) {
+      const defaultStagMins = (sentimentScore !== undefined && sentimentScore > 0.30) ? 60 : 30;
+      if (ageMinutes !== null && ageMinutes >= defaultStagMins && currentProfitPct <= 0.10) {
+        const sentDetail = sentimentScore !== undefined ? ` (Sentiment: ${sentimentScore.toFixed(2)} -> limite ${defaultStagMins}m)` : '';
         return {
           action: 'CLOSE',
-          reason: `[Chiusura Stagnazione Temporale] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min senza variazioni positive rilevanti (P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura automatica per evitare di rimanere bloccati.`
+          reason: `[Chiusura Stagnazione Temporale] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min senza variazioni positive rilevanti (P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +0.10%${sentDetail}). Chiusura automatica per evitare di rimanere bloccati.`
         };
       }
     }

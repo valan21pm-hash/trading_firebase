@@ -33,6 +33,7 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
       stagnationMinutes: 30,
+      stagnationMinutesHighSentiment: 60,
       stagnationMaxPnlPct: 0.10
     }
   },
@@ -276,13 +277,13 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            <strong>Protezione Guadagni:</strong> Se una posizione non si muove o resta in stasi per oltre X minuti, viene chiusa per liberare il capitale invece di attendere passivamente lo Stop Loss.
+            <strong>Protezione Guadagni:</strong> Se una posizione non si muove o resta in stasi per oltre il tempo limite, viene chiusa per liberare capitale invece di attendere lo Stop Loss.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Tempo Limite Stagnazione:</span>
+                <span>Stasi per Sentiment tra 0.20 e 0.29:</span>
                 <span className="font-mono text-emerald-700 font-bold">{stagRule.parameters.stagnationMinutes ?? 30} minuti</span>
               </div>
               <input
@@ -302,7 +303,27 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>P&L Max per Stasi:</span>
+                <span>Stasi per Sentiment &gt; 0.30:</span>
+                <span className="font-mono text-emerald-700 font-bold">{stagRule.parameters.stagnationMinutesHighSentiment ?? 60} minuti</span>
+              </div>
+              <input
+                type="range"
+                min="15"
+                max="180"
+                step="5"
+                value={stagRule.parameters.stagnationMinutesHighSentiment ?? 60}
+                onChange={(e) => updateRule('TIME_STAGNATION_CLOSE', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, stagnationMinutesHighSentiment: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!stagRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>P&L Max per Considerare Stasi:</span>
                 <span className="font-mono text-emerald-700 font-bold">+{stagRule.parameters.stagnationMaxPnlPct ?? 0.10}%</span>
               </div>
               <input

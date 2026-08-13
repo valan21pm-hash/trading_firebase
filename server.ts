@@ -89,6 +89,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
       stagnationMinutes: 30,
+      stagnationMinutesHighSentiment: 60,
       stagnationMaxPnlPct: 0.10
     }
   },

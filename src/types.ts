@@ -7,7 +7,8 @@ export interface RiskRuleConfig {
     minSentimentThreshold?: number; // es. 0.20 o 0.15
     vixDropExemptionPct?: number;   // es. -2.0 per calo VIX > 2%
     eodWindowMinutes?: number;      // es. 30 minuti prima della chiusura
-    stagnationMinutes?: number;     // es. 30 minuti di stasi/stagnazione
+    stagnationMinutes?: number;     // es. 30 minuti di stasi per sentiment 0.20 - 0.29
+    stagnationMinutesHighSentiment?: number; // es. 60 minuti di stasi per sentiment > 0.30
     stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
   };
 }
