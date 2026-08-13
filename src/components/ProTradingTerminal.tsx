@@ -2024,7 +2024,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         onClose={() => setForceBuyModalOpen(false)}
         initialSymbol={forceBuySymbol}
         initialMode={tradingMode}
-        onSuccess={fetchStatus}
+        onSuccess={refreshBackendStatus}
         showToast={(msg, type, title) => setToastMessage(`${title ? title + ': ' : ''}${msg}`)}
       />
     </div>

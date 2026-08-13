@@ -1059,6 +1059,19 @@ function AccountPanel({
               </div>
             </div>
 
+            {/* Regole Attive Automatiche */}
+            <div className="mt-3 p-3 bg-slate-800/80 border border-indigo-500/30 rounded-lg space-y-1.5 text-[11px] text-slate-300">
+              <div className="font-semibold text-indigo-300 text-xs flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                Regole Automatiche di Rischio & Liquidità Attive:
+              </div>
+              <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                <li><strong className="text-amber-300">Chiusura Preventiva P&L (-0.80%):</strong> Se un asset in portafoglio raggiunge un P&L ≤ -0.80% e sentiment &lt; 0.20, viene chiuso per liberare slot ad asset con sentiment &gt; 0.40.</li>
+                <li><strong className="text-rose-300">Protezione Liquidità (&lt; 0.15):</strong> Vendita immediata se il sentiment scende &lt; 0.15, a meno che il VIX non sia in calo &gt; 2% nelle ultime 24 ore.</li>
+                <li><strong className="text-indigo-300">Filtro Acquisti EOD (&lt; 30m):</strong> Nuovi acquisti bloccati se il Sentiment aggregato mostra un trend decrescente per 2 scansioni consecutive e mancano &lt; 30 min alla chiusura.</li>
+              </ul>
+            </div>
+
             {settingsStatus && (
               <div className={`p-2.5 rounded-lg text-xs font-sans ${settingsStatus.success ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border border-rose-800 text-rose-200'}`}>
                 {settingsStatus.message}

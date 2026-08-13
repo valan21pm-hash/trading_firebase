@@ -1834,8 +1834,12 @@ async function getDynamicTrendingStocks(): Promise<string[]> {
   }
 
   try {
+    const feedbackRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
+      ? `\n\nUSER FEEDBACK RULES TO FOLLOW:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
+      : '';
+
     const prompt = `[NEWS_ANALYSIS & DYNAMIC_FILTER]
-Raccogli e analizza le notizie finanziarie correnti, i catalizzatori attivi, la volatilità e la direzionalità dei mercati globali e degli indici/azioni statunitensi.
+Raccogli e analizza le notizie finanziarie correnti, i catalizzatori attivi, la volatilità e la direzionalità dei mercati globali e degli indici/azioni statunitensi.${feedbackRules}
 Valuta se gli indici predefiniti (SPY, QQQ, VTI, GLD, ecc.) mostrano opportunità inferiori rispetto ad altri mercati o settori rilevati nelle notizie odierne.
 Se trovi indici o mercati migliori, aggiorna il target di monitoraggio; altrimenti mantieni la base corrente.
 [EXECUTION]
@@ -1882,6 +1886,85 @@ Rispondi SOLO con l'array JSON.`;
   }
 
   return activeDynamicIndicesCache;
+}
+
+// Storico e calcolo VIX 24h
+let cachedVixChange: { timestamp: number; value: number } | null = null;
+
+async function getVix24hChange(conf?: any): Promise<number | undefined> {
+  const now = Date.now();
+  if (cachedVixChange && (now - cachedVixChange.timestamp < 2 * 60 * 1000)) {
+    return cachedVixChange.value;
+  }
+
+  // 1. Prova snapshot Alpaca per VXX o VIXY se configurato
+  if (conf && conf.isConfigured && conf.apiKey && conf.secretKey) {
+    for (const vixSym of ['VXX', 'VIXY']) {
+      try {
+        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${vixSym}/snapshot`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const prevClose = data.prevDailyBar?.c;
+          const currPrice = data.latestTrade?.p || data.dailyBar?.c;
+          if (prevClose && prevClose > 0 && currPrice && currPrice > 0) {
+            const changePct = ((currPrice - prevClose) / prevClose) * 100;
+            cachedVixChange = { timestamp: now, value: changePct };
+            return changePct;
+          }
+        }
+      } catch (e) {
+        // Continua al fallback
+      }
+    }
+  }
+
+  // 2. Fallback via Yahoo Finance VIX
+  try {
+    const res = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=2d');
+    if (res.ok) {
+      const data: any = await res.json();
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (meta && meta.regularMarketPrice && meta.chartPreviousClose) {
+        const currPrice = meta.regularMarketPrice;
+        const prevClose = meta.chartPreviousClose;
+        const changePct = ((currPrice - prevClose) / prevClose) * 100;
+        cachedVixChange = { timestamp: now, value: changePct };
+        return changePct;
+      }
+    }
+  } catch (e) {
+    // Silenzioso
+  }
+
+  return undefined;
+}
+
+// Storico del sentiment aggregato di mercato per tracciare il trend (Regola 3)
+const aggregateSentimentHistory: { timestamp: number; score: number }[] = [];
+
+function recordAggregateMarketSentiment(bulkSentiment: Record<string, { score: number; reasoning: string }>) {
+  const entries = Object.values(bulkSentiment);
+  if (entries.length === 0) return;
+  const sum = entries.reduce((acc, curr) => acc + (typeof curr.score === 'number' ? curr.score : 0), 0);
+  const avg = sum / entries.length;
+  aggregateSentimentHistory.push({ timestamp: Date.now(), score: avg });
+  if (aggregateSentimentHistory.length > 20) {
+    aggregateSentimentHistory.shift();
+  }
+}
+
+function isMarketSentimentDecreasingTwoConsecutiveScans(): boolean {
+  if (aggregateSentimentHistory.length < 3) return false;
+  const len = aggregateSentimentHistory.length;
+  const s0 = aggregateSentimentHistory[len - 1].score; // Scansione corrente
+  const s1 = aggregateSentimentHistory[len - 2].score; // Scansione precedente
+  const s2 = aggregateSentimentHistory[len - 3].score; // 2 scansioni fa
+  return s0 < s1 && s1 < s2;
 }
 
 async function getMarketMinutesToClose(baseUrl: string, apiKey: string, secretKey: string): Promise<number | null> {
@@ -2432,6 +2515,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
     addLog(mode as 'paper' | 'live', `[Mercato] Avvio analisi di sentiment bulk per ${symbolsToAnalyze.length} asset...`);
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
+    recordAggregateMarketSentiment(bulkSentiment);
+    const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
 
     addLog(mode as 'paper' | 'live', `[Valutazione IA] Riepilogo sentiment per ciascun asset analizzato:`);
     for (const sym of symbolsToAnalyze) {
@@ -2515,7 +2600,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         openPrice: avgEntryPrice,
         currentPrice: currentPrice,
         unrealizedProfit: profitAmt,
-        highestPrice: peakPrice
+        highestPrice: peakPrice,
+        sentimentScore: sentimentScore,
+        vix24hChangePct: vix24hChangePct
       }, botStatus.historicalProfits || 0, {
         y: botStatus.y || 1,
         defaultSL: slDollar,
@@ -2600,8 +2687,23 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     }
 
     // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2)
+    const isDecreasingSentiment = isMarketSentimentDecreasingTwoConsecutiveScans();
+    const isWithin30MinToClose = minutesToClose !== null && minutesToClose > 0 && minutesToClose <= 30;
+
     if (isPreCloseWindow) {
       addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
+    } else if (isDecreasingSentiment && isWithin30MinToClose) {
+      const len = aggregateSentimentHistory.length;
+      const s0 = aggregateSentimentHistory[len - 1].score;
+      const s1 = aggregateSentimentHistory[len - 2].score;
+      const s2 = aggregateSentimentHistory[len - 3].score;
+      addLog(mode as 'paper' | 'live', `[Regola 3 - Blocco Acquisti] Nuovi acquisti disabilitati: Sentiment di Mercato aggregato in calo per 2 scansioni consecutive (${s2.toFixed(2)} -> ${s1.toFixed(2)} -> ${s0.toFixed(2)}) e mancano meno di 30 minuti alla chiusura del mercato (${minutesToClose ? minutesToClose.toFixed(1) : 'N/A'} min).`);
+      addLogicLog(mode, {
+        timestamp: new Date().toISOString(),
+        symbol: 'MERCATO_GLOBALE',
+        action: 'SKIP',
+        reasoning: `Blocco acquisti EOD: Sentiment di mercato aggregato decrescente per 2 scansioni consecutive (${s2.toFixed(2)} -> ${s1.toFixed(2)} -> ${s0.toFixed(2)}) a < 30m dalla chiusura (${minutesToClose ? minutesToClose.toFixed(1) : 'N/A'} min).`
+      });
     } else {
       // Controllo soglia critica liquidità (< 5% del valore totale)
       const totalAccountEquity = botData[mode].balance;
@@ -4727,6 +4829,7 @@ async function executeAlpacaRealtimeCheck() {
     }
 
     const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
+    const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
 
     for (const pos of positions) {
       const symbol = pos.symbol;
@@ -4776,6 +4879,7 @@ async function executeAlpacaRealtimeCheck() {
       );
 
       // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
+      const signal = inMemoryGeminiSignals.get(symbol);
       const positionObj = {
         id: symbol,
         asset: symbol,
@@ -4783,7 +4887,9 @@ async function executeAlpacaRealtimeCheck() {
         openPrice: avgEntryPrice,
         currentPrice: currentPrice,
         unrealizedProfit: unrealizedPL,
-        highestPrice: highestPrice
+        highestPrice: highestPrice,
+        sentimentScore: signal?.score,
+        vix24hChangePct: vix24hChangePct
       };
 
       const decision = RiskManagementService.evaluateClosure(positionObj, historicalProfits, positionConfig);

@@ -8,6 +8,7 @@ export interface Position {
   highestPrice?: number; // Massimo prezzo raggiunto registrato (per Trailing Stop)
   sentimentScore?: number; // Score Sentiment corrente (da -1.0 a +1.0)
   previousSentimentScore?: number; // Score Sentiment precedente
+  vix24hChangePct?: number; // Variazione % dell'indice VIX nelle ultime 24 ore (es. -2.5 per -2.5%)
 }
 
 export interface RiskConfig {
@@ -46,18 +47,40 @@ export class RiskManagementService {
     _historicalProfits: number, 
     config: RiskConfig
   ): { action: 'CLOSE'; reason: string } | null {
-    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore } = position;
+    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct } = position;
 
     // Se non abbiamo un prezzo d'ingresso valido o un prezzo corrente, non possiamo calcolare i livelli
     if (!openPrice || openPrice <= 0 || !currentPrice || currentPrice <= 0) {
       return null;
     }
 
+    // Percentuali di profitto/perdita calcolate unicamente rispetto al prezzo medio d'ingresso della SINGOLA posizione
+    const currentProfitPct = ((currentPrice - openPrice) / openPrice) * 100;
+
+    // --- REGOLE SPECIFICHE DI RISCHIO E GESTIONE LIQUIDITA' / SENTIMENT ---
+
+    // REGOLA 1: Se P&L <= -0.80% e Sentiment < 0.20 -> Chiusura preventiva per liberare slot per asset con Sentiment > 0.40
+    if (currentProfitPct <= -0.80 && sentimentScore !== undefined && sentimentScore < 0.20) {
+      return {
+        action: 'CLOSE',
+        reason: `[Chiusura Preventiva P&L -0.80%] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= -0.80%) e Sentiment debole (${sentimentScore.toFixed(2)} < 0.20). Chiusura preventiva per liberare slot per asset con Sentiment > 0.40.`
+      };
+    }
+
+    // REGOLA 2: Se Sentiment < 0.15 -> Vendi immediatamente per liberare liquidità, a meno che VIX in calo > 2% nelle 24h
+    if (sentimentScore !== undefined && sentimentScore < 0.15) {
+      const isVixDroppingOver2Pct = vix24hChangePct !== undefined && vix24hChangePct < -2.0;
+      if (!isVixDroppingOver2Pct) {
+        const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
+        return {
+          action: 'CLOSE',
+          reason: `[Vendita Liquidità Sentiment < 0.15] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< 0.15) e VIX non in calo > 2% (VIX 24h: ${vixText}). Vendi immediatamente per liberare liquidità.`
+        };
+      }
+    }
+
     // Picco massimo di prezzo raggiunto per questa singola posizione (High Water Mark)
     const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
-
-    // Percentuali di profitto calcolate unicamente rispetto al prezzo medio d'ingresso della SINGOLA posizione
-    const currentProfitPct = ((currentPrice - openPrice) / openPrice) * 100;
     const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
 
     // Parametri base della strategia
