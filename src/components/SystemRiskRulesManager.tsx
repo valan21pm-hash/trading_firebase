@@ -47,14 +47,33 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
   }
 ];
 
+function mergeWithDefaultRules(incomingRules?: RiskRuleConfig[]): RiskRuleConfig[] {
+  if (!incomingRules || !Array.isArray(incomingRules) || incomingRules.length === 0) {
+    return DEFAULT_RULES;
+  }
+  return DEFAULT_RULES.map(defaultRule => {
+    const existing = incomingRules.find(r => r.type === defaultRule.type || r.id === defaultRule.id);
+    if (!existing) return defaultRule;
+    return {
+      ...defaultRule,
+      ...existing,
+      enabled: existing.enabled ?? defaultRule.enabled,
+      parameters: {
+        ...defaultRule.parameters,
+        ...(existing.parameters || {})
+      }
+    };
+  });
+}
+
 export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast }: SystemRiskRulesManagerProps) {
-  const [rules, setRules] = useState<RiskRuleConfig[]>(initialRules && initialRules.length > 0 ? initialRules : DEFAULT_RULES);
+  const [rules, setRules] = useState<RiskRuleConfig[]>(mergeWithDefaultRules(initialRules));
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   useEffect(() => {
     if (initialRules && initialRules.length > 0) {
-      setRules(initialRules);
+      setRules(mergeWithDefaultRules(initialRules));
     }
   }, [initialRules]);
 

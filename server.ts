@@ -103,6 +103,25 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   }
 ];
 
+function normalizeSystemRiskRules(savedRules?: RiskRuleConfig[]): RiskRuleConfig[] {
+  if (!savedRules || !Array.isArray(savedRules) || savedRules.length === 0) {
+    return DEFAULT_SYSTEM_RISK_RULES;
+  }
+  return DEFAULT_SYSTEM_RISK_RULES.map(defaultRule => {
+    const existing = savedRules.find(r => r.type === defaultRule.type || r.id === defaultRule.id);
+    if (!existing) return defaultRule;
+    return {
+      ...defaultRule,
+      ...existing,
+      enabled: existing.enabled ?? defaultRule.enabled,
+      parameters: {
+        ...defaultRule.parameters,
+        ...(existing.parameters || {})
+      }
+    };
+  });
+}
+
 function isPurchaseAllowedBySystemRules(
   minutesToClose: number | null,
   isMarketSentimentDecreasing: boolean,
@@ -484,14 +503,14 @@ app.post('/api/feedback/reload', async (req, res) => {
         success: true,
         message: 'Stato, Regole, LLM e Credenziali Alpaca sincronizzati da Firebase!',
         userFeedbackRules: botStatus.userFeedbackRules || [],
-        systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
+        systemRiskRules: normalizeSystemRiskRules(botStatus.systemRiskRules)
       });
     } else {
       res.json({
         success: true,
         message: 'Regole aggiornate dallo stato locale (DB non collegato)',
         userFeedbackRules: botStatus.userFeedbackRules || [],
-        systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
+        systemRiskRules: normalizeSystemRiskRules(botStatus.systemRiskRules)
       });
     }
   } catch (e: any) {
@@ -500,7 +519,7 @@ app.post('/api/feedback/reload', async (req, res) => {
       success: true,
       message: 'Sincronizzato dallo stato locale (Quota Firebase/Rete temporaneamente non disponibile)',
       userFeedbackRules: botStatus.userFeedbackRules || [],
-      systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
+      systemRiskRules: normalizeSystemRiskRules(botStatus.systemRiskRules)
     });
   }
 });
@@ -509,9 +528,9 @@ app.post('/api/settings/system-risk-rules', async (req, res) => {
   try {
     const { systemRiskRules } = req.body;
     if (Array.isArray(systemRiskRules)) {
-      botStatus.systemRiskRules = systemRiskRules;
+      botStatus.systemRiskRules = normalizeSystemRiskRules(systemRiskRules);
       await saveBotStatus();
-      addLog('paper', `[Regole Sistema] Sincronizzate ${systemRiskRules.length} regole di rischio deterministiche.`);
+      addLog('paper', `[Regole Sistema] Sincronizzate ${botStatus.systemRiskRules.length} regole di rischio deterministiche.`);
       res.json({ success: true, systemRiskRules: botStatus.systemRiskRules });
     } else {
       res.status(400).json({ success: false, error: 'Formato systemRiskRules non valido' });
@@ -1431,7 +1450,7 @@ async function saveBotStatus() {
       liveActive: botStatus.liveActive,
       tradingMode: botStatus.tradingMode,
       userFeedbackRules: botStatus.userFeedbackRules || [],
-      systemRiskRules: botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES,
+      systemRiskRules: normalizeSystemRiskRules(botStatus.systemRiskRules),
       monitoredSymbols: botStatus.monitoredSymbols || [],
       historicalProfits: botStatus.historicalProfits || 0,
       y: botStatus.y || 1,
@@ -1508,7 +1527,7 @@ async function loadStateFromFirestore() {
       botStatus.liveActive = data.liveActive ?? botStatus.liveActive;
       botStatus.tradingMode = data.tradingMode ?? botStatus.tradingMode;
       botStatus.userFeedbackRules = data.userFeedbackRules ?? botStatus.userFeedbackRules;
-      botStatus.systemRiskRules = data.systemRiskRules ?? botStatus.systemRiskRules ?? DEFAULT_SYSTEM_RISK_RULES;
+      botStatus.systemRiskRules = normalizeSystemRiskRules(data.systemRiskRules || botStatus.systemRiskRules);
       botStatus.monitoredSymbols = data.monitoredSymbols ?? botStatus.monitoredSymbols;
       botStatus.historicalProfits = data.historicalProfits ?? botStatus.historicalProfits;
       botStatus.y = data.y ?? botStatus.y;
@@ -3901,6 +3920,7 @@ async function getStatusData() {
       liveActive: botStatus.liveActive,
       lastCheck: botStatus.lastCheck,
       userFeedbackRules: botStatus.userFeedbackRules,
+      systemRiskRules: normalizeSystemRiskRules(botStatus.systemRiskRules),
       monitoredSymbols: botStatus.monitoredSymbols || [],
       geminiSignals: await getAllGeminiSignals(),
       historicalProfits: botStatus.historicalProfits || 0,
