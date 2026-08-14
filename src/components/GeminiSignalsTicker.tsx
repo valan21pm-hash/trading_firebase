@@ -56,26 +56,30 @@ export const GeminiSignalsTicker: React.FC<GeminiSignalsTickerProps> = ({ onOpen
         </div>
         <span className="text-[11px] text-slate-400 font-mono">Aggiornato in tempo reale</span>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700">
+      <div className="flex flex-col gap-3">
         {signals.map((sig) => (
-          <div key={sig.asset} className="flex-shrink-0 bg-slate-950/80 p-3 rounded-xl border border-slate-800 min-w-[220px] flex flex-col justify-between gap-2 shadow-inner">
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-white text-base font-mono">{sig.asset}</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                sig.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' :
-                sig.action === 'SELL' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' :
-                'bg-slate-700/40 text-slate-300 border border-slate-600/40'
-              }`}>{sig.action} ({sig.score >= 0 ? `+${sig.score.toFixed(2)}` : sig.score.toFixed(2)})</span>
+          <div key={sig.asset} className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-inner">
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-white text-base font-mono tracking-wide">{sig.asset}</span>
+                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                  sig.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' :
+                  sig.action === 'SELL' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' :
+                  'bg-slate-700/40 text-slate-300 border border-slate-600/40'
+                }`}>{sig.action} ({sig.score >= 0 ? `+${sig.score.toFixed(2)}` : sig.score.toFixed(2)})</span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{sig.reasoning}</p>
             </div>
-            <p className="text-xs text-slate-300 line-clamp-2" title={sig.reasoning}>{sig.reasoning}</p>
             {onOpenForceBuy && (
-              <button
-                onClick={() => onOpenForceBuy(sig.asset)}
-                className="w-full mt-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Forza Acquisto {sig.asset}</span>
-              </button>
+              <div className="flex-shrink-0 sm:w-48">
+                <button
+                  onClick={() => onOpenForceBuy(sig.asset)}
+                  className="w-full py-2 px-3 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Forza Acquisto {sig.asset}</span>
+                </button>
+              </div>
             )}
           </div>
         ))}

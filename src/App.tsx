@@ -778,6 +778,9 @@ function AccountPanel({
   const currentBalance = account.balance ?? 0;
   const pnlDiff = currentBalance - initialCapital;
   const pnlPercent = initialCapital > 0 ? (pnlDiff / initialCapital) * 100 : 0;
+  
+  const investedCapital = account.positions ? account.positions.reduce((sum: any, pos: any) => sum + Math.abs(parseFloat(pos.market_value || '0')), 0) : 0;
+  const cashCapital = typeof account.cash === 'number' ? account.cash : Math.max(0, currentBalance - investedCapital);
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem(`alpaca_${type}_wrapLogs`);
@@ -980,6 +983,23 @@ function AccountPanel({
                 {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}% ({(pnlDiff >= 0 ? '+' : '') + '$' + pnlDiff.toFixed(2)})
               </div>
               <div className="text-xl sm:text-2xl font-bold text-gray-900">${currentBalance.toFixed(2)}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Capitale Investito</span>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-base sm:text-lg font-bold text-slate-950 font-mono">${investedCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[10px] text-slate-400 font-medium font-mono">({(currentBalance > 0 ? (investedCapital / currentBalance) * 100 : 0).toFixed(1)}% NAV)</span>
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Capitale Residuo</span>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-base sm:text-lg font-bold text-emerald-600 font-mono">${cashCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-[10px] text-slate-400 font-medium font-mono">({(currentBalance > 0 ? (cashCapital / currentBalance) * 100 : 0).toFixed(1)}% NAV)</span>
+              </div>
             </div>
           </div>
 
