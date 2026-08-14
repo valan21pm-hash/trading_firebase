@@ -102,8 +102,47 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     parameters: {
       eodWindowMinutes: 30
     }
+  },
+  {
+    id: 'custom_max_exposure',
+    enabled: true,
+    type: 'CUSTOM_MAX_EXPOSURE',
+    parameters: {
+      maxSectorExposurePct: 35,
+      minSectorsForBullishCoherent: 3
+    }
   }
 ];
+
+function getSymbolSector(symbol: string): string {
+  const sym = symbol.toUpperCase();
+  
+  // Semiconduttori (es. Semiconduttori/Hardware)
+  const semicon = ['NVDA', 'AMD', 'INTC', 'QCOM', 'AVGO', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH'];
+  if (semicon.includes(sym)) return 'Semiconduttori';
+  
+  // Tecnologia / Software / AI
+  const tech = ['AAPL', 'MSFT', 'CRM', 'ORCL', 'ADBE', 'CSCO', 'IBM', 'QQQ', 'GOOG', 'GOOGL', 'META'];
+  if (tech.includes(sym)) return 'Tecnologia & Software';
+  
+  // Beni di Consumo / Servizi
+  const consumer = ['AMZN', 'TSLA', 'NFLX', 'DIS', 'NKE', 'MCD', 'SBUX'];
+  if (consumer.includes(sym)) return 'Beni di Consumo';
+  
+  // Beni di Largo Consumo / Retail
+  const retail = ['WMT', 'COST'];
+  if (retail.includes(sym)) return 'Staples & Retail';
+  
+  // Indici / Macro
+  const macro = ['SPY', 'VOO', 'IVV', 'VTI', 'DIA', 'IWM'];
+  if (macro.includes(sym)) return 'Indici Macro';
+  
+  // Materie Prime / Commodities
+  const commodities = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
+  if (commodities.includes(sym)) return 'Materie Prime';
+  
+  return 'Altro / Generico';
+}
 
 function normalizeSystemRiskRules(savedRules?: RiskRuleConfig[]): RiskRuleConfig[] {
   if (!savedRules || !Array.isArray(savedRules) || savedRules.length === 0) {
@@ -2950,6 +2989,19 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           
           const sAndPTrackers = ['SPY', 'VOO', 'IVV', 'VTI'];
 
+          // --- REGOLE ESPOSIZIONE SETTORIALE ---
+          const maxExposureRule = activeRules.find(r => r.type === 'CUSTOM_MAX_EXPOSURE');
+          const isMaxExposureEnabled = maxExposureRule?.enabled ?? true;
+          const maxSectorExposurePct = maxExposureRule?.parameters?.maxSectorExposurePct ?? 35;
+          const minSectorsForBullishCoherent = maxExposureRule?.parameters?.minSectorsForBullishCoherent ?? 3;
+
+          const currentSectorExposure: Record<string, number> = {};
+          for (const pos of openPositions) {
+            const sec = getSymbolSector(pos.symbol);
+            const mVal = Math.abs(parseFloat(pos.market_value || '0'));
+            currentSectorExposure[sec] = (currentSectorExposure[sec] || 0) + mVal;
+          }
+
           while (slotsAllocated < availableSlots && positiveSymbolsWithSentiment.length > 0) {
             let allocatedInThisRound = 0;
             for (const item of positiveSymbolsWithSentiment) {
@@ -3003,6 +3055,58 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               amountToBuy = Math.floor(amountToBuy * 100) / 100;
 
               if (amountToBuy < 2.0) continue;
+
+              // --- CONTROLLO LIMITI E DIVERSIFICAZIONE SETTORIALE ---
+              if (isMaxExposureEnabled) {
+                const itemSector = getSymbolSector(item.symbol);
+                
+                // Calcola l'esposizione corrente + gli ordini già programmati per questo settore
+                const currentPlannedSectorExposure = ordersToSubmit.reduce((sum, o) => {
+                  if (getSymbolSector(o.symbol) === itemSector) {
+                    return sum + o.amount;
+                  }
+                  return sum;
+                }, currentSectorExposure[itemSector] || 0);
+
+                const prospectiveSectorExposure = currentPlannedSectorExposure + amountToBuy;
+                const prospectivePctOfNAV = totalAccountEquity > 0 ? (prospectiveSectorExposure / totalAccountEquity) * 100 : 0;
+
+                if (prospectivePctOfNAV > maxSectorExposurePct) {
+                  addLog(mode as 'paper' | 'live', `[Filtro Rischio Settore] Salto acquisto per ${item.symbol}: l'esposizione sul settore "${itemSector}" ($${prospectiveSectorExposure.toFixed(2)}) raggiungerebbe il ${prospectivePctOfNAV.toFixed(1)}% del NAV, superando il limite consentito del ${maxSectorExposurePct}%.`);
+                  addLogicLog(mode, {
+                    timestamp: new Date().toISOString(),
+                    symbol: item.symbol,
+                    action: 'RISK_VETO',
+                    reasoning: `Limite settoriale superato per "${itemSector}": ${prospectivePctOfNAV.toFixed(1)}% > ${maxSectorExposurePct}%`
+                  });
+                  continue;
+                }
+
+                // Controllo di diversificazione obbligatoria in regime BULLISH_COHERENT
+                const isBullishCoherent = StatisticalExpertService.getInstance().getMetrics().marketState === 'BULLISH_COHERENT';
+                if (isBullishCoherent) {
+                  const activeSectors = new Set<string>();
+                  for (const pos of openPositions) {
+                    activeSectors.add(getSymbolSector(pos.symbol));
+                  }
+                  for (const ord of ordersToSubmit) {
+                    activeSectors.add(getSymbolSector(ord.symbol));
+                  }
+
+                  // Se non abbiamo ancora raggiunto il minimo dei 3 settori e questo candidato appartiene ad un settore GIA' attivo,
+                  // diamo priorità ad altri settori se ci sono candidati idonei non ancora rappresentati
+                  if (activeSectors.size < minSectorsForBullishCoherent && activeSectors.has(itemSector)) {
+                    const hasAlternativeSectorCandidate = positiveSymbolsWithSentiment.some(cand => {
+                      const candSec = getSymbolSector(cand.symbol);
+                      return !activeSectors.has(candSec) && cand.symbol !== item.symbol;
+                    });
+                    if (hasAlternativeSectorCandidate) {
+                      addLog(mode as 'paper' | 'live', `[Diversificazione Settore] Salto temporaneo ${item.symbol} (${itemSector}) in regime BULLISH_COHERENT per dare priorità ad altri candidati di settori non ancora presenti in portafoglio (attualmente coperti: ${activeSectors.size}/${minSectorsForBullishCoherent} settori).`);
+                      continue;
+                    }
+                  }
+                }
+              }
 
               ordersToSubmit.push({
                 symbol: item.symbol,

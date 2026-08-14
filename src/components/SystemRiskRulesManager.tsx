@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -43,6 +43,15 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'EOD_BUY_LOCK',
     parameters: {
       eodWindowMinutes: 30
+    }
+  },
+  {
+    id: 'custom_max_exposure',
+    enabled: true,
+    type: 'CUSTOM_MAX_EXPOSURE',
+    parameters: {
+      maxSectorExposurePct: 35,
+      minSectorsForBullishCoherent: 3
     }
   }
 ];
@@ -114,6 +123,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const sentRule = getRule('SENTIMENT_LIQUIDITY_SELL');
   const stagRule = getRule('TIME_STAGNATION_CLOSE');
   const eodRule = getRule('EOD_BUY_LOCK');
+  const exposureRule = getRule('CUSTOM_MAX_EXPOSURE');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -402,6 +412,71 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                 }))}
                 disabled={!eodRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 5: Custom Sector Max Exposure & Diversification */}
+        <div className={`p-4 rounded-xl border transition-all ${exposureRule.enabled ? 'bg-indigo-50/40 border-indigo-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Layers className={`w-4 h-4 ${exposureRule.enabled ? 'text-indigo-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">5. Esposizione Settoriale e Diversificazione</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={exposureRule.enabled}
+                onChange={(e) => updateRule('CUSTOM_MAX_EXPOSURE', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Previene il rischio di cluster limitando l'esposizione sul singolo settore durante gli acquisti simultanei, e impone la diversificazione nei mercati rialzisti coerenti.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Esposizione Max per Settore (NAV %):</span>
+                <span className="font-mono text-indigo-600 font-bold">{exposureRule.parameters.maxSectorExposurePct ?? 35}%</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="100"
+                step="5"
+                value={exposureRule.parameters.maxSectorExposurePct ?? 35}
+                onChange={(e) => updateRule('CUSTOM_MAX_EXPOSURE', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, maxSectorExposurePct: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!exposureRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Minimo Settori in BULLISH_COHERENT:</span>
+                <span className="font-mono text-indigo-600 font-bold">{exposureRule.parameters.minSectorsForBullishCoherent ?? 3} settori</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={exposureRule.parameters.minSectorsForBullishCoherent ?? 3}
+                onChange={(e) => updateRule('CUSTOM_MAX_EXPOSURE', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minSectorsForBullishCoherent: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!exposureRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
               />
             </div>
           </div>

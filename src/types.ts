@@ -10,6 +10,8 @@ export interface RiskRuleConfig {
     stagnationMinutes?: number;     // es. 30 minuti di stasi per sentiment 0.20 - 0.29
     stagnationMinutesHighSentiment?: number; // es. 60 minuti di stasi per sentiment > 0.30
     stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
+    maxSectorExposurePct?: number;  // es. 35 per il 35%
+    minSectorsForBullishCoherent?: number; // es. 3 per almeno 3 settori diversi se BULLISH_COHERENT
   };
 }
 
