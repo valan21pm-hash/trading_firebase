@@ -283,6 +283,74 @@ export class RiskManagementService {
 
     return null;
   }
+
+  /**
+   * 5. CAP ESPOSIZIONE SETTORIALE SEMICONDUTTORI SU CORRELAZIONE SPY-QQQ ELEVATA (> 0.95)
+   * Se la correlazione tra SPY e QQQ supera 0.95 (regime di alta coerenza / rischio concentrazione tech),
+   * limita l'esposizione totale ai semiconduttori (AMD, AVGO, NVDA, ecc.) al 40% del valore totale del portafoglio (NAV).
+   */
+  public static evaluateSemiconductorExposureCap(
+    symbol: string,
+    amountToBuy: number,
+    openPositions: { symbol: string; market_value?: string; currentValue?: number }[],
+    queuedOrders: { symbol: string; amount: number }[],
+    totalAccountEquity: number,
+    spyQqqCorrelation: number,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const semiconRule = systemRules?.find(r => r.type === 'SPY_QQQ_CORRELATION_SEMICON_CAP');
+    const isEnabled = semiconRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const minCorr = semiconRule?.parameters?.minCorrelationThreshold ?? 0.95;
+    const maxSemiconPct = semiconRule?.parameters?.maxSemiconExposurePct ?? 40;
+    const defaultSemiconList = ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH'];
+    const semiconList = (semiconRule?.parameters?.semiconSymbols && semiconRule.parameters.semiconSymbols.length > 0)
+      ? semiconRule.parameters.semiconSymbols.map(s => s.toUpperCase())
+      : defaultSemiconList;
+
+    const symUpper = symbol.toUpperCase();
+    if (!semiconList.includes(symUpper)) {
+      return { allowed: true };
+    }
+
+    // Se la correlazione SPY-QQQ è inferiore alla soglia (es. < 0.95), non si applica il blocco restrittivo di concentrazione
+    if (spyQqqCorrelation < minCorr) {
+      return { allowed: true };
+    }
+
+    // Calcolo esposizione corrente nei semiconduttori
+    let currentSemiconExposure = 0;
+    for (const pos of openPositions) {
+      if (semiconList.includes(pos.symbol.toUpperCase())) {
+        const val = pos.currentValue !== undefined 
+          ? pos.currentValue 
+          : Math.abs(parseFloat(pos.market_value || '0'));
+        currentSemiconExposure += val;
+      }
+    }
+
+    // Calcolo esposizione ordini pianificati
+    for (const order of queuedOrders) {
+      if (semiconList.includes(order.symbol.toUpperCase())) {
+        currentSemiconExposure += order.amount;
+      }
+    }
+
+    const prospectiveTotalSemicon = currentSemiconExposure + amountToBuy;
+    const prospectivePct = totalAccountEquity > 0 ? (prospectiveTotalSemicon / totalAccountEquity) * 100 : 0;
+
+    if (prospectivePct > maxSemiconPct) {
+      return {
+        allowed: false,
+        reason: `[Regola Sistema: SPY_QQQ_CORRELATION_SEMICON_CAP] Correlazione SPY-QQQ a +${spyQqqCorrelation.toFixed(2)} (>= ${minCorr}). L'esposizione complessiva ai semiconduttori ($${prospectiveTotalSemicon.toFixed(2)}) raggiungerebbe il ${prospectivePct.toFixed(1)}% del NAV, eccedendo il limite massimo consentito del ${maxSemiconPct}%. Acquisto ${symUpper} bloccato per prevenire rischio di concentrazione settoriale.`
+      };
+    }
+
+    return { allowed: true };
+  }
 }
 
 

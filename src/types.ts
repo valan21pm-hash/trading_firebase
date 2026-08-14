@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // es. 0.20 o 0.15
@@ -12,6 +12,9 @@ export interface RiskRuleConfig {
     stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
     maxSectorExposurePct?: number;  // es. 35 per il 35%
     minSectorsForBullishCoherent?: number; // es. 3 per almeno 3 settori diversi se BULLISH_COHERENT
+    minCorrelationThreshold?: number; // es. 0.95 per correlazione SPY-QQQ >= 0.95
+    maxSemiconExposurePct?: number;   // es. 40 per limite esposizione 40% ai semiconduttori
+    semiconSymbols?: string[];        // es. ['AMD', 'AVGO', 'NVDA']
   };
 }
 

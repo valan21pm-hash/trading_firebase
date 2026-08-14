@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, ChevronDown, ChevronUp } from 'lucide-react';
+import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -52,6 +52,16 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     parameters: {
       maxSectorExposurePct: 35,
       minSectorsForBullishCoherent: 3
+    }
+  },
+  {
+    id: 'spy_qqq_corr_semicon_cap',
+    enabled: true,
+    type: 'SPY_QQQ_CORRELATION_SEMICON_CAP',
+    parameters: {
+      minCorrelationThreshold: 0.95,
+      maxSemiconExposurePct: 40,
+      semiconSymbols: ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH']
     }
   }
 ];
@@ -125,6 +135,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const stagRule = getRule('TIME_STAGNATION_CLOSE');
   const eodRule = getRule('EOD_BUY_LOCK');
   const exposureRule = getRule('CUSTOM_MAX_EXPOSURE');
+  const semiconRule = getRule('SPY_QQQ_CORRELATION_SEMICON_CAP');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -485,6 +496,75 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                 disabled={!exposureRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 6: Semiconductor Exposure Cap on High SPY-QQQ Correlation */}
+        <div className={`p-4 rounded-xl border transition-all ${semiconRule.enabled ? 'bg-amber-50/40 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Cpu className={`w-4 h-4 ${semiconRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">6. Cap Semiconduttori (Corr SPY-QQQ &gt; 0.95)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={semiconRule.enabled}
+                onChange={(e) => updateRule('SPY_QQQ_CORRELATION_SEMICON_CAP', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Se la correlazione tra SPY e QQQ supera la soglia, limita l'esposizione totale ai semiconduttori (AMD, AVGO, NVDA, ecc.) al 40% del portafoglio per prevenire il rischio di concentrazione settoriale.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Correlazione SPY-QQQ:</span>
+                <span className="font-mono text-amber-600 font-bold">&gt; +{(semiconRule.parameters.minCorrelationThreshold ?? 0.95).toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.80"
+                max="0.99"
+                step="0.01"
+                value={semiconRule.parameters.minCorrelationThreshold ?? 0.95}
+                onChange={(e) => updateRule('SPY_QQQ_CORRELATION_SEMICON_CAP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minCorrelationThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!semiconRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Esposizione Max Semiconduttori (NAV %):</span>
+                <span className="font-mono text-amber-600 font-bold">{semiconRule.parameters.maxSemiconExposurePct ?? 40}%</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="80"
+                step="5"
+                value={semiconRule.parameters.maxSemiconExposurePct ?? 40}
+                onChange={(e) => updateRule('SPY_QQQ_CORRELATION_SEMICON_CAP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, maxSemiconExposurePct: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!semiconRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Asset monitorati: AMD, AVGO, NVDA, QCOM, INTC, MU, SMCI, ARM, TSM, ASML, SOXL, SOXX, SMH
             </div>
           </div>
         </div>

@@ -111,6 +111,16 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       maxSectorExposurePct: 35,
       minSectorsForBullishCoherent: 3
     }
+  },
+  {
+    id: 'spy_qqq_corr_semicon_cap',
+    enabled: true,
+    type: 'SPY_QQQ_CORRELATION_SEMICON_CAP',
+    parameters: {
+      minCorrelationThreshold: 0.95,
+      maxSemiconExposurePct: 40,
+      semiconSymbols: ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH']
+    }
   }
 ];
 
@@ -3189,6 +3199,30 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                     }
                   }
                 }
+              }
+
+              // --- REGOLA CORRELAZIONE SPY-QQQ > 0.95 & CAP ESPOSIZIONE SEMICONDUTTORI AL 40% ---
+              const spyQqqCorr = StatisticalExpertService.getInstance().getMetrics().correlations.spy_qqq;
+              const semiconCapResult = RiskManagementService.evaluateSemiconductorExposureCap(
+                item.symbol,
+                amountToBuy,
+                openPositions,
+                ordersToSubmit,
+                totalAccountEquity,
+                spyQqqCorr,
+                activeRules
+              );
+
+              if (!semiconCapResult.allowed) {
+                const vetoReason = semiconCapResult.reason || `Cap semiconduttori superato con correlazione SPY-QQQ > 0.95`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'RISK_VETO',
+                  reasoning: vetoReason
+                });
+                continue;
               }
 
               ordersToSubmit.push({
