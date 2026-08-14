@@ -1070,6 +1070,7 @@ function AccountPanel({
                 <li><strong className="text-amber-300">Chiusura Preventiva P&L (-0.80%):</strong> Se un asset in portafoglio raggiunge un P&L ≤ -0.80% e sentiment &lt; 0.20, viene chiuso per liberare slot ad asset con sentiment &gt; 0.40.</li>
                 <li><strong className="text-rose-300">Protezione Liquidità (&lt; 0.15):</strong> Vendita immediata se il sentiment scende &lt; 0.15, a meno che il VIX non sia in calo &gt; 2% nelle ultime 24 ore.</li>
                 <li><strong className="text-indigo-300">Filtro Acquisti EOD (&lt; 30m):</strong> Nuovi acquisti bloccati se il Sentiment aggregato mostra un trend decrescente per 2 scansioni consecutive e mancano &lt; 30 min alla chiusura.</li>
+                <li><strong className="text-emerald-300">Stagnazione Temporale (60m / 30m):</strong> Chiusura automatica in stasi (P&L ≤ +0.10%): stasi di 60 min per sentiment &gt; 0.30, 30 min per sentiment tra 0.20 e 0.29.</li>
               </ul>
             </div>
 

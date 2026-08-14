@@ -3321,7 +3321,20 @@ ISTRUZIONI DI ANALISI:
 3. **Scenari Alternativi**: Ipotizza scenari alternativi (es. "Se avessimo chiuso la posizione prima, avremmo gestito meglio il rischio").
 4. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot. Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
 
-Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
+CRITICAL: All'interno del campo 'analysis' (in fondo alla stringa markdown, dopo tutte le tue analisi), devi obbligatoriamente aggiungere una sezione formattata esattamente in questo modo (in italiano):
+
+### 🤖 PROMPT PER GOOGLE AI STUDIO (COPIA & INCOLLA)
+Copia e incolla il testo sottostante direttamente in questa chat di Google AI Studio per integrare automaticamente le modifiche e le regole di oggi nel codice sorgente dell'applet:
+
+\`\`\`text
+Ciao! Implementa ed integra nel codice sorgente (es. in \`server.ts\` o \`RiskManagementService.ts\`, aggiungendo anche parametri configurabili in \`types.ts\` e nell'interfaccia utente se ha senso) la seguente nuova regola e logica emersa dal debriefing giornaliero:
+
+Regola Proposta: "[Inserisci qui la tua regola ottimizzata proposta]"
+
+Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance di oggi]"
+\`\`\`
+
+Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
@@ -3484,7 +3497,20 @@ ISTRUZIONI DI ANALISI:
 3. **Miglioramenti Strategici**: Suggerisci affinamenti operativi strutturati per questo orizzonte temporale.
 4. **Regola Ottimizzata Proposta**: Formula una regola chiara, sintetica e in italiano, pronta da inserire como feedback rule del bot (massimo 150 caratteri). Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
 
-Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale. Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
+CRITICAL: All'interno del campo 'analysis' (in fondo alla stringa markdown, dopo tutte le tue analisi), devi obbligatoriamente aggiungere una sezione formattata esattamente in questo modo (in italiano):
+
+### 🤖 PROMPT PER GOOGLE AI STUDIO (COPIA & INCOLLA)
+Copia e incolla il testo sottostante direttamente in questa chat di Google AI Studio per integrare automaticamente le modifiche e le regole di oggi nel codice sorgente dell'applet:
+
+\`\`\`text
+Ciao! Implementa ed integra nel codice sorgente (es. in \`server.ts\` o \`RiskManagementService.ts\`, aggiungendo anche parametri configurabili in \`types.ts\` e nell'interfaccia utente se ha senso) la seguente nuova regola e logica emersa dal debriefing periodico:
+
+Regola Proposta: "[Inserisci qui la tua regola ottimizzata proposta]"
+
+Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance di questo periodo]"
+\`\`\`
+
+Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
