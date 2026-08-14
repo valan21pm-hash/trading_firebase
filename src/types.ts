@@ -59,6 +59,7 @@ export interface AccountData {
   }[];
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
   logs: string[];
+  errorAlpaca?: string | null;
 }
 
 export interface GeminiSignal {

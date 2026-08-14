@@ -1186,6 +1186,19 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                 </button>
               </div>
 
+              {accountData.errorAlpaca && (
+                <div className="mb-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-start gap-3 text-rose-200 font-sans">
+                  <Shield className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-xs text-rose-300">Errore di Connessione Alpaca ({tradingMode.toUpperCase()})</h4>
+                    <p className="text-[11px] text-rose-200/80 mt-1">{accountData.errorAlpaca}</p>
+                    <p className="text-[10px] text-slate-400 mt-2">
+                      Il server ha ricevuto un errore "401 Unauthorized" da Alpaca. Verifica che le tue chiavi API siano attive e inserite correttamente, quindi sincronizzale usando il pulsante "Configura Chiavi & LLM" ed eseguendo la sincronizzazione Google Sheets.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {positions.length === 0 ? (
                 <div className="bg-[#090D16] border border-slate-800 rounded-xl p-8 text-center space-y-3 my-auto">
                   <Shield className="w-10 h-10 text-slate-600 mx-auto" />

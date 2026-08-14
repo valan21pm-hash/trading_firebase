@@ -986,9 +986,14 @@ function AccountPanel({
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs sm:text-sm gap-1 sm:gap-2">
           <div className="text-gray-500 font-medium">Broker</div>
           <div className="flex flex-col sm:items-end">
-            <div className={`font-medium ${account.isConfigured ? 'text-green-600' : 'text-amber-600'}`}>
+            <div className={`font-medium ${account.isConfigured && !account.errorAlpaca ? 'text-green-600' : 'text-rose-600'}`}>
               {account.modeLabel}
             </div>
+            {account.errorAlpaca && (
+              <div className="text-[10px] text-rose-500 font-semibold text-left sm:text-right mt-0.5 max-w-[250px] leading-tight">
+                ⚠️ Autenticazione Fallita
+              </div>
+            )}
             <div className="flex gap-2 justify-start sm:justify-end mt-1 flex-wrap">
               <button
                 onClick={() => {

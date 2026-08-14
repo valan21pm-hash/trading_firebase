@@ -264,6 +264,10 @@ async function getBrokerCredentials(broker: string, env: string) {
 
 const PORT = process.env.PORT || 3000;
 let localCredentialsFallback: Record<string, any> = {};
+const resolvedCredentials = {
+  paper: { apiKey: '', secretKey: '', isConfigured: false },
+  live: { apiKey: '', secretKey: '', isConfigured: false }
+};
 const localHighestPrices: Record<string, number> = {};
 try {
   if (fs.existsSync('credentials_fallback.json')) {
@@ -356,12 +360,17 @@ setInterval(() => {
     if (driveKeys) {
       console.log('[GoogleDrive Startup] Chiavi API trovate e caricate con successo da Drive!');
       if (driveKeys.alpaca) {
-        if (driveKeys.alpaca.paper) resolvedCredentials.paper = driveKeys.alpaca.paper;
-        if (driveKeys.alpaca.live) resolvedCredentials.live = driveKeys.alpaca.live;
-        if (driveKeys.alpaca.fallback) {
-          localCredentialsFallback.alpaca = driveKeys.alpaca.fallback;
-          saveLocalCredentialsFallback(localCredentialsFallback);
+        if (!localCredentialsFallback.alpaca) localCredentialsFallback.alpaca = {};
+        if (driveKeys.alpaca.paper) {
+          resolvedCredentials.paper = driveKeys.alpaca.paper;
+          localCredentialsFallback.alpaca.paper = driveKeys.alpaca.paper;
         }
+        if (driveKeys.alpaca.live) {
+          resolvedCredentials.live = driveKeys.alpaca.live;
+          localCredentialsFallback.alpaca.live = driveKeys.alpaca.live;
+          localCredentialsFallback.alpaca.real = driveKeys.alpaca.live;
+        }
+        saveLocalCredentialsFallback(localCredentialsFallback);
       }
       if (driveKeys.llm) {
         for (const [provider, config] of Object.entries(driveKeys.llm)) {
@@ -754,11 +763,6 @@ app.post('/api/drive/sync-logs', async (req, res) => {
 // -------------------------------------
 // -------------------------------------
 
-const resolvedCredentials = {
-  paper: { apiKey: '', secretKey: '', isConfigured: false },
-  live: { apiKey: '', secretKey: '', isConfigured: false }
-};
-
 async function autoDetectCredentials() {
   console.log('[Auto-Detect] Scanning and validating Alpaca credentials...');
   
@@ -1136,6 +1140,7 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
   const mode = botStatus.tradingMode;
   const conf = getAlpacaConfig(mode);
   let positions = [];
+  let errorAlpaca = null;
   
   if (conf.isConfigured) {
     try {
@@ -1147,8 +1152,16 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
       });
       if (posResponse.ok) {
         positions = await posResponse.json();
+      } else {
+        if (posResponse.status === 401) {
+          errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+        } else {
+          errorAlpaca = `Errore Alpaca: ${posResponse.status} ${posResponse.statusText}`;
+        }
       }
-    } catch (e) {}
+    } catch (e: any) {
+      errorAlpaca = e.message;
+    }
   }
 
   const mappedPositions = positions.map((p: any) => ({
@@ -1172,7 +1185,8 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     trailingStop: botStatus.trailingStop ?? 1.0,
     timeframe: botStatus.timeframe ?? 15,
     riskPercentage: botStatus.riskPercentage ?? 10,
-    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10
+    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+    errorAlpaca
   };
 
   res.json({ status, positions: mappedPositions, isDemo: mode === 'paper' });
@@ -3841,6 +3855,7 @@ async function getStatusData() {
     let positions = [];
     let dailyPnLList: any[] = [];
     let baseValue = mode === 'paper' ? 100000 : 50;
+    let errorAlpaca: string | null = null;
 
     if (conf.isConfigured) {
       try {
@@ -3893,6 +3908,12 @@ async function getStatusData() {
               strategyParams: params
             };
           }));
+        } else {
+          if (posResponse.status === 401) {
+            errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+          } else {
+            errorAlpaca = `Errore Alpaca: ${posResponse.status} ${posResponse.statusText}`;
+          }
         }
         
         const accResponse = await fetch(`${conf.baseUrl}/account`, {
@@ -3907,6 +3928,9 @@ async function getStatusData() {
           botData[mode].cash = parseFloat(account.cash !== undefined ? account.cash : (account.buying_power || '0'));
           botData[mode].accountNumber = account.account_number;
         } else {
+          if (accResponse.status === 401 && !errorAlpaca) {
+            errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+          }
           const totalInvested = positions.reduce((sum: number, p: any) => sum + parseFloat(p.market_value || '0'), 0);
           botData[mode].cash = Math.max(0, (botData[mode].balance || 0) - totalInvested);
         }
@@ -4003,7 +4027,8 @@ async function getStatusData() {
         ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 
         : 'Alpaca (Configurazione mancante)',
       isConfigured: conf.isConfigured,
-      positions
+      positions,
+      errorAlpaca
     };
   };
 
@@ -4326,6 +4351,9 @@ app.get('/api/operations', async (req, res) => {
       } else {
         const errText = await actResponse.text();
         console.warn(`[Alpaca activities warning] Impossibile recuperare attività: ${errText}`);
+        if (actResponse.status === 401) {
+          errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+        }
       }
 
       // 2. Fetch active positions
@@ -4337,6 +4365,12 @@ app.get('/api/operations', async (req, res) => {
       });
       if (posResponse.ok) {
         positions = await posResponse.json();
+      } else {
+        if (posResponse.status === 401) {
+          errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+        } else {
+          errorAlpaca = `Errore Alpaca: ${posResponse.status} ${posResponse.statusText}`;
+        }
       }
     } catch (err: any) {
       console.error('[Alpaca Operations error]', err);
