@@ -55,6 +55,19 @@ export class LLMProviderService {
 
   private activeProviderOrder: LLMProvider[] = ['gemini', 'mistral', 'groq', 'deepseek', 'anthropic'];
   private failoverEnabled: boolean = true;
+  private customSystemPrompt: string = JSON.stringify({
+    system_role: "Quantitative Trading Engine & Senior Financial Analyst (Alpaca API)",
+    objective: "Capital preservation first, systematic risk management (1-2% max risk per trade), trend following, strict adherence to mathematical position-closing rules.",
+    core_rules: {
+      risk_management: "Max risk 1-2% per trade, mandatory stop-loss, risk-reward ratio >= 1:2 or 1:3.",
+      anti_martingale: "Never average down on losing positions. Pyramid only in profit. Default to HOLD on conflicting macro/statistical signals.",
+      rule_y1_execution: "Strictly evaluate position closure based on target thresholds: close at historical profits equal to 2 (up to a max of 3 units in account currency), or maintain position if conditions are unmet. Minimum stop-loss / break-even loss threshold set to 0.50 units for positions >= 2 units."
+    },
+    execution_directives: {
+      input_parsing: "Analyze real-time market data, technical indicators (momentum, volatility, trend), macro indicators (CPI, UNRATE, Fed Funds Rate), and RSS news sentiment.",
+      output_format: "Strict JSON object. No conversational filler, no markdown blocks if not required for raw parsing."
+    }
+  }, null, 2);
 
   private constructor() {}
 
@@ -63,6 +76,20 @@ export class LLMProviderService {
       LLMProviderService.instance = new LLMProviderService();
     }
     return LLMProviderService.instance;
+  }
+
+  /**
+   * Imposta il System Prompt personalizzato o le istruzioni del Gem specializzato.
+   */
+  public setCustomSystemPrompt(prompt: string) {
+    this.customSystemPrompt = prompt || '';
+  }
+
+  /**
+   * Restituisce il System Prompt personalizzato attivo.
+   */
+  public getCustomSystemPrompt(): string {
+    return this.customSystemPrompt || '';
   }
 
   /**
@@ -213,6 +240,9 @@ export class LLMProviderService {
     if (options.responseJson) {
       requestConfig.responseMimeType = 'application/json';
     }
+    if (this.customSystemPrompt && this.customSystemPrompt.trim() !== '') {
+      requestConfig.systemInstruction = this.customSystemPrompt.trim();
+    }
 
     let lastError: any = null;
 
@@ -253,9 +283,15 @@ export class LLMProviderService {
   }
 
   private async queryMistral(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {
+    const messages: any[] = [];
+    if (this.customSystemPrompt && this.customSystemPrompt.trim() !== '') {
+      messages.push({ role: 'system', content: this.customSystemPrompt.trim() });
+    }
+    messages.push({ role: 'user', content: prompt });
+
     const body: any = {
       model: config.model || 'mistral-small-latest',
-      messages: [{ role: 'user', content: prompt }],
+      messages,
       temperature: 0.1
     };
 
@@ -282,9 +318,15 @@ export class LLMProviderService {
   }
 
   private async queryDeepSeek(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {
+    const messages: any[] = [];
+    if (this.customSystemPrompt && this.customSystemPrompt.trim() !== '') {
+      messages.push({ role: 'system', content: this.customSystemPrompt.trim() });
+    }
+    messages.push({ role: 'user', content: prompt });
+
     const body: any = {
       model: config.model || 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }],
+      messages,
       temperature: 0.1
     };
 
@@ -311,9 +353,15 @@ export class LLMProviderService {
   }
 
   private async queryGroq(prompt: string, config: LLMConfig, options: LLMOptions): Promise<string> {
+    const messages: any[] = [];
+    if (this.customSystemPrompt && this.customSystemPrompt.trim() !== '') {
+      messages.push({ role: 'system', content: this.customSystemPrompt.trim() });
+    }
+    messages.push({ role: 'user', content: prompt });
+
     const body: any = {
       model: config.model || 'llama-3.1-8b-instant',
-      messages: [{ role: 'user', content: prompt }],
+      messages,
       temperature: 0.1
     };
 
@@ -344,6 +392,17 @@ export class LLMProviderService {
       ? `${prompt}\n\nIMPORTANT: Respond ONLY with a valid JSON block. Do not include any explanations.`
       : prompt;
 
+    const requestBody: any = {
+      model: config.model || 'claude-3-5-haiku-20241022',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: finalPrompt }],
+      temperature: 0.1
+    };
+
+    if (this.customSystemPrompt && this.customSystemPrompt.trim() !== '') {
+      requestBody.system = this.customSystemPrompt.trim();
+    }
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -351,12 +410,7 @@ export class LLMProviderService {
         'x-api-key': config.apiKey || '',
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify({
-        model: config.model || 'claude-3-5-haiku-20241022',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: finalPrompt }],
-        temperature: 0.1
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {

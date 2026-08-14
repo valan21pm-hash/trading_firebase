@@ -711,52 +711,83 @@ app.get('/api/llm/configs', (req, res) => {
     configs: sanitizedConfigs,
     preferredProvider: botStatus.llmPreferredProvider || 'gemini',
     failoverEnabled: botStatus.llmFailoverEnabled ?? true,
-    providerOrder: service.getProviderOrder()
+    providerOrder: service.getProviderOrder(),
+    geminiCustomPrompt: botStatus.geminiCustomPrompt || service.getCustomSystemPrompt() || ''
   });
 });
 
 app.post('/api/llm/configs', async (req, res) => {
-  const { provider, apiKey, model } = req.body;
-  if (!provider) {
-    return res.status(400).json({ success: false, error: 'Provider mancante' });
-  }
+  const { provider, apiKey, model, geminiCustomPrompt } = req.body;
 
   const service = LLMProviderService.getInstance();
-  const updateData: any = {};
-  if (typeof model === 'string') updateData.model = model;
-  
-  if (typeof apiKey === 'string' && apiKey.trim() !== '' && !apiKey.includes('...') && !apiKey.includes('•••')) {
-    updateData.apiKey = apiKey.trim();
+
+  if (typeof geminiCustomPrompt === 'string') {
+    botStatus.geminiCustomPrompt = geminiCustomPrompt;
+    service.setCustomSystemPrompt(geminiCustomPrompt);
+    await saveBotStatus();
   }
 
-  service.updateConfig(provider, updateData);
+  if (provider) {
+    const updateData: any = {};
+    if (typeof model === 'string') updateData.model = model;
+    
+    if (typeof apiKey === 'string' && apiKey.trim() !== '' && !apiKey.includes('...') && !apiKey.includes('•••')) {
+      updateData.apiKey = apiKey.trim();
+    }
 
-  // Synchronize keys to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
-  triggerChiaviApiDriveSync().catch(err => console.warn('[GoogleDrive Sync]:', err?.message || err));
-  exportCredentialsToGoogleSheets().catch(err => console.warn('[GoogleSheets Auto-Export]:', err?.message || err));
+    service.updateConfig(provider, updateData);
 
-  if (db) {
-    try {
-      const docRef = db.collection('settings').doc('llm');
-      const doc = await docRef.get();
-      const currentData = doc.exists ? doc.data() : {};
-      
-      currentData[provider] = {
-        ...currentData[provider],
-        ...updateData
-      };
-      
-      await docRef.set(currentData, { merge: true });
-    } catch (e: any) {
-      console.error('[Firebase] Errore salvataggio configurazioni LLM:', e.message);
+    // Synchronize keys to Google Drive (ChiaviAPI.json) and Google Sheets (API KEYS)
+    triggerChiaviApiDriveSync().catch(err => console.warn('[GoogleDrive Sync]:', err?.message || err));
+    exportCredentialsToGoogleSheets().catch(err => console.warn('[GoogleSheets Auto-Export]:', err?.message || err));
+
+    if (db) {
+      try {
+        const docRef = db.collection('settings').doc('llm');
+        const doc = await docRef.get();
+        const currentData = doc.exists ? doc.data() : {};
+        
+        currentData[provider] = {
+          ...currentData[provider],
+          ...updateData
+        };
+
+        if (typeof geminiCustomPrompt === 'string') {
+          currentData.geminiCustomPrompt = geminiCustomPrompt;
+        }
+        
+        await docRef.set(currentData, { merge: true });
+      } catch (e: any) {
+        console.error('[Firebase] Errore salvataggio configurazioni LLM:', e.message);
+      }
     }
   }
 
-  res.json({ success: true });
+  res.json({ success: true, geminiCustomPrompt: botStatus.geminiCustomPrompt });
+});
+
+app.post('/api/llm/gemini-custom-prompt', async (req, res) => {
+  const { geminiCustomPrompt } = req.body;
+  if (typeof geminiCustomPrompt === 'string') {
+    botStatus.geminiCustomPrompt = geminiCustomPrompt;
+    LLMProviderService.getInstance().setCustomSystemPrompt(geminiCustomPrompt);
+    await saveBotStatus();
+
+    if (db) {
+      try {
+        await db.collection('settings').doc('llm').set({
+          geminiCustomPrompt: geminiCustomPrompt
+        }, { merge: true });
+      } catch (e: any) {
+        console.error('[Firebase] Error saving custom prompt:', e.message);
+      }
+    }
+  }
+  res.json({ success: true, geminiCustomPrompt: botStatus.geminiCustomPrompt });
 });
 
 app.post('/api/llm/preference', async (req, res) => {
-  const { preferredProvider, failoverEnabled, providerOrder } = req.body;
+  const { preferredProvider, failoverEnabled, providerOrder, geminiCustomPrompt } = req.body;
   
   if (preferredProvider) {
     botStatus.llmPreferredProvider = preferredProvider;
@@ -768,6 +799,10 @@ app.post('/api/llm/preference', async (req, res) => {
   if (Array.isArray(providerOrder)) {
     LLMProviderService.getInstance().setProviderOrder(providerOrder);
     botStatus.llmProviderOrder = providerOrder;
+  }
+  if (typeof geminiCustomPrompt === 'string') {
+    botStatus.geminiCustomPrompt = geminiCustomPrompt;
+    LLMProviderService.getInstance().setCustomSystemPrompt(geminiCustomPrompt);
   }
 
   await saveBotStatus();
@@ -1094,6 +1129,7 @@ let botStatus: {
   llmPreferredProvider?: 'gemini' | 'mistral' | 'deepseek' | 'groq' | 'anthropic';
   llmFailoverEnabled?: boolean;
   llmProviderOrder?: string[];
+  geminiCustomPrompt?: string;
 } = {
   active: false,
   paperActive: false,
@@ -1120,7 +1156,8 @@ let botStatus: {
   maxConcurrentPositions: 10,
   llmPreferredProvider: 'gemini',
   llmFailoverEnabled: true,
-  llmProviderOrder: ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq']
+  llmProviderOrder: ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
+  geminiCustomPrompt: ''
 };
 
 let positionStrategies: {
@@ -1521,6 +1558,7 @@ async function saveBotStatus() {
       llmPreferredProvider: botStatus.llmPreferredProvider ?? 'gemini',
       llmFailoverEnabled: botStatus.llmFailoverEnabled ?? true,
       llmProviderOrder: botStatus.llmProviderOrder || ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
+      geminiCustomPrompt: botStatus.geminiCustomPrompt || '',
       positionStrategies: positionStrategies
     }, { merge: true });
   } catch (err: any) {
@@ -1606,6 +1644,11 @@ async function loadStateFromFirestore() {
         LLMProviderService.getInstance().setFailoverEnabled(!!botStatus.llmFailoverEnabled);
       }
 
+      botStatus.geminiCustomPrompt = data.geminiCustomPrompt ?? botStatus.geminiCustomPrompt;
+      if (botStatus.geminiCustomPrompt) {
+        LLMProviderService.getInstance().setCustomSystemPrompt(botStatus.geminiCustomPrompt);
+      }
+
       // Carichiamo anche i dettagli di configurazione di ciascun LLM se presenti nel db in settings/llm
       try {
         const llmConfigsDoc = await db.collection('settings').doc('llm').get();
@@ -1616,6 +1659,10 @@ async function loadStateFromFirestore() {
             if (configsData[provider]) {
               llmService.updateConfig(provider, configsData[provider]);
             }
+          }
+          if (configsData.geminiCustomPrompt && typeof configsData.geminiCustomPrompt === 'string') {
+            botStatus.geminiCustomPrompt = configsData.geminiCustomPrompt;
+            llmService.setCustomSystemPrompt(configsData.geminiCustomPrompt);
           }
         }
       } catch (e: any) {
@@ -1848,21 +1895,44 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
     const statContext = StatisticalExpertService.getInstance().getPromptContext();
     const rssContext = await RssNewsService.getInstance().getNewsContextForPrompt();
 
-    const systemPersona = `Sei un Motore Decisionale Quantitativo e Analista Finanziario Senior specializzato in Algorithmic Trading e Analisi Macroeconomica (FRED, Yahoo Finance, CNBC, MarketWatch). La tua missione prioritaria è la CONSERVAZIONE DEL CAPITALE rispetto al semplice profitto.
-REGOLE FONDAMENTALI E MACRO:
-1. Gestione del Rischio (1-2% massimo di rischio per operazione, Stop Loss obbligatorio, Rapporto Rischio/Rendimento almeno 1:2 o 1:3).
-2. Monitoraggio Macroeconomico & Fonti Autorevoli: Valuta l'impatto di inflazione (CPI), tassi di interesse (Federal Funds Rate / ECB), mercato del lavoro (UNRATE) e notizie RSS reali.
-3. Filtri di Volatilità e Sincronia tra Indici: Riduci l'esposizione o adotta un approccio prudente se la matrice di correlazione tra indici o le notizie mostrano divergenze o elevato rischio.
-4. Disciplina Antimartingala e Trend Following: Mai mediare in perdita, piramidare solo in utile, seguire il trend dominante.
-5. Chain-of-Thought e Default su HOLD: In caso di segnali macro o statistici incerti o contrastanti, il punteggio deve tendere a 0 (HOLD).
+    const customGemPrompt = botStatus.geminiCustomPrompt || LLMProviderService.getInstance().getCustomSystemPrompt();
+    const systemPersona = customGemPrompt && customGemPrompt.trim() !== ''
+      ? customGemPrompt.trim()
+      : `[SYSTEM: QUANTITATIVE DECISION ENGINE]
+Priorità: Conservazione del capitale. Regola y=1 attiva.
 
+[REGOLE CARDINE]
+1. Gestione del Rischio (1-2% max rischio per operazione, Stop Loss obbligatorio, Rapporto Rischio/Rendimento >= 1:2 o 1:3).
+2. Disciplina Antimartingala e Trend Following: Mai mediare in perdita, piramidare solo in utile, seguire il trend dominante.
+3. Regola y=1: Chiusura forzata al target di profitto storico (2 fino a max 3 unità di conto). Stop loss / break-even loss threshold a 0.50 unità per posizioni >= 2 unità.
+4. Default su HOLD: In caso di segnali contrastanti o incerti, lo score deve rimanere nella fascia neutra (HOLD).`;
+
+    const prompt = `[SYSTEM: QUANTITATIVE DECISION ENGINE]
+${systemPersona}
+
+[INPUT DATA]
+- Simboli da analizzare: ${missingSymbols.join(', ')}
+- Dati Macro & RSS:
+${rssContext}
+- Correlazioni Indici & Statistiche:
 ${statContext}
+${context ? `- Contesto Evento Specifico: ${context}` : ''}${feedbackRules}
 
-${rssContext}`;
+[LOGICA DI VALUTAZIONE]
+Calcola uno score numerico compreso rigorosamente tra -1.0 (ribassista) e +1.0 (rialzista) per ciascun simbolo:
+- Score > +0.35 -> Tendenza BUY
+- Score tra -0.35 e +0.35 -> Tendenza HOLD (default di sicurezza)
+- Score < -0.35 -> Tendenza SELL
 
-    const prompt = context
-      ? `${systemPersona}\n\nAnalizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero da -1 per ribassista a 1 per rialzista) e "reasoning" (ragionamento sintetico basato su risk management e trend). Esempio:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Trend rialzista confermato con buon rapporto rischio/rendimento"}\n}`
-      : `${systemPersona}\n\nAnalizza il sentiment di mercato recente per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero da -1 per ribassista a 1 per rialzista) e "reasoning" (ragionamento sintetico basato su risk management e trend). Esempio:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Mercato stabile con trend positivo e rischio controllato"}\n}`;
+[OUTPUT FORMAT - STRICT JSON]
+Rispondi RIGIDAMENTE con un singolo oggetto JSON valido (nessun testo prima o dopo) strutturato come segue:
+{
+  "${missingSymbols[0] || 'SPY'}": {
+    "score": 0.0,
+    "action": "BUY|SELL|HOLD",
+    "reasoning": "Sintesi tecnica basata su risk management e trend"
+  }
+}`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
@@ -1883,10 +1953,14 @@ ${rssContext}`;
 
     for (const sym of missingSymbols) {
       const entry = parsed[sym] || {};
-      const sentimentScore = parseFloat(entry.score || '0');
+      const sentimentScore = typeof entry.score === 'number' ? entry.score : parseFloat(entry.score || '0');
       const resultScore = isNaN(sentimentScore) ? 0 : Math.max(-1, Math.min(1, sentimentScore));
       const resultReasoning = entry.reasoning || 'Nessuna spiegazione dettagliata disponibile';
       
+      const parsedAction = entry.action && ['BUY', 'SELL', 'HOLD'].includes(String(entry.action).toUpperCase())
+        ? String(entry.action).toUpperCase()
+        : (resultScore > 0.35 ? 'BUY' : resultScore < -0.35 ? 'SELL' : 'HOLD');
+
       const result = { score: resultScore, reasoning: resultReasoning };
       const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}:${context ? '' : hour}`;
       sentimentCache.set(cacheKey, result);
@@ -1896,7 +1970,7 @@ ${rssContext}`;
       inMemoryGeminiSignals.set(sym, {
         asset: sym,
         score: resultScore,
-        action: resultScore >= 0.5 ? 'BUY' : resultScore <= -0.5 ? 'SELL' : 'HOLD',
+        action: parsedAction,
         confidence: Math.abs(resultScore) * 100,
         reasoning: resultReasoning,
         timestamp: new Date().toISOString()
@@ -1911,7 +1985,7 @@ ${rssContext}`;
           db.collection('gemini_signals').doc(sym).set({
             asset: sym,
             score: resultScore,
-            action: resultScore >= 0.5 ? 'BUY' : resultScore <= -0.5 ? 'SELL' : 'HOLD',
+            action: parsedAction,
             confidence: Math.abs(resultScore) * 100,
             reasoning: resultReasoning,
             timestamp: new Date().toISOString()
@@ -2002,13 +2076,16 @@ async function getDynamicTrendingStocks(): Promise<string[]> {
       ? `\n\nUSER FEEDBACK RULES TO FOLLOW:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
       : '';
 
-    const prompt = `[NEWS_ANALYSIS & DYNAMIC_FILTER]
-Raccogli e analizza le notizie finanziarie correnti, i catalizzatori attivi, la volatilità e la direzionalità dei mercati globali e degli indici/azioni statunitensi.${feedbackRules}
-Valuta se gli indici predefiniti (SPY, QQQ, VTI, GLD, ecc.) mostrano opportunità inferiori rispetto ad altri mercati o settori rilevati nelle notizie odierne.
-Se trovi indici o mercati migliori, aggiorna il target di monitoraggio; altrimenti mantieni la base corrente.
-[EXECUTION]
-Restituisci RIGIDAMENTE un array JSON di stringhe contenente da 35 a 50 ticker in maiuscolo (es. ["NVDA", "AAPL", "SPY", "QQQ", "MSFT", "TSLA", "JPM", "GLD", ...]) da monitorare per lo slot corrente (${currentSlot}).
-Rispondi SOLO con l'array JSON.`;
+    const prompt = `[SYSTEM: DYNAMIC DISCOVERY ENGINE]
+Analizza i cataloghi di mercato correnti, i catalizzatori di volatilità e le notizie globali.${feedbackRules}
+
+[EXECUTION RULES]
+1. Identifica da 35 a 50 ticker azionari o ETF a elevata liquidità.
+2. Escludi asset illiquidi o con spread elevati incompatibili con il risk management del 1-2%.
+
+[OUTPUT FORMAT - STRICT JSON ARRAY]
+Restituisci RIGIDAMENTE un array JSON di stringhe (nessun commento, nessun markdown extra) contenente i ticker in maiuscolo (es. ["AAPL", "NVDA", "SPY", "QQQ", "MSFT", "TSLA", ...]):
+["AAPL", "NVDA", "SPY", "QQQ"]`;
 
     const response = await LLMProviderService.getInstance().generateContent(prompt, {
       responseJson: true,
@@ -2711,12 +2788,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const isMonitored = ALL_TRADED_SYMBOLS.includes(sym);
       
       let statusLabel = '';
-      if (score > 0.2) {
+      if (score > 0.35) {
         statusLabel = `🟢 RIALZISTA (Punteggio: ${score.toFixed(2)})`;
-      } else if (score <= 0) {
+      } else if (score < -0.35) {
         statusLabel = `🔴 RIBASSISTA/NEGATIVO (Punteggio: ${score.toFixed(2)})`;
       } else {
-        statusLabel = `🟡 DEBOLE/NEUTRO (Punteggio: ${score.toFixed(2)})`;
+        statusLabel = `🟡 NEUTRO/HOLD (Punteggio: ${score.toFixed(2)})`;
       }
 
       let actionLabel = '';
@@ -2727,10 +2804,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           actionLabel = `👉 [In Portafoglio] Sentiment positivo -> Mantenuto in portafoglio.`;
         }
       } else if (isMonitored) {
-        if (score > 0.2) {
-          actionLabel = `👉 [Disponibile] Sopra la soglia di 0.2 -> Idoneo all'ACQUISTO (se ci sono slot liberi).`;
+        if (score > 0.35) {
+          actionLabel = `👉 [Disponibile] Sopra la soglia di 0.35 -> Idoneo all'ACQUISTO (se ci sono slot liberi).`;
         } else {
-          actionLabel = `👉 [Disponibile] Sotto la soglia di 0.2 -> Escluso dall'acquisto (richiesto > 0.20).`;
+          actionLabel = `👉 [Disponibile] Sotto la soglia di 0.35 -> Escluso dall'acquisto (richiesto > 0.35).`;
         }
       } else {
         actionLabel = `👉 [Nessuna azione] Asset non monitorato per acquisti e non in portafoglio.`;
@@ -2877,7 +2954,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       }
     }
 
-    // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.2)
+    // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.35)
     const isDecreasingSentiment = isMarketSentimentDecreasingTwoConsecutiveScans();
     const activeRules = botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES;
     const purchasePermission = isPurchaseAllowedBySystemRules(
@@ -2903,11 +2980,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (currentBuyingPower < 0.05 * totalAccountEquity) {
         addLog(mode as 'paper' | 'live', `[Liquidità Critica] Liquidità disponibile ($${currentBuyingPower.toFixed(2)}) inferiore al 5% del totale conto ($${totalAccountEquity.toFixed(2)}). Apertura nuove posizioni bloccata.`);
       } else {
-        // Filtra tutti i simboli con sentiment positivo (> 0.2)
+        // Filtra tutti i simboli con sentiment positivo (> 0.35)
         let positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
           const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
           return { symbol, score, reasoning };
-        }).filter(item => item.score > 0.2);
+        }).filter(item => item.score > 0.35);
 
         // Veto dell'Esperto Statistico di Sfondo
         positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => {
@@ -3295,29 +3372,28 @@ Il sistema è operativo. Le API dell'IA sono momentaneamente sature (quota super
       // Limit logs per non sforare context window
       const recentLogs = botData.paper.logs.slice(0, 50).join('\n') + '\n\n' + botData.live.logs.slice(0, 50).join('\n');
       
-      const prompt = `Sei l'analista esperto del bot di trading. La giornata di mercato si è conclusa (o sta per conclusersi).
-Genera un report motivazionale in cui descrivi in dettaglio le motivazioni delle scelte fatte dal bot durante le ultime sessioni di trading.
-I tuoi obiettivi:
-1. Analizzare i log e l'andamento recente del portafoglio (se ci sono state perdite, perché lo stop loss è scattato, etc.).
-2. Valutare criticamente le performance e gli errori di valutazione (se hai preso profitto troppo presto o hai comprato su un falso segnale).
-3. Includere alla fine del report una sezione "PROMPT DI CORREZIONE" che l'utente può semplicemente copiare e incollare per migliorare il bot.
-Il formato deve essere professionale e leggibile. 
+      const prompt = `[SYSTEM: POST-SESSION AUDIT & DEBRIEF]
+Agisci come Risk Manager senior. Analizza i log operativi e le performance PnL (Paper/Live).
 
-Dati recenti (PNL Paper):
-${JSON.stringify(todaysPnLPaper || 'Nessun dato di PNL consolidato per oggi')}
-
-Dati recenti (PNL Live):
-${JSON.stringify(todaysPnLLive || 'Nessun dato di PNL consolidato per oggi')}
-
-Ultimi log di esecuzione (azioni, eventi):
+[INPUTS]
+- PnL Log Paper: ${JSON.stringify(todaysPnLPaper || 'Nessun dato di PNL consolidato per oggi')}
+- PnL Log Live: ${JSON.stringify(todaysPnLLive || 'Nessun dato di PNL consolidato per oggi')}
+- Execution Logs:
 ${recentLogs}
-
-Log della logica decisionale del bot (ragionamento interno Paper):
+- Decision Logic Logs (Paper):
 ${JSON.stringify(botData.paper.dailyLogicLogs?.slice(-25) || 'Nessun log logico')}
-
-Log della logica decisionale del bot (ragionamento interno Live):
+- Decision Logic Logs (Live):
 ${JSON.stringify(botData.live.dailyLogicLogs?.slice(-25) || 'Nessun log logico')}
-`;
+
+[COMPITI]
+1. Identifica cause di attivazione degli stop loss o chiusure anticipate.
+2. Formula correzioni strategiche per il ciclo successivo.
+
+[OUTPUT FORMAT]
+Testo formattato professionale suddiviso in:
+- Analisi delle Performance
+- Errori di Valutazione
+- PROMPT DI CORREZIONE (blocco copiabile per aggiornare i parametri del bot)`;
 
       try {
         const response = await LLMProviderService.getInstance().generateContent(prompt, {

@@ -25,17 +25,22 @@ export class GeminiSignalService {
    */
   async generateTradingSignal(instrument: string, currentPrice: number, marketData: any, newsContext: string) {
     try {
-      const prompt = `Sei un Quantitative Trading Engineer e un Analista Finanziario esperto.
-Devi analizzare i seguenti dati di mercato per lo strumento ${instrument} e determinare la mossa operativa ideale.
+      const prompt = `[SYSTEM: ALPACA EXECUTION AGENT]
+Sei il motore di esecuzione ordini autonomo. Valuta il singolo asset applicando i paletti di rischio inderogabili.
 
---- DATI DI MERCATO ---
-Prezzo Attuale: ${currentPrice}
-Storico/Volatilità: ${JSON.stringify(marketData)}
-Contesto Macro/Notizie: ${newsContext}
------------------------
+[VINCOLI DI CAPITALE & REGOLA y=1]
+- Chiusura forzata al raggiungimento del target di profitto storico (2 fino a max 3 unità di conto).
+- Perdita minima di sicurezza a pareggio fissata a 0.50 unità per posizioni >= 2 unità.
+- Conservazione del capitale prioritaria rispetto al rendimento speculativo.
 
-In base alle tue analisi su trend, momentum e sentiment delle notizie, definisci l'azione da intraprendere.
-Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
+[INPUT ASSET]
+- Simbolo: ${instrument}
+- Prezzo Attuale: ${currentPrice}
+- Dati Volatilità / ATR: ${JSON.stringify(marketData)}
+- Stato Posizione / Macro / Notizie: ${newsContext}
+
+[OUTPUT FORMAT - STRICT JSON]
+Rispondi rigorosamente rispettando la struttura JSON richiesta.`;
 
       // Definizione dello Schema Atteso
       const schema = {
@@ -52,7 +57,7 @@ Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
           },
           reasoning: {
             type: Type.STRING,
-            description: "Breve ragionamento algoritmico/fondamentale per giustificare l'azione"
+            description: "Breve motivazione tecnica basata su risk management e trend"
           },
           sentiment: {
             type: Type.STRING,
@@ -278,8 +283,8 @@ Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
     let motivazione = `Sentiment per ${ticker} stabile a ${sentimentScore!.toFixed(2)}. Manteniamo la posizione corrente (HOLD).`;
 
     if (!hasPosition) {
-      // Se non abbiamo la posizione, valutiamo l'acquisto se il sentiment è positivo (> 0.2)
-      if (sentimentScore! > 0.2) {
+      // Se non abbiamo la posizione, valutiamo l'acquisto se il sentiment è positivo (> 0.35)
+      if (sentimentScore! > 0.35) {
         if (currentPositionsCount >= maxConcurrentPositions) {
           if (sentimentScore! >= 0.40) {
             // Se il candidate ha un sentiment molto forte (> +0.40) e il portafoglio è saturo, segnaliamo la possibilità di rilocazione
@@ -303,7 +308,7 @@ Rispondi rigorosamente seguendo la struttura JSON richiesta.`;
           }
         } else {
           action = 'BUY';
-          motivazione = `Sentiment positivo (${sentimentScore!.toFixed(2)}) idoneo all'acquisto. Allocazione slot disponibile.`;
+          motivazione = `Sentiment positivo (${sentimentScore!.toFixed(2)}) idoneo all'acquisto (> 0.35). Allocazione slot disponibile.`;
         }
       }
     } else {
