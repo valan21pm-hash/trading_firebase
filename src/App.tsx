@@ -767,7 +767,7 @@ function AccountPanel({
 
   const [isAccountCollapsed, setIsAccountCollapsed] = useState<boolean>(() => {
     const saved = localStorage.getItem(`alpaca_${type}_isAccountCollapsed`);
-    return saved !== null ? saved === 'true' : false;
+    return saved !== null ? saved === 'true' : true;
   });
 
   useEffect(() => {
@@ -1126,68 +1126,6 @@ function AccountPanel({
 
         {showLlmSettings && <LLMSettings />}
 
-        {/* Quick Metrics P&L Summary */}
-        {account.dailyPnL && account.dailyPnL.length > 0 && (() => {
-          const lastDay = account.dailyPnL[account.dailyPnL.length - 1];
-          const prevDay = account.dailyPnL.length > 1 ? account.dailyPnL[account.dailyPnL.length - 2] : null;
-
-          const totalRealized = lastDay?.realized ?? 0;
-          const totalUnrealized = lastDay?.unrealized ?? 0;
-          const totalPnL = lastDay?.pnl ?? 0;
-
-          const dailyRealized = prevDay ? (totalRealized - (prevDay.realized ?? 0)) : totalRealized;
-          const dailyUnrealized = totalUnrealized;
-          const dailyTotalPnL = dailyRealized + dailyUnrealized;
-
-          return (
-            <div className="bg-gray-50/50 p-2.5 sm:p-3 rounded-xl border border-gray-100 mt-2 space-y-2">
-              {/* Riga 1: Totale Cumulativo (Storico) */}
-              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center">
-                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
-                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Realizzato</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {totalRealized >= 0 ? '+' : ''}{totalRealized.toFixed(2)}$
-                  </div>
-                </div>
-                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
-                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Non Realizzato</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {totalUnrealized >= 0 ? '+' : ''}{totalUnrealized.toFixed(2)}$
-                  </div>
-                </div>
-                <div className="bg-slate-50/80 p-1.5 sm:p-2 rounded-lg border border-slate-100">
-                  <div className="text-[9px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-wider">PnL Totale Netto</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}$
-                  </div>
-                </div>
-              </div>
-
-              {/* Riga 2: Giornaliero (Oggi fino a questo momento) */}
-              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center">
-                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL G. Realizzato</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyRealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {dailyRealized >= 0 ? '+' : ''}{dailyRealized.toFixed(2)}$
-                  </div>
-                </div>
-                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL G. Non Realizzato</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyUnrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {dailyUnrealized >= 0 ? '+' : ''}{dailyUnrealized.toFixed(2)}$
-                  </div>
-                </div>
-                <div className="bg-emerald-50/50 p-1.5 sm:p-2 rounded-lg border border-emerald-100/80">
-                  <div className="text-[9px] sm:text-[10px] text-emerald-900/80 font-semibold uppercase tracking-wider">PnL Totale G. Netto</div>
-                  <div className={`text-[11px] sm:text-xs font-bold font-mono mt-0.5 ${dailyTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {dailyTotalPnL >= 0 ? '+' : ''}{dailyTotalPnL.toFixed(2)}$
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
@@ -1332,24 +1270,6 @@ function AccountPanel({
                   </div>
                 );
               })}
-            </div>
-          </div>
-        )}
-
-        {/* Logic Logs */}
-        {account.dailyLogicLogs && account.dailyLogicLogs.length > 0 && (
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-gray-900 mb-2 border-b pb-1">Ultimi Ragionamenti</h3>
-            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-              {[...account.dailyLogicLogs].reverse().slice(0, 10).map((log, i) => (
-                <div key={i} className="text-xs border-l-2 border-blue-400 pl-2 py-1">
-                  <div className="flex justify-between text-gray-500 mb-1">
-                    <span>{new Date(log.timestamp).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                    <span className="font-bold">{log.symbol} ({log.action})</span>
-                  </div>
-                  <div className="text-gray-700">{log.reasoning}</div>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -2127,19 +2047,6 @@ export default function App() {
               Forza Acquisto
             </button>
 
-            {/* Bottone Gestione API & Google Sheets */}
-            <button
-              onClick={() => {
-                setIsApiSettingsCollapsed(false);
-                const el = document.getElementById('api-settings-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-slate-800 text-slate-100 hover:bg-slate-900 rounded-xl text-[11px] sm:text-xs font-bold shadow-md active:scale-95 transition-all cursor-pointer border-none w-full sm:w-auto"
-            >
-              <Key className="w-3.5 h-3.5 text-emerald-400" />
-              API & Google Sheets
-            </button>
-
             <div className="flex gap-1.5 sm:gap-2 bg-gray-100 p-1 rounded-xl w-full sm:w-auto">
              <button
                onClick={() => setSelectedTab('paper')}
@@ -2183,10 +2090,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Live Sentiment & AI Signals Ticker */}
-        <GeminiSignalsTicker onOpenForceBuy={handleOpenForceBuy} />
-
-        {/* Selected Panel */}
+        {/* 2. Pannello Conto (Comprimibile, default chiuso) */}
         <div>
           {selectedTab === 'paper' && status?.paper && (
             <AccountPanel 
@@ -2222,32 +2126,10 @@ export default function App() {
           )}
         </div>
 
-        {/* SEZIONE CONFIGURAZIONE API, LLM E GOOGLE SHEETS / DRIVE */}
-        <div id="api-settings-section" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
-            <div 
-              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1" 
-              onClick={() => setIsApiSettingsCollapsed(!isApiSettingsCollapsed)}
-            >
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Key className="w-5 h-5 text-indigo-600" />
-                <span>Configurazione Chiavi API, Fornitori LLM & Integrazione Google Sheets / Drive</span>
-                {isApiSettingsCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Configura le tue chiavi API (Gemini, Alpaca, IG Markets, Anthropic, DeepSeek), esporta e sincronizza in tempo reale i log e le regole di trading con i fogli Google Sheets e Google Drive.
-              </p>
-            </div>
-          </div>
+        {/* 3. Analisi Sentiment & Segnali Gemini AI (Comprimibile) */}
+        <GeminiSignalsTicker onOpenForceBuy={handleOpenForceBuy} />
 
-          {!isApiSettingsCollapsed && (
-            <div className="pt-2">
-              <LLMSettings />
-            </div>
-          )}
-        </div>
-
-        {/* Operazioni, Performance & Fills */}
+        {/* 5. Operazioni, Performance & Fills (Comprimibile) */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
             <div 
@@ -2796,7 +2678,7 @@ export default function App() {
           })()}
         </div>
 
-        {/* Debriefing Giornaliero AI */}
+        {/* 7 & 8. Debriefing & Valutazione Periodica AI (Unificate e Comprimibili) */}
         <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
             <div
@@ -2805,474 +2687,365 @@ export default function App() {
             >
               <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <Brain className="w-5 h-5 text-indigo-600" />
-                <span>Debriefing Giornaliero Assistito da AI</span>
+                <span>Debriefing & Valutazione Periodica (AI)</span>
                 {isDailyDebriefCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Simula una riunione di fine giornata con Gemini 3.5 per analizzare decisioni, correlazioni e ottenere regole ottimizzate. Clicca per espandere/comprimere.
+                Analizza performance, decisioni e ottieni regole ottimizzate sia per la singola giornata che su intervalli multi-giorno. Clicca per espandere/comprimere.
               </p>
             </div>
-            <button
-              onClick={handleGenerateDebrief}
-              disabled={debriefLoading}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition shadow-sm cursor-pointer ${
-                debriefLoading 
-                  ? 'bg-slate-200 text-slate-500 cursor-not-allowed animate-pulse' 
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
-              }`}
-            >
-              <Sparkles className={`w-4 h-4 ${debriefLoading ? 'animate-spin' : ''}`} />
-              {debriefLoading ? 'Analisi in corso...' : 'Avvia Riunione & Debriefing'}
-            </button>
-          </div>
-
-          {!isDailyDebriefCollapsed && (
-            <>
-          {status?.latestDailyDebrief ? (
-            <div className="space-y-4">
-              {/* Output Analisi */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-inner">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Activity className="w-4 h-4 text-slate-400" />
-                    Rapporto della Riunione di Fine Giornata
-                  </h3>
-
-                </div>
-                <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
-                  <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
-                </div>
-                {status.latestDailyDebrief.timestamp && (
-                  <div className="text-right text-[10px] text-slate-400 mt-3 flex items-center justify-end gap-1 font-mono">
-                    <Clock className="w-3 h-3" />
-                    Analizzato il: {new Date(status.latestDailyDebrief.timestamp).toLocaleString('it-IT')}
-                  </div>
-                )}
-              </div>
-
-              {/* Regola Ottimizzata da Copiare */}
-              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-1.5">
-                    <TrendingUp className="w-4 h-4 text-indigo-600" />
-                    Regola Ottimizzata Proposta per il Bot
-                  </h3>
-                  <button
-                    onClick={() => {
-                      if (status.latestDailyDebrief) {
-                        navigator.clipboard.writeText(status.latestDailyDebrief.suggestedRule);
-                        setCopiedDebriefRule(true);
-                        setTimeout(() => setCopiedDebriefRule(false), 2000);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
-                  >
-                    {copiedDebriefRule ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-green-600" />
-                        <span className="text-green-700">Copiata!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copia Regola</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <div className="relative">
-                  <textarea
-                    readOnly
-                    value={status.latestDailyDebrief.suggestedRule}
-                    rows={2}
-                    className="w-full bg-white border border-indigo-200 rounded-lg p-3 text-sm font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
-                  />
-                </div>
-                <p className="text-[11px] text-indigo-700 font-sans italic leading-normal">
-                  💡 <strong>Suggerimento:</strong> Copia questa regola e incollala nel "Loop di Correzione" sottostante per addestrare il bot a migliorare le performance future.
-                </p>
-              </div>
-            </div>
-          ) : (
-            !debriefLoading && (
-              <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
-                Nessun debriefing generato per oggi. Clicca su "Avvia Riunione & Debriefing" per avviare l'analisi assistita da AI.
-              </div>
-            )
-          )}
-            </>
-          )}
-        </div>
-
-        {/* Valutazioni su Periodi Multi-giorno con Selezione Intervalli */}
-        <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-200 mt-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-4">
-            <div
-              className="cursor-pointer select-none hover:opacity-85 transition-opacity flex-1"
-              onClick={() => setIsPeriodicDebriefCollapsed(!isPeriodicDebriefCollapsed)}
-            >
-              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-indigo-600" />
-                <span>Valutazione & Ottimizzazione Periodica (AI)</span>
-                {isPeriodicDebriefCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-indigo-600" />}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Valuta le performance e ottimizza la strategia su intervalli di tempo superiori al singolo giorno. Seleziona date e conto di riferimento. Clicca per espandere/comprimere.
-              </p>
-            </div>
-          </div>
-
-          {!isPeriodicDebriefCollapsed && (
-            <>
-          {/* Selezione Rapida Periodo */}
-          <div className="flex flex-wrap gap-2 mb-4">
-            <span className="text-xs font-semibold text-slate-500 self-center mr-2 uppercase tracking-wider font-mono">Periodo Rapido:</span>
-            {[
-              { label: 'Ultimi 7 Giorni', days: 7 },
-              { label: 'Ultimi 15 Giorni', days: 15 },
-              { label: 'Ultimo Mese', days: 30 },
-              { label: 'Ultimi 3 Mesi', days: 90 },
-            ].map((btn, idx) => {
-              const startTest = new Date();
-              startTest.setDate(startTest.getDate() - btn.days);
-              const startStr = startTest.toISOString().split('T')[0];
-              const isSelected = rangeStartDate === startStr;
-              return (
-                <button
-                  key={idx}
-                  onClick={() => setQuickRange(btn.days)}
-                  className={`px-3 py-1 text-xs font-medium rounded-lg transition border cursor-pointer ${
-                    isSelected
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {btn.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                Data Inizio
-              </label>
-              <input
-                type="date"
-                value={rangeStartDate}
-                onChange={(e) => setRangeStartDate(e.target.value)}
-                className="w-full text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                Data Fine
-              </label>
-              <input
-                type="date"
-                value={rangeEndDate}
-                onChange={(e) => setRangeEndDate(e.target.value)}
-                className="w-full text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
+            {!isDailyDebriefCollapsed && (
               <button
-                onClick={handleGenerateRangeDebrief}
-                disabled={rangeLoading}
-                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition shadow-sm cursor-pointer ${
-                  rangeLoading 
+                onClick={handleGenerateDebrief}
+                disabled={debriefLoading}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition shadow-sm cursor-pointer ${
+                  debriefLoading 
                     ? 'bg-slate-200 text-slate-500 cursor-not-allowed animate-pulse' 
                     : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
                 }`}
               >
-                <Sparkles className={`w-4 h-4 ${rangeLoading ? 'animate-spin' : ''}`} />
-                {rangeLoading ? 'Generando Analisi...' : 'Analizza Periodo'}
+                <Sparkles className={`w-4 h-4 ${debriefLoading ? 'animate-spin' : ''}`} />
+                {debriefLoading ? 'Analisi in corso...' : 'Avvia Riunione Giornaliera'}
               </button>
-            </div>
+            )}
           </div>
 
-          {/* PANNELLO DI RIEPILOGO METRICHE DI PERFORMANCE AGGREGATE */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 font-sans">
-                  <BarChart2 className="w-4 h-4 text-indigo-600" />
-                  Riepilogo Performance Aggregate ({selectedTab === 'live' ? 'Reale' : 'Simulazione'})
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Statistiche calcolate in tempo reale per l'intervallo dal <strong className="text-slate-700">{rangeStartDate}</strong> al <strong className="text-slate-700">{rangeEndDate}</strong>.
-                </p>
-              </div>
-              <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
-                {performanceMetrics.totalTrades} Trade Chiusi
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* CARD 1: WIN RATE */}
-              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Win Rate</span>
-                    <span className="p-1 bg-green-50 text-green-700 rounded-lg">
-                      <TrendingUp className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-1.5 mt-1">
-                    <span className="text-2xl font-bold text-slate-900 font-mono">
-                      {performanceMetrics.winRate.toFixed(1)}%
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-medium">successo</span>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  {/* Piccolo Grafico a barre per Win Rate */}
-                  <div className="w-full bg-slate-200/70 h-2.5 rounded-full overflow-hidden flex">
-                    {performanceMetrics.totalTrades > 0 ? (
-                      <>
-                        <div 
-                          style={{ width: `${performanceMetrics.winRate}%` }} 
-                          className="bg-emerald-500 h-full transition-all duration-500" 
-                          title={`Vincenti: ${performanceMetrics.winRate.toFixed(1)}%`}
-                        />
-                        <div 
-                          style={{ width: `${100 - performanceMetrics.winRate}%` }} 
-                          className="bg-rose-400 h-full transition-all duration-500" 
-                          title={`Perdenti: ${(100 - performanceMetrics.winRate).toFixed(1)}%`}
-                        />
-                      </>
-                    ) : (
-                      <div className="w-full bg-slate-200 h-full" title="Nessun trade" />
-                    )}
-                  </div>
-                  <div className="flex justify-between text-[10px] text-slate-500 font-medium font-mono">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                      {performanceMetrics.winningTrades} Vincenti
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-rose-400 inline-block"></span>
-                      {performanceMetrics.losingTrades} Perdenti
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* CARD 2: PROFIT FACTOR */}
-              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Profit Factor</span>
-                    <span className={`p-1 rounded-lg text-xs font-bold font-mono ${
-                      performanceMetrics.profitFactor >= 2.0 ? 'bg-emerald-50 text-emerald-700' :
-                      performanceMetrics.profitFactor >= 1.5 ? 'bg-blue-50 text-blue-700' :
-                      performanceMetrics.profitFactor >= 1.0 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
-                    }`}>
-                      {performanceMetrics.profitFactor >= 2.0 ? 'Ottimo' :
-                       performanceMetrics.profitFactor >= 1.5 ? 'Buono' :
-                       performanceMetrics.profitFactor >= 1.0 ? 'Moderato' : 'Perdente'}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-2xl font-bold text-slate-900 font-mono">
-                      {performanceMetrics.profitFactor === 99.9 ? '∞' : performanceMetrics.profitFactor.toFixed(2)}
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-medium">rapporto G/P</span>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  {/* Grafico di confronto a barre per Profitto Lordo vs Perdita Lorda */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[9px] font-semibold text-slate-400 font-mono">
-                      <span>PROFITTO LORDO</span>
-                      <span className="text-emerald-600">+${performanceMetrics.grossProfit.toFixed(2)}</span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                      <div 
-                        style={{ 
-                          width: `${
-                            performanceMetrics.grossProfit === 0 && performanceMetrics.grossLoss === 0 ? 0 :
-                            (performanceMetrics.grossProfit / (Math.max(performanceMetrics.grossProfit, performanceMetrics.grossLoss) || 1)) * 100
-                          }%` 
-                        }} 
-                        className="bg-emerald-500 h-full transition-all duration-500" 
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[9px] font-semibold text-slate-400 font-mono">
-                      <span>PERDITA LORDA</span>
-                      <span className="text-rose-600">-${performanceMetrics.grossLoss.toFixed(2)}</span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                      <div 
-                        style={{ 
-                          width: `${
-                            performanceMetrics.grossProfit === 0 && performanceMetrics.grossLoss === 0 ? 0 :
-                            (performanceMetrics.grossLoss / (Math.max(performanceMetrics.grossProfit, performanceMetrics.grossLoss) || 1)) * 100
-                          }%` 
-                        }} 
-                        className="bg-rose-500 h-full transition-all duration-500" 
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* CARD 3: MASSIMO DRAWDOWN */}
-              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider font-mono">Max Drawdown</span>
-                    <span className="p-1 bg-rose-50 text-rose-700 rounded-lg">
-                      <ShieldAlert className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-2xl font-bold text-rose-600 font-mono">
-                      -{performanceMetrics.maxDrawdownPercent.toFixed(2)}%
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-medium">
-                      (-${performanceMetrics.maxDrawdownAmount.toFixed(2)})
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-4">
-                  {/* Istogramma a barre per il PnL dei singoli giorni dell'intervallo (se disponibile) o barra di esposizione */}
-                  {performanceMetrics.pnlHistory.length > 1 ? (
-                    <div className="space-y-1.5">
-                      <div className="text-[9px] font-semibold text-slate-400 font-mono uppercase tracking-wider">
-                        Trend PnL Giornaliero ({performanceMetrics.pnlHistory.length}gg)
-                      </div>
-                      <div className="flex items-end justify-between h-9 gap-1 bg-slate-100/50 p-1 rounded-lg">
-                        {performanceMetrics.pnlHistory.map((day: any, dIdx: number) => {
-                          const maxAbsPnL = Math.max(...performanceMetrics.pnlHistory.map((x: any) => Math.abs(x.pnl || 0))) || 1;
-                          const dayPnL = day.pnl || 0;
-                          const heightPercent = Math.max(15, Math.min(100, (Math.abs(dayPnL) / maxAbsPnL) * 100));
-                          const isPositive = dayPnL >= 0;
-                          return (
-                            <div 
-                              key={dIdx}
-                              style={{ height: `${heightPercent}%` }}
-                              className={`flex-1 rounded-sm transition-all duration-300 ${
-                                isPositive ? 'bg-emerald-400 hover:bg-emerald-500' : 'bg-rose-400 hover:bg-rose-500'
-                              }`}
-                              title={`${day.date}: ${isPositive ? '+' : ''}$${dayPnL.toFixed(2)}`}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-[9px] font-semibold text-slate-400 font-mono">
-                        <span>LIVELLO RISCHIO DRAWDOWN</span>
-                        <span>{performanceMetrics.maxDrawdownPercent > 5 ? 'ELEVATO' : 'CONTENUTO'}</span>
-                      </div>
-                      <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
-                        <div 
-                          style={{ width: `${Math.min(100, (performanceMetrics.maxDrawdownPercent / 10) * 100)}%` }} 
-                          className={`h-full transition-all duration-500 ${
-                            performanceMetrics.maxDrawdownPercent > 5 ? 'bg-rose-500' :
-                            performanceMetrics.maxDrawdownPercent > 2 ? 'bg-amber-400' : 'bg-emerald-500'
-                          }`}
-                        />
-                      </div>
-                      <div className="text-[9px] text-slate-400 italic text-right">
-                        Soglia allerta: 10%
-                      </div>
+          {!isDailyDebriefCollapsed && (
+            <div className="space-y-6">
+              {/* Sotto-sezione 1: Debriefing Giornaliero */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    <Activity className="w-4 h-4 text-indigo-600" />
+                    Debriefing Giornaliero di Fine Seduta
+                  </h3>
+                  {status?.latestDailyDebrief?.timestamp && (
+                    <div className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                      <Clock className="w-3 h-3" />
+                      {new Date(status.latestDailyDebrief.timestamp).toLocaleString('it-IT')}
                     </div>
                   )}
                 </div>
+
+                {status?.latestDailyDebrief ? (
+                  <div className="space-y-4">
+                    <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
+                      <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
+                    </div>
+
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                          <TrendingUp className="w-4 h-4 text-indigo-600" />
+                          Regola Ottimizzata Proposta per la Giornata
+                        </h4>
+                        <button
+                          onClick={() => {
+                            if (status.latestDailyDebrief) {
+                              navigator.clipboard.writeText(status.latestDailyDebrief.suggestedRule);
+                              setCopiedDebriefRule(true);
+                              setTimeout(() => setCopiedDebriefRule(false), 2000);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                        >
+                          {copiedDebriefRule ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-green-600" />
+                              <span className="text-green-700">Copiata!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copia Regola</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="relative">
+                        <textarea
+                          readOnly
+                          value={status.latestDailyDebrief.suggestedRule}
+                          rows={2}
+                          className="w-full bg-white border border-indigo-200 rounded-lg p-2.5 text-xs font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  !debriefLoading && (
+                    <div className="text-center py-4 text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                      Nessun debriefing generato per oggi. Clicca su "Avvia Riunione Giornaliera" in alto a destra per analizzare la giornata.
+                    </div>
+                  )
+                )}
               </div>
-            </div>
 
-            {/* Riepilogo Profitto/Perdita Netto */}
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-medium font-sans">
-              <span className="text-slate-500">Risultato Netto Realizzato nel Periodo:</span>
-              <span className={`font-mono font-bold text-sm ${
-                performanceMetrics.netPnL > 0 ? 'text-emerald-600' :
-                performanceMetrics.netPnL < 0 ? 'text-rose-600' : 'text-slate-500'
-              }`}>
-                {performanceMetrics.netPnL > 0 ? '+' : ''}${performanceMetrics.netPnL.toFixed(2)}
-              </span>
-            </div>
-          </div>
-
-          {rangeDebrief ? (
-            <div className="space-y-4">
-              {/* Output Analisi Periodica */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-inner">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 font-mono">
-                    <Activity className="w-4 h-4 text-slate-400" />
-                    Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
+              {/* Sotto-sezione 2: Valutazione & Ottimizzazione su Periodi Multi-giorno */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div className="border-b border-slate-100 pb-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    <Calendar className="w-4 h-4 text-indigo-600" />
+                    Analisi & Valutazione su Periodi Personalizzati
                   </h3>
-
-                </div>
-                <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
-                  <ReactMarkdown>{rangeDebrief.analysis}</ReactMarkdown>
-                </div>
-              </div>
-
-              {/* Regola Ottimizzata da Copiare */}
-              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-1.5">
-                    <TrendingUp className="w-4 h-4 text-indigo-600" />
-                    Regola di Trading Suggerita per il Periodo
-                  </h3>
-                  <button
-                    onClick={() => {
-                      if (rangeDebrief) {
-                        navigator.clipboard.writeText(rangeDebrief.suggestedRule);
-                        setCopiedRangeRule(true);
-                        setTimeout(() => setCopiedRangeRule(false), 2000);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
-                  >
-                    {copiedRangeRule ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-green-600" />
-                        <span className="text-green-700">Copiata!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copia Regola</span>
-                      </>
-                    )}
-                  </button>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Seleziona l'intervallo temporale per calcolare le metriche aggregate e generare la strategia di medio periodo.
+                  </p>
                 </div>
 
-                <div className="relative">
-                  <textarea
-                    readOnly
-                    value={rangeDebrief.suggestedRule}
-                    rows={2}
-                    className="w-full bg-white border border-indigo-200 rounded-lg p-3 text-sm font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
-                  />
+                {/* Selezione Rapida Periodo */}
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs font-semibold text-slate-500 self-center mr-2 uppercase tracking-wider font-mono">Periodo Rapido:</span>
+                  {[
+                    { label: 'Ultimi 7 Giorni', days: 7 },
+                    { label: 'Ultimi 15 Giorni', days: 15 },
+                    { label: 'Ultimo Mese', days: 30 },
+                    { label: 'Ultimi 3 Mesi', days: 90 },
+                  ].map((btn, idx) => {
+                    const startTest = new Date();
+                    startTest.setDate(startTest.getDate() - btn.days);
+                    const startStr = startTest.toISOString().split('T')[0];
+                    const isSelected = rangeStartDate === startStr;
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => setQuickRange(btn.days)}
+                        className={`px-3 py-1 text-xs font-medium rounded-lg transition border cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-[11px] text-indigo-700 font-sans italic leading-normal">
-                  💡 <strong>Suggerimento:</strong> Copia questa regola di medio periodo e inseriscila nel "Loop di Correzione" sottostante per addestrare il bot a ottimizzare la sua operatività futura.
-                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Data Inizio
+                    </label>
+                    <input
+                      type="date"
+                      value={rangeStartDate}
+                      onChange={(e) => setRangeStartDate(e.target.value)}
+                      className="w-full text-slate-800 bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Data Fine
+                    </label>
+                    <input
+                      type="date"
+                      value={rangeEndDate}
+                      onChange={(e) => setRangeEndDate(e.target.value)}
+                      className="w-full text-slate-800 bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <button
+                      onClick={handleGenerateRangeDebrief}
+                      disabled={rangeLoading}
+                      className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm cursor-pointer ${
+                        rangeLoading 
+                          ? 'bg-slate-200 text-slate-500 cursor-not-allowed animate-pulse' 
+                          : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
+                      }`}
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${rangeLoading ? 'animate-spin' : ''}`} />
+                      {rangeLoading ? 'Generando Analisi...' : 'Analizza Periodo'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* PANNELLO DI RIEPILOGO METRICHE DI PERFORMANCE AGGREGATE */}
+                <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-3">
+                    <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-sans">
+                      <BarChart2 className="w-3.5 h-3.5 text-indigo-600" />
+                      Riepilogo Performance Aggregate ({selectedTab === 'live' ? 'Reale' : 'Simulazione'})
+                    </h4>
+                    <span className="text-[10px] bg-white text-slate-600 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider font-mono border border-slate-200">
+                      {performanceMetrics.totalTrades} Trade Chiusi
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* CARD 1: WIN RATE */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider font-mono">Win Rate</span>
+                          <span className="p-1 bg-green-50 text-green-700 rounded-lg">
+                            <TrendingUp className="w-3 h-3" />
+                          </span>
+                        </div>
+                        <div className="flex items-baseline gap-1 mt-1">
+                          <span className="text-xl font-bold text-slate-900 font-mono">
+                            {performanceMetrics.winRate.toFixed(1)}%
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">successo</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-1.5">
+                        <div className="w-full bg-slate-200/70 h-2 rounded-full overflow-hidden flex">
+                          {performanceMetrics.totalTrades > 0 ? (
+                            <>
+                              <div 
+                                style={{ width: `${performanceMetrics.winRate}%` }} 
+                                className="bg-emerald-500 h-full transition-all duration-500" 
+                                title={`Vincenti: ${performanceMetrics.winRate.toFixed(1)}%`}
+                              />
+                              <div 
+                                style={{ width: `${100 - performanceMetrics.winRate}%` }} 
+                                className="bg-rose-400 h-full transition-all duration-500" 
+                                title={`Perdenti: ${(100 - performanceMetrics.winRate).toFixed(1)}%`}
+                              />
+                            </>
+                          ) : (
+                            <div className="w-full bg-slate-200 h-full" title="Nessun trade" />
+                          )}
+                        </div>
+                        <div className="flex justify-between text-[9px] text-slate-500 font-medium font-mono">
+                          <span>{performanceMetrics.winningTrades} Vincenti</span>
+                          <span>{performanceMetrics.losingTrades} Perdenti</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CARD 2: PROFIT FACTOR */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider font-mono">Profit Factor</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                            performanceMetrics.profitFactor >= 2.0 ? 'bg-emerald-50 text-emerald-700' :
+                            performanceMetrics.profitFactor >= 1.5 ? 'bg-blue-50 text-blue-700' :
+                            performanceMetrics.profitFactor >= 1.0 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
+                          }`}>
+                            {performanceMetrics.profitFactor >= 2.0 ? 'Ottimo' :
+                             performanceMetrics.profitFactor >= 1.5 ? 'Buono' :
+                             performanceMetrics.profitFactor >= 1.0 ? 'Moderato' : 'Perdente'}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline gap-1 mt-1">
+                          <span className="text-xl font-bold text-slate-900 font-mono">
+                            {performanceMetrics.profitFactor === 99.9 ? '∞' : performanceMetrics.profitFactor.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">rapporto G/P</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-1 text-[9px] font-mono">
+                        <div className="flex justify-between text-slate-500">
+                          <span>Profitto Lordo:</span>
+                          <span className="text-emerald-600 font-bold">+${performanceMetrics.grossProfit.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-500">
+                          <span>Perdita Lorda:</span>
+                          <span className="text-rose-600 font-bold">-${performanceMetrics.grossLoss.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CARD 3: MASSIMO DRAWDOWN */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider font-mono">Max Drawdown</span>
+                          <span className="p-1 bg-rose-50 text-rose-700 rounded-lg">
+                            <ShieldAlert className="w-3 h-3" />
+                          </span>
+                        </div>
+                        <div className="flex items-baseline gap-1 mt-1">
+                          <span className="text-xl font-bold text-rose-600 font-mono">
+                            -{performanceMetrics.maxDrawdownPercent.toFixed(2)}%
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            (-${performanceMetrics.maxDrawdownAmount.toFixed(2)})
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span className="text-slate-500 text-[10px]">Risultato Netto:</span>
+                        <span className={`font-mono font-bold text-xs ${
+                          performanceMetrics.netPnL > 0 ? 'text-emerald-600' :
+                          performanceMetrics.netPnL < 0 ? 'text-rose-600' : 'text-slate-500'
+                        }`}>
+                          {performanceMetrics.netPnL > 0 ? '+' : ''}${performanceMetrics.netPnL.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {rangeDebrief ? (
+                  <div className="space-y-4">
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-slate-400" />
+                        Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
+                      </h4>
+                      <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
+                        <ReactMarkdown>{rangeDebrief.analysis}</ReactMarkdown>
+                      </div>
+                    </div>
+
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                          <TrendingUp className="w-4 h-4 text-indigo-600" />
+                          Regola di Trading Suggerita per il Periodo
+                        </h4>
+                        <button
+                          onClick={() => {
+                            if (rangeDebrief) {
+                              navigator.clipboard.writeText(rangeDebrief.suggestedRule);
+                              setCopiedRangeRule(true);
+                              setTimeout(() => setCopiedRangeRule(false), 2000);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                        >
+                          {copiedRangeRule ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-green-600" />
+                              <span className="text-green-700">Copiata!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copia Regola</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="relative">
+                        <textarea
+                          readOnly
+                          value={rangeDebrief.suggestedRule}
+                          rows={2}
+                          className="w-full bg-white border border-indigo-200 rounded-lg p-2.5 text-xs font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  !rangeLoading && (
+                    <div className="text-center py-4 text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                      Seleziona un intervallo di date e clicca su "Analizza Periodo" per generare l'analisi del periodo e ottenere nuove regole ottimizzate.
+                    </div>
+                  )
+                )}
               </div>
             </div>
-          ) : (
-            !rangeLoading && (
-              <div className="text-center py-6 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl bg-white/50">
-                Seleziona un intervallo di date e clicca su "Analizza Periodo" per generare l'analisi del periodo e ottenere nuove regole ottimizzate.
-              </div>
-            )
-          )}
-            </>
           )}
         </div>
 
