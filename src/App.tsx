@@ -781,6 +781,9 @@ function AccountPanel({
   
   const investedCapital = account.positions ? account.positions.reduce((sum: any, pos: any) => sum + Math.abs(parseFloat(pos.market_value || '0')), 0) : 0;
   const cashCapital = typeof account.cash === 'number' ? account.cash : Math.max(0, currentBalance - investedCapital);
+  const activePositionsUnrealizedPnL = account.positions ? account.positions.reduce((sum: number, pos: any) => sum + (parseFloat(pos.unrealized_pl || '0') || 0), 0) : 0;
+  const activePositionsNominal = account.positions ? account.positions.reduce((sum: number, pos: any) => sum + (pos.nominalInvestment || (parseFloat(pos.avg_entry_price || '0') * parseFloat(pos.qty || '0')) || 0), 0) : 0;
+  const activePositionsPnLPercent = activePositionsNominal > 0 ? (activePositionsUnrealizedPnL / activePositionsNominal) * 100 : 0;
 
   const [wrapLogs, setWrapLogs] = useState<boolean>(() => {
     const saved = localStorage.getItem(`alpaca_${type}_wrapLogs`);
@@ -951,11 +954,16 @@ function AccountPanel({
             </span>
         </div>
         <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2 sm:gap-4" onClick={(e) => e.stopPropagation()}>
-          <div className="text-xs text-slate-600 flex items-center gap-1.5 sm:gap-2">
+          <div className="text-xs text-slate-600 flex items-center gap-1.5 sm:gap-2 flex-wrap">
             <span>Iniziale: <strong className="text-slate-900">${initialCapital.toFixed(2)}</strong></span>
             <span className={`px-1.5 py-0.5 rounded font-bold ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
               {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
             </span>
+            {account.positions && account.positions.length > 0 && (
+              <span className={`px-1.5 py-0.5 rounded font-bold font-mono text-[11px] ${activePositionsUnrealizedPnL >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                P&L Attivo: {activePositionsUnrealizedPnL >= 0 ? '+' : ''}${activePositionsUnrealizedPnL.toFixed(2)} ({activePositionsPnLPercent >= 0 ? '+' : ''}{activePositionsPnLPercent.toFixed(2)}%)
+              </span>
+            )}
           </div>
           <button
               onClick={() => onToggle(type)}
@@ -986,7 +994,7 @@ function AccountPanel({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Capitale Investito</span>
               <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -995,10 +1003,33 @@ function AccountPanel({
               </div>
             </div>
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Capitale Residuo</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Capitale Residuo (Cash)</span>
               <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-base sm:text-lg font-bold text-emerald-600 font-mono">${cashCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 <span className="text-[10px] text-slate-400 font-medium font-mono">({(currentBalance > 0 ? (cashCapital / currentBalance) * 100 : 0).toFixed(1)}% NAV)</span>
+              </div>
+            </div>
+            <div className={`rounded-xl p-3 border flex flex-col justify-between ${
+              activePositionsUnrealizedPnL > 0 
+                ? 'bg-emerald-50/60 border-emerald-200' 
+                : activePositionsUnrealizedPnL < 0 
+                ? 'bg-rose-50/60 border-rose-200' 
+                : 'bg-slate-50 border-slate-100'
+            }`}>
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block mb-1">
+                P&L Posizioni Attive (Somma Algebrica)
+              </span>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className={`text-base sm:text-lg font-bold font-mono ${
+                  activePositionsUnrealizedPnL > 0 ? 'text-emerald-600' : activePositionsUnrealizedPnL < 0 ? 'text-rose-600' : 'text-slate-700'
+                }`}>
+                  {activePositionsUnrealizedPnL >= 0 ? '+' : ''}${activePositionsUnrealizedPnL.toFixed(2)}
+                </span>
+                <span className={`text-[11px] font-bold font-mono px-1.5 py-0.5 rounded ${
+                  activePositionsUnrealizedPnL > 0 ? 'text-emerald-800 bg-emerald-100' : activePositionsUnrealizedPnL < 0 ? 'text-rose-800 bg-rose-100' : 'text-slate-600 bg-slate-200'
+                }`}>
+                  ({activePositionsPnLPercent >= 0 ? '+' : ''}{activePositionsPnLPercent.toFixed(2)}%)
+                </span>
               </div>
             </div>
           </div>
@@ -1129,8 +1160,15 @@ function AccountPanel({
         {/* Positions */}
         {account.positions && account.positions.length > 0 && (
           <div className="mt-4">
-            <div className="flex items-center justify-between mb-2 border-b pb-1">
-              <h3 className="text-sm font-medium text-gray-900">Posizioni Aperte</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 border-b pb-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-medium text-gray-900">Posizioni Aperte ({account.positions.length})</h3>
+                <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${
+                  activePositionsUnrealizedPnL >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                }`}>
+                  Somma P&L Latente: {activePositionsUnrealizedPnL >= 0 ? '+' : ''}${activePositionsUnrealizedPnL.toFixed(2)} ({activePositionsPnLPercent >= 0 ? '+' : ''}{activePositionsPnLPercent.toFixed(2)}%)
+                </span>
+              </div>
               <button
                 onClick={() => onOpenForceBuy && onOpenForceBuy()}
                 className="px-2.5 py-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition shadow-sm flex items-center gap-1 cursor-pointer"
@@ -2169,10 +2207,24 @@ export default function App() {
             <div className="space-y-6">
               {/* 1. POSIZIONI ATTIVE */}
               <div>
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
-                  <Activity className="w-4 h-4 text-indigo-500" />
-                  Posizioni Attive (Profitti/Perdite Latenti)
-                </h3>
+                <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    <Activity className="w-4 h-4 text-indigo-500" />
+                    Posizioni Attive (Profitti/Perdite Latenti)
+                  </h3>
+                  {operationsData.positions && operationsData.positions.length > 0 && (() => {
+                    const totalUnrealized = operationsData.positions.reduce((acc: number, p: any) => acc + (parseFloat(p.unrealized_pl || '0') || 0), 0);
+                    const totalNom = operationsData.positions.reduce((acc: number, p: any) => acc + (parseFloat(p.market_value || '0') || ((parseFloat(p.avg_entry_price || '0')) * (parseFloat(p.qty || '0'))) || 0), 0);
+                    const totalPct = totalNom > 0 ? (totalUnrealized / totalNom) * 100 : 0;
+                    return (
+                      <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${
+                        totalUnrealized >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                      }`}>
+                        Somma Algebrica P&L: {totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toFixed(2)} ({totalPct >= 0 ? '+' : ''}{totalPct.toFixed(2)}%)
+                      </span>
+                    );
+                  })()}
+                </div>
                 {operationsData.positions && operationsData.positions.length > 0 ? (
                   <div className="overflow-x-auto bg-slate-50/50 rounded-xl border border-slate-200/60 shadow-inner">
                     <table className="w-full min-w-[540px] text-left border-collapse text-xs">
@@ -2225,6 +2277,26 @@ export default function App() {
                           );
                         })}
                       </tbody>
+                      {(() => {
+                        const totalMktVal = operationsData.positions.reduce((acc: number, p: any) => acc + (parseFloat(p.market_value || '0') || 0), 0);
+                        const totalUnrealized = operationsData.positions.reduce((acc: number, p: any) => acc + (parseFloat(p.unrealized_pl || '0') || 0), 0);
+                        const totalPct = totalMktVal > 0 ? (totalUnrealized / totalMktVal) * 100 : 0;
+                        return (
+                          <tfoot>
+                            <tr className="bg-slate-100/90 font-bold border-t border-slate-200 text-slate-900">
+                              <td className="p-2 sm:p-3" colSpan={4}>TOTALE SOMMA ALGEBRICA</td>
+                              <td className="p-2 sm:p-3 text-right font-mono">${totalMktVal.toFixed(2)}</td>
+                              <td className="p-2 sm:p-3"></td>
+                              <td className={`p-2 sm:p-3 text-right font-mono ${
+                                totalUnrealized > 0 ? 'text-emerald-600' : totalUnrealized < 0 ? 'text-rose-600' : 'text-slate-700'
+                              }`}>
+                                {totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toFixed(2)} ({totalPct >= 0 ? '+' : ''}{totalPct.toFixed(2)}%)
+                              </td>
+                              <td className="p-2 sm:p-3"></td>
+                            </tr>
+                          </tfoot>
+                        );
+                      })()}
                     </table>
                   </div>
                 ) : (
