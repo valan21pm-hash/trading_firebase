@@ -13,29 +13,34 @@ export const AlpacaMonitorModule: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchPositions = async () => {
       try {
         const res = await fetch('/api/alpaca-positions');
-        if (res.ok) {
+        if (res.ok && isMounted) {
           const contentType = res.headers.get('content-type');
           if (contentType && contentType.includes('application/json')) {
             const data = await res.json();
-            setPositions(data);
-          } else {
-            console.warn('Expected JSON response from /api/alpaca-positions, received alternative content type.');
+            if (Array.isArray(data) && isMounted) {
+              setPositions(data);
+            }
           }
         }
       } catch (e) {
-        console.error("Errore fetch posizioni Alpaca", e);
+        // Silently handle transient network errors
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
     
     fetchPositions();
     const interval = setInterval(fetchPositions, 15000); // Polling ultra-veloce
 
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   if (loading) return <div className="text-white p-4">Caricamento posizioni real-time...</div>;

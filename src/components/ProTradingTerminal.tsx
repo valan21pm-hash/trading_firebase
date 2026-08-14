@@ -4,7 +4,7 @@ import {
   Layers, BarChart3, Globe, Cpu, Clock, AlertTriangle, 
   Search, ArrowUpRight, ArrowDownRight,
   Maximize2, PieChart, DollarSign, Eye, X, Play, Square, Settings, BookOpen, Key, Sparkles, Check, AlertCircle, Upload, Download,
-  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive, Plus, ShoppingCart
+  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive, Plus, ShoppingCart, Calculator
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ReactMarkdown from 'react-markdown';
@@ -15,6 +15,8 @@ import { GeminiSignalsTicker } from './GeminiSignalsTicker';
 import { AlpacaMonitorModule } from './AlpacaMonitorModule';
 import { SentimentBadge } from './SentimentBadge';
 import { ForceBuyModal } from './ForceBuyModal';
+import { StatisticalExpertModule } from './StatisticalExpertModule';
+import { RssNewsWidget } from './RssNewsWidget';
 import { getAccessToken } from '../auth';
 import { GeminiSignal } from '../types';
 
@@ -67,7 +69,7 @@ const defaultTopAssets = [
 ];
 
 export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalProps) {
-  const [activeTab, setActiveTab] = useState<'terminal' | 'positions' | 'depth' | 'ai' | 'analytics' | 'news' | 'debrief' | 'api' | 'settings' | 'monitor'>('terminal');
+  const [activeTab, setActiveTab] = useState<'terminal' | 'positions' | 'depth' | 'ai' | 'stats' | 'analytics' | 'news' | 'debrief' | 'api' | 'settings' | 'monitor'>('terminal');
   const [topAssets, setTopAssets] = useState(defaultTopAssets);
   const [selectedAsset, setSelectedAsset] = useState(defaultTopAssets[0]);
   const [timeframe, setTimeframe] = useState('1D');
@@ -978,6 +980,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
         >
           <Cpu className="w-3.5 h-3.5" /> AI Neural Matrix & Regole
+        </button>
+        <button
+          onClick={() => setActiveTab('stats')}
+          className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer flex items-center gap-1.5 ${activeTab === 'stats' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-[#0E1526]'}`}
+        >
+          <Calculator className="w-3.5 h-3.5 text-cyan-400" /> Esperto Statistico
         </button>
         <button
           onClick={() => setActiveTab('debrief')}
@@ -2004,28 +2012,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
             </div>
           )}
 
+          {activeTab === 'stats' && (
+            <StatisticalExpertModule />
+          )}
+
           {activeTab === 'news' && (
-            <div className="bg-[#10172A] border border-slate-800/80 rounded-2xl p-4 flex flex-col shadow-xl flex-1 font-mono text-xs space-y-3">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <Globe className="w-4 h-4 text-indigo-400" /> Live Market Wire & Sentiment Feed
-              </h2>
-              <div className="space-y-2">
-                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-indigo-400 font-bold text-[10px]">BLOOMBERG TERMINAL WIRE</div>
-                  <div className="text-white font-bold mt-1">FED sostiene la stabilità dei tassi per il trimestre in corso</div>
-                  <div className="text-slate-400 text-[11px] mt-1 font-sans">
-                    L'impatto sui mercati azionari tecnologici rimane positivo con continuazione del rally sui semiconduttori.
-                  </div>
-                </div>
-                <div className="bg-[#090D16] p-3 rounded-xl border border-slate-800">
-                  <div className="text-emerald-400 font-bold text-[10px]">REUTERS FINANCIAL MARKET</div>
-                  <div className="text-white font-bold mt-1">Settore AI & Chip mostra volumi record in apertura mercato</div>
-                  <div className="text-slate-400 text-[11px] mt-1 font-sans">
-                    Forte spinta rialzista registrata sui principali ticker semiconduttori ed etf di settore.
-                  </div>
-                </div>
-              </div>
-            </div>
+            <RssNewsWidget />
           )}
 
         </div>

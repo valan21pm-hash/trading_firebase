@@ -63,6 +63,8 @@ import { RiskManagementService } from "./src/backend/services/RiskManagementServ
 import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
 import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js";
 import { RiskRuleConfig } from "./src/types.js";
+import StatisticalExpertService from "./src/backend/services/StatisticalExpertService.js";
+import RssNewsService from "./src/backend/services/RssNewsService.js";
 
 const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   {
@@ -1644,7 +1646,7 @@ async function loadStateFromFirestore() {
   }
 }
 
-function addLog(mode: 'paper' | 'live' | 'system', message: string) {
+export function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   const timestamp = new Date().toISOString();
   const logMsg = `[${timestamp}] ${message}`;
   
@@ -1790,13 +1792,20 @@ async function getBulkMarketSentiment(symbols: string[], context?: string): Prom
       ? `\n\nUSER FEEDBACK RULES TO FOLLOW:\n- ${botStatus.userFeedbackRules.join('\n- ')}`
       : '';
 
-    const systemPersona = `Sei un Motore Decisionale Quantitativo e Analista Finanziario Senior specializzato in Algorithmic Trading e Analisi Macroeconomica (FRED & Yahoo Finance). La tua missione prioritaria è la CONSERVAZIONE DEL CAPITALE rispetto al semplice profitto.
+    const statContext = StatisticalExpertService.getInstance().getPromptContext();
+    const rssContext = await RssNewsService.getInstance().getNewsContextForPrompt();
+
+    const systemPersona = `Sei un Motore Decisionale Quantitativo e Analista Finanziario Senior specializzato in Algorithmic Trading e Analisi Macroeconomica (FRED, Yahoo Finance, CNBC, MarketWatch). La tua missione prioritaria è la CONSERVAZIONE DEL CAPITALE rispetto al semplice profitto.
 REGOLE FONDAMENTALI E MACRO:
 1. Gestione del Rischio (1-2% massimo di rischio per operazione, Stop Loss obbligatorio, Rapporto Rischio/Rendimento almeno 1:2 o 1:3).
-2. Monitoraggio Macroeconomico & Fonti Autorevoli: Valuta l'impatto di inflazione (CPI), tassi di interesse (Federal Funds Rate / ECB), mercato del lavoro (UNRATE) e stress finanziario (high-yield spreads).
-3. Filtri di Volatilità e Visione Contrarian: Riduci l'esposizione o adotta un approccio prudente in presenza di dati macro impattanti; considera che il mercato spesso sconta già le notizie ("buy the rumor, sell the news").
+2. Monitoraggio Macroeconomico & Fonti Autorevoli: Valuta l'impatto di inflazione (CPI), tassi di interesse (Federal Funds Rate / ECB), mercato del lavoro (UNRATE) e notizie RSS reali.
+3. Filtri di Volatilità e Sincronia tra Indici: Riduci l'esposizione o adotta un approccio prudente se la matrice di correlazione tra indici o le notizie mostrano divergenze o elevato rischio.
 4. Disciplina Antimartingala e Trend Following: Mai mediare in perdita, piramidare solo in utile, seguire il trend dominante.
-5. Chain-of-Thought e Default su HOLD: In caso di segnali macro incerti o contrastanti, il punteggio deve tendere a 0 (HOLD).`;
+5. Chain-of-Thought e Default su HOLD: In caso di segnali macro o statistici incerti o contrastanti, il punteggio deve tendere a 0 (HOLD).
+
+${statContext}
+
+${rssContext}`;
 
     const prompt = context
       ? `${systemPersona}\n\nAnalizza il sentiment di mercato per ciascuno dei seguenti simboli: ${missingSymbols.join(', ')} considerando questo evento: ${context}.${feedbackRules}\nRispondi RIGIDAMENTE con un singolo oggetto JSON valido in cui le chiavi sono i simboli esatti e i valori sono oggetti con "score" (un numero da -1 per ribassista a 1 per rialzista) e "reasoning" (ragionamento sintetico basato su risk management e trend). Esempio:\n{\n  "${missingSymbols[0] || 'SPY'}": {"score": 0.4, "reasoning": "Trend rialzista confermato con buon rapporto rischio/rendimento"}\n}`
@@ -2150,7 +2159,7 @@ async function sendToGoogleSheets(payload: { eventType: string; mode?: string; s
   try {
     await GoogleSheetsService.appendLogsToSheet(payload);
   } catch (err: any) {
-    console.error('[Google Sheets Error]', err?.message || err);
+    console.warn('[Google Sheets Info]', err?.message || err);
   }
 }
 
@@ -2193,7 +2202,7 @@ async function syncDailyTradingSummaryToGoogleSheets() {
     saveBotStatus().catch(() => {});
     console.log('[Google Sheets] Riepilogo giornaliero inviato con successo (15 minuti prima della chiusura di mercato).');
   } catch (err: any) {
-    console.error('[Google Sheets Error] Errore sincronizzazione riepilogo giornaliero:', err?.message || err);
+    console.warn('[Google Sheets Info] Avviso sincronizzazione riepilogo giornaliero:', err?.message || err);
   }
 }
 
@@ -2225,7 +2234,7 @@ async function exportCredentialsToGoogleSheets(): Promise<boolean> {
     return result;
   } catch (err: any) {
     console.warn('[Google Sheets] Esportazione credenziali non disponibile:', err.message);
-    return false;
+    throw err;
   }
 }
 
@@ -2363,7 +2372,9 @@ app.post('/api/sheets/sync', async (req, res) => {
   } catch (err: any) {
     const errMsg = err?.message || err?.toString() || 'Errore durante la sincronizzazione con Google Sheets';
     console.warn('[Google Sheets Sync]:', errMsg);
-    res.status(200).json({ success: false, error: errMsg });
+    const isAuthError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('credential') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('login') || errMsg.toLowerCase().includes('not been used') || errMsg.toLowerCase().includes('disabled');
+    const status = isAuthError ? 401 : 500;
+    res.status(status).json({ success: false, error: errMsg });
   }
 });
 
@@ -2379,12 +2390,14 @@ app.post('/api/sheets/backup-credentials', async (req, res) => {
     if (ok) {
       res.json({ success: true, message: 'Chiavi API esportate con successo su Google Sheets!' });
     } else {
-      res.json({ success: false, error: 'Google Sheets non accessibile o API non abilitata. Configura le chiavi direttamente in Impostazioni.' });
+      res.status(401).json({ success: false, error: 'Google Sheets non accessibile o API non abilitata. Configura le chiavi direttamente in Impostazioni.' });
     }
   } catch (err: any) {
     const errMsg = err?.message || err?.toString() || 'Errore durante l\'esportazione delle chiavi';
     console.warn('[Google Sheets Backup]:', errMsg);
-    res.json({ success: false, error: errMsg });
+    const isAuthError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('credential') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('login') || errMsg.toLowerCase().includes('not been used') || errMsg.toLowerCase().includes('disabled');
+    const status = isAuthError ? 401 : 500;
+    res.status(status).json({ success: false, error: errMsg });
   }
 });
 
@@ -2620,6 +2633,24 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     recordAggregateMarketSentiment(bulkSentiment);
     const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
 
+    // Aggiornamento dati e matrice dell'Esperto Statistico di Sfondo
+    const indexPrices: Record<string, number> = {};
+    const indexChanges: Record<string, number> = {};
+    const mockBasePrices: Record<string, number> = { SPY: 520, QQQ: 450, DIA: 390, IWM: 200, VIX: 15 };
+
+    for (const idxSym of ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX']) {
+      const scoreData = bulkSentiment[idxSym];
+      const base = mockBasePrices[idxSym] || 100;
+      const score = scoreData ? scoreData.score : 0;
+      const chgPct = idxSym === 'VIX' ? (vix24hChangePct ?? (score * -5)) : (score * 1.5);
+      indexPrices[idxSym] = parseFloat((base * (1 + chgPct / 100)).toFixed(2));
+      indexChanges[idxSym] = parseFloat(chgPct.toFixed(2));
+    }
+
+    StatisticalExpertService.getInstance().updateIndexPrices(indexPrices, indexChanges);
+    const statMetrics = StatisticalExpertService.getInstance().getMetrics();
+    addLog(mode as 'paper' | 'live', `[Modulo Statistico] Stato Mercato: ${statMetrics.marketState} | Coerenza: ${statMetrics.correlations.market_coherence.toFixed(2)} | Moltiplicatore Taglia: ${statMetrics.recommendedPositionSizeMultiplier.toFixed(2)}x`);
+
     addLog(mode as 'paper' | 'live', `[Valutazione IA] Riepilogo sentiment per ciascun asset analizzato:`);
     for (const sym of symbolsToAnalyze) {
       const { score, reasoning } = bulkSentiment[sym] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
@@ -2824,6 +2855,22 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
           return { symbol, score, reasoning };
         }).filter(item => item.score > 0.2);
+
+        // Veto dell'Esperto Statistico di Sfondo
+        positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => {
+          const statEval = StatisticalExpertService.getInstance().evaluateTradePermission(item.symbol, item.score);
+          if (!statEval.allowed) {
+            addLog(mode as 'paper' | 'live', statEval.reason);
+            addLogicLog(mode, {
+              timestamp: new Date().toISOString(),
+              symbol: item.symbol,
+              action: 'STAT_VETO',
+              reasoning: statEval.reason
+            });
+            return false;
+          }
+          return true;
+        });
 
         // Filtro Settoriale Tech QQQ (< 0.2 vieta nuove posizioni tech)
         const qqqScore = bulkSentiment['QQQ']?.score ?? 0.25;
@@ -3360,7 +3407,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     sendToGoogleSheets({
       eventType: 'daily_debrief',
       data: botStatus.latestDailyDebrief
-    }).catch(err => console.error('[Google Sheets Error]', err));
+    }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
     addLog('system', '[Debriefing AI] Debriefing generato con successo.');
@@ -3376,7 +3423,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       sendToGoogleSheets({
         eventType: 'daily_debrief_fallback',
         data: fallbackDebrief
-      }).catch(err => console.error('[Google Sheets Error]', err));
+      }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
       saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief fallback catch:', err));
       
       return res.json({ success: true, debrief: fallbackDebrief });
@@ -3531,7 +3578,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     sendToGoogleSheets({
       eventType: 'range_debrief',
       data: { startDate, endDate, mode, analysis: result.analysis, suggestedRule: result.suggestedRule }
-    }).catch(err => console.error('[Google Sheets Error]', err));
+    }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
 
     addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo.');
     res.json({ 
@@ -3548,7 +3595,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       sendToGoogleSheets({
         eventType: 'range_debrief_fallback',
         data: { startDate, endDate, mode, analysis: fallbackRangeDebrief.analysis, suggestedRule: fallbackRangeDebrief.suggestedRule }
-      }).catch(err => console.error('[Google Sheets Error]', err));
+      }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
       return res.json({ 
         success: true, 
         analysis: fallbackRangeDebrief.analysis, 
@@ -3633,13 +3680,16 @@ app.post('/api/feedback/sync-sheets', async (req, res) => {
       botStatus.userFeedbackRules = rules;
       await saveBotStatus();
       addLog('system', `[Feedback Utente] Sincronizzate ${rules.length} regole da Google Sheets.`);
-      res.json({ success: true, message: `Sincronizzate ${rules.length} regole da Google Sheets.`, userFeedbackRules: rules });
+      return res.json({ success: true, message: `Sincronizzate ${rules.length} regole da Google Sheets.`, userFeedbackRules: rules });
     } else {
-      res.status(500).json({ success: false, error: 'Nessuna regola trovata o errore di sincronizzazione.' });
+      return res.status(401).json({ success: false, error: 'Google Sheets non accessibile o API disabilitata nel progetto GCP. Sincronizzazione fallita.', userFeedbackRules: botStatus.userFeedbackRules || [] });
     }
   } catch (error: any) {
-    console.error('[Google Sheets Error]', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn('[Google Sheets Sync Feedback]:', error?.message || error);
+    const errMsg = error?.message || String(error);
+    const isAuthError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('credential') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('login') || errMsg.toLowerCase().includes('not been used') || errMsg.toLowerCase().includes('disabled');
+    const status = isAuthError ? 401 : 500;
+    res.status(status).json({ success: false, error: errMsg, userFeedbackRules: botStatus.userFeedbackRules || [] });
   }
 });
 
@@ -3655,11 +3705,14 @@ app.post('/api/feedback/export-sheets', async (req, res) => {
       addLog('system', `[Feedback Utente] Esportate regole su Google Sheets.`);
       res.json({ success: true, message: 'Regole esportate su Google Sheets con successo.' });
     } else {
-      res.status(500).json({ success: false, error: 'Errore durante l\'esportazione delle regole.' });
+      res.status(401).json({ success: false, error: 'Google Sheets non accessibile o API disabilitata nel progetto GCP.' });
     }
   } catch (error: any) {
-    console.error('[Google Sheets Error]', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn('[Google Sheets Export Feedback]:', error?.message || error);
+    const errMsg = error?.message || String(error);
+    const isAuthError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('credential') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('login') || errMsg.toLowerCase().includes('not been used') || errMsg.toLowerCase().includes('disabled');
+    const status = isAuthError ? 401 : 500;
+    res.status(status).json({ success: false, error: errMsg });
   }
 });
 
@@ -3738,6 +3791,24 @@ app.post('/api/analyze-market', async (req, res) => {
   const { symbol } = req.body;
   const { score: sentimentScore, reasoning } = await getMarketSentiment(symbol);
   res.json({ symbol, sentiment: sentimentScore, reasoning });
+});
+
+app.get("/api/statistical-analysis", (req, res) => {
+  try {
+    const metrics = StatisticalExpertService.getInstance().getMetrics();
+    return res.json(metrics);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/rss-news", async (req, res) => {
+  try {
+    const news = await RssNewsService.getInstance().fetchLatestNews();
+    return res.json(news);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/alpaca-positions", async (req, res) => {

@@ -17,27 +17,32 @@ export const GeminiSignalsTicker: React.FC<GeminiSignalsTickerProps> = ({ onOpen
   const [signals, setSignals] = useState<GeminiSignal[]>([]);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchSignals = async () => {
       try {
         const res = await fetch('/api/gemini-signals');
-        if (res.ok) {
+        if (res.ok && isMounted) {
           const contentType = res.headers.get('content-type');
           if (contentType && contentType.includes('application/json')) {
             const data = await res.json();
-            setSignals(data);
-          } else {
-            console.warn('Expected JSON response from /api/gemini-signals, received alternative content type.');
+            if (Array.isArray(data) && isMounted) {
+              setSignals(data);
+            }
           }
         }
       } catch (e) {
-        console.error("Errore fetch segnali Gemini", e);
+        // Silently catch transient network/restart fetch errors to keep ticker stable
       }
     };
     
     fetchSignals();
     const interval = setInterval(fetchSignals, 15000); // Ogni 15 sec
 
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   if (signals.length === 0) return null;
