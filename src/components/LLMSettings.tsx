@@ -423,6 +423,7 @@ export function LLMSettings() {
                       value={alpacaPaperKey}
                       onChange={(e) => setAlpacaPaperKey(e.target.value)}
                       placeholder="PKXXXXXXXXXXXXXXXXXX"
+                      autoComplete="new-password"
                       className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-emerald-300 font-mono focus:border-indigo-500 outline-none"
                     />
                     <button
@@ -449,6 +450,7 @@ export function LLMSettings() {
                       value={alpacaPaperSecret}
                       onChange={(e) => setAlpacaPaperSecret(e.target.value)}
                       placeholder="Inserisci Secret Key Paper..."
+                      autoComplete="new-password"
                       className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-emerald-300 font-mono focus:border-indigo-500 outline-none"
                     />
                     <button
@@ -475,6 +477,7 @@ export function LLMSettings() {
                       value={alpacaLiveKey}
                       onChange={(e) => setAlpacaLiveKey(e.target.value)}
                       placeholder="AKXXXXXXXXXXXXXXXXXX"
+                      autoComplete="new-password"
                       className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 outline-none"
                     />
                     <button
@@ -501,6 +504,7 @@ export function LLMSettings() {
                       value={alpacaLiveSecret}
                       onChange={(e) => setAlpacaLiveSecret(e.target.value)}
                       placeholder="Inserisci Secret Key Live..."
+                      autoComplete="new-password"
                       className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 outline-none"
                     />
                     <button
@@ -546,6 +550,7 @@ export function LLMSettings() {
                             value={llmKeys[p] || ''}
                             onChange={(e) => setLlmKeys({ ...llmKeys, [p]: e.target.value })}
                             placeholder={conf?.maskedKey ? `Configurato: ${conf.maskedKey}` : `Inserisci API Key ${pLabel}...`}
+                            autoComplete="new-password"
                             className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
                           />
                           <button

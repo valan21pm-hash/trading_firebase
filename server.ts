@@ -900,13 +900,13 @@ async function autoDetectCredentials() {
     console.log('[Auto-Detect] Falling back to configured Paper keys (unverified via probe).');
   }
 
-  if (!resolvedCredentials.live.isConfigured && dbLiveKey && dbLiveSecret && dbLiveKey !== dbPaperKey) {
+  if (!resolvedCredentials.live.isConfigured && (dbLiveKey || fallbackLiveKey) && (dbLiveSecret || fallbackLiveSecret)) {
     resolvedCredentials.live = {
-      apiKey: dbLiveKey,
-      secretKey: dbLiveSecret,
+      apiKey: dbLiveKey || fallbackLiveKey,
+      secretKey: dbLiveSecret || fallbackLiveSecret,
       isConfigured: true
     };
-    console.log('[Auto-Detect] Falling back to configured Live keys from DB.');
+    console.log('[Auto-Detect] Falling back to configured Live keys (unverified via probe).');
   }
 }
 
