@@ -2904,9 +2904,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       } else if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
         closeReason = riskDecision.reason;
-      } else if (isPreCloseWindow && profitAmt > 0) {
-        shouldClose = true;
-        closeReason = `Chiusura EOD (15 min alla fine): Profitto di $${profitAmt.toFixed(2)} garantito.`;
+      } else if (isPreCloseWindow) {
+        // Regola: NON chiudere automaticamente le posizioni a fine mercato se il sentiment è >= 0.40 (40%)
+        if (sentimentScore >= 0.40) {
+          shouldClose = false;
+          addLog(mode as 'paper' | 'live', `[Check-Point EOD] Posizione su ${symbol} MANTENUTA a fine giornata: Sentiment elevato (${sentimentScore.toFixed(2)} >= 0.40). Nessuna chiusura automatica EOD.`);
+        } else if (profitAmt > 0) {
+          shouldClose = true;
+          closeReason = `Chiusura EOD (15 min alla fine): Sentiment ${sentimentScore.toFixed(2)} (< 0.40) con Profitto di $${profitAmt.toFixed(2)} garantito.`;
+        }
       }
 
       if (shouldClose) {
