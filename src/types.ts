@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // es. 0.20 o 0.15
@@ -15,6 +15,11 @@ export interface RiskRuleConfig {
     minCorrelationThreshold?: number; // es. 0.95 per correlazione SPY-QQQ >= 0.95
     maxSemiconExposurePct?: number;   // es. 40 per limite esposizione 40% ai semiconduttori
     semiconSymbols?: string[];        // es. ['AMD', 'AVGO', 'NVDA']
+    minAdxThreshold?: number;         // es. 25 per ADX < 25 inibizione operatività
+    minAdxPeriod?: number;            // default 14
+    atrMultiplier?: number;           // default 1.5 per Trailing Stop 1.5x ATR
+    atrPeriod?: number;               // default 14
+    useAtrTrailingStop?: boolean;     // attiva trailing stop individuale su volatilità reale ATR
   };
 }
 
@@ -44,6 +49,11 @@ export interface Position {
   trailingStopPrice?: number;
   stopLossPrice?: number;
   strategyParams?: { tpPct: number; slPct: number; tsPct: number };
+  atr?: number;
+  atr1_5x?: number;
+  adx?: number;
+  atrTrailingStopPrice?: number;
+  isAtrTrailingActive?: boolean;
 }
 
 export interface AccountData {

@@ -12,6 +12,9 @@ export interface Position {
   previousSentimentScore?: number; // Score Sentiment precedente
   vix24hChangePct?: number; // Variazione % dell'indice VIX nelle ultime 24 ore (es. -2.5 per -2.5%)
   entryTime?: number; // Timestamp di apertura della posizione in ms
+  atr?: number; // Average True Range (14 periodi) in $ (es. 2.50$)
+  atr1_5x?: number; // 1.5x ATR in $
+  adx?: number; // ADX(14)
 }
 
 export interface RiskConfig {
@@ -23,11 +26,15 @@ export interface RiskConfig {
   slPct?: number; // Stop Loss % (es: -0.40 = -0.40%)
   isAlpaca?: boolean;
   enableSentimentOptimization?: boolean; // Attiva la sinergia avanzata Stop Loss - Sentiment
+  atrMultiplier?: number; // Multiplicatore ATR per Trailing Stop individuale (default: 1.5x)
+  atrPeriod?: number; // Periodo ATR (default: 14)
+  useAtrTrailingStop?: boolean; // Se true, impiega trailing stop basato su 1.5x ATR
 }
 
 /**
  * Valuta se una singola posizione deve essere chiusa in base alle regole di risk management,
- * al target di attivazione, al trailing stop dinamico, alla stagnazione temporale e all'interazione con il Sentiment LLM.
+ * al trailing stop individuale calibrato su 1.5x ATR (in sostituzione di chiusure massive indiscriminate),
+ * al target di attivazione, alla stagnazione temporale e all'interazione con il Sentiment LLM.
  */
 export class RiskManagementService {
   
@@ -37,7 +44,7 @@ export class RiskManagementService {
     config: RiskConfig,
     systemRules?: RiskRuleConfig[]
   ): { action: 'CLOSE'; reason: string } | null {
-    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct, entryTime } = position;
+    const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct, entryTime, atr } = position;
 
     // Se non abbiamo un prezzo d'ingresso valido o un prezzo corrente, non possiamo calcolare i livelli
     if (!openPrice || openPrice <= 0 || !currentPrice || currentPrice <= 0) {
@@ -48,7 +55,30 @@ export class RiskManagementService {
     const currentProfitPct = ((currentPrice - openPrice) / openPrice) * 100;
     const ageMinutes = entryTime ? (Date.now() - entryTime) / (60 * 1000) : null;
 
-    // --- 0. VALUTAZIONE DETERMINISTICA SULLE REGOLE DI SISTEMA SOTTOMESSE ---
+    // Picco massimo di prezzo raggiunto per questa singola posizione (High Water Mark)
+    const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
+    const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
+
+    // --- 0. REGOLE DI SISTEMA SOTTOMESSE E TRAILING STOP INDIVIDUALE 1.5x ATR ---
+    const atrRule = systemRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
+    const isAtrTrailingEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
+    const atrMultiplier = atrRule?.parameters?.atrMultiplier ?? config.atrMultiplier ?? 1.5;
+
+    // Se abbiamo un ATR valido (> 0) e la posizione ha registrato un picco in profitto o raggiunto una dinamica positiva
+    if (isAtrTrailingEnabled && atr && atr > 0) {
+      const atrDistance = atrMultiplier * atr;
+      const atrStopPrice = peakPrice - atrDistance;
+      const atrDistancePct = (atrDistance / peakPrice) * 100;
+
+      // Se il prezzo corrente arretra sotto la soglia di Trailing Stop 1.5x ATR
+      if (currentPrice <= atrStopPrice) {
+        return {
+          action: 'CLOSE',
+          reason: `[Trailing Stop Individuale ${atrMultiplier.toFixed(1)}x ATR] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia dinamica di volatilità ATR a $${atrStopPrice.toFixed(2)} (ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura mirata individuale in sostituzione di liquidazioni massive.`
+        };
+      }
+    }
+
     if (systemRules && systemRules.length > 0) {
       for (const rule of systemRules) {
         if (!rule.enabled) continue;
@@ -60,7 +90,7 @@ export class RiskManagementService {
           if (currentProfitPct <= maxLoss && sentimentScore !== undefined && sentimentScore < minSent) {
             return {
               action: 'CLOSE',
-              reason: `[Regola Sistema: PNL_PREVENTIVE_CLOSE] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= ${maxLoss}%) e Sentiment debole (${sentimentScore.toFixed(2)} < ${minSent}). Chiusura preventiva per liberare slot per asset ad alto sentiment.`
+              reason: `[Regola Sistema: PNL_PREVENTIVE_CLOSE] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= ${maxLoss}%) e Sentiment debole (${sentimentScore.toFixed(2)} < ${minSent}). Chiusura preventiva mirata per liberare slot.`
             };
           }
         }
@@ -76,7 +106,7 @@ export class RiskManagementService {
               const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
               return {
                 action: 'CLOSE',
-                reason: `[Regola Sistema: SENTIMENT_LIQUIDITY_SELL] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< ${minSent}) e VIX non in calo > ${Math.abs(vixThreshold)}% (VIX 24h: ${vixText}). Vendi immediatamente per liberare liquidità.`
+                reason: `[Regola Sistema: SENTIMENT_LIQUIDITY_SELL] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< ${minSent}) e VIX non in calo > ${Math.abs(vixThreshold)}% (VIX 24h: ${vixText}). Vendi singola posizione per preservare liquidità.`
               };
             }
           }
@@ -88,9 +118,6 @@ export class RiskManagementService {
           const highStagMins = rule.parameters.stagnationMinutesHighSentiment ?? 60;
           const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.10;
 
-          // Tempo di stasi dinamico in base al sentiment:
-          // > 0.30 -> 60 minuti
-          // 0.20 - 0.29 (o default) -> 30 minuti
           let effectiveStagMins = baseStagMins;
           let sentimentDetail = '';
 
@@ -139,10 +166,6 @@ export class RiskManagementService {
       }
     }
 
-    // Picco massimo di prezzo raggiunto per questa singola posizione (High Water Mark)
-    const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
-    const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
-
     // Parametri base della strategia
     const activationTargetPct = config.targetTpPct !== undefined ? config.targetTpPct : 0.80;
     const baseTsPercent = config.trailingStop !== undefined ? config.trailingStop : 0.30;
@@ -156,15 +179,12 @@ export class RiskManagementService {
 
     if (useSentimentOpt && sentimentScore !== undefined) {
       if (sentimentScore > 0.40) {
-        // Sentiment forte: allarghiamo del 33% la soglia di tolleranza (es. -0.75% -> -1.0%)
         effectiveSlPercent = baseSlPercent * 1.3333;
         slMultiplierNote = " [Dynamic SL: Tolleranza allargata per Sentiment alto (>+0.40)]";
       } else if (sentimentScore >= 0.00 && sentimentScore <= 0.20) {
-        // Sentiment debole: stringiamo al 65% del valore base (es. -0.75% -> -0.48%)
         effectiveSlPercent = baseSlPercent * 0.65;
         slMultiplierNote = " [Dynamic SL: Soglia ristretta per Sentiment debole (<=+0.20)]";
       } else if (sentimentScore < 0.00) {
-        // Sentiment negativo: stringiamo al 40%
         effectiveSlPercent = baseSlPercent * 0.40;
         slMultiplierNote = " [Dynamic SL: Soglia fortemente ristretta per Sentiment negativo (<0)]";
       }
@@ -190,12 +210,11 @@ export class RiskManagementService {
     if (isActivated) {
       // --- REGIME POSIZIONE ATTIVATA ---
 
-      // 3. TRAILING STOP ACCELERATO DAL SENTIMENT
+      // 3. TRAILING STOP ACCELERATO DAL SENTIMENT (se non gestito già dall'ATR)
       let effectiveTsPercent = baseTsPercent;
       let tsNote = "";
 
       if (useSentimentOpt && sentimentScore !== undefined && sentimentScore <= 0.20) {
-        // Se la posizione è in guadagno ma il sentiment si deteriora, acceleriamo il Trailing Stop riducendone la distanza del 50%
         effectiveTsPercent = baseTsPercent * 0.50;
         tsNote = " [Trailing Accelerato per Divergenza Sentiment]";
       }
@@ -247,9 +266,33 @@ export class RiskManagementService {
   }
 
   /**
+   * Valuta il filtro di volatilità/forza trend ADX (< 25 inibisce nuove aperture di posizioni)
+   */
+  public static evaluateAdxVolatilityFilter(
+    symbol: string,
+    adxValue: number,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const adxRule = systemRules?.find(r => r.type === 'ADX_VOLATILITY_FILTER');
+    const isEnabled = adxRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const minAdx = adxRule?.parameters?.minAdxThreshold ?? 25.0;
+
+    if (adxValue < minAdx) {
+      return {
+        allowed: false,
+        reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] ${symbol.toUpperCase()} presenta ADX(14) = ${adxValue.toFixed(1)} (< ${minAdx.toFixed(1)} soglia minima). Mercato privo di trend direzionale (fase laterale / chop zone). Nuovi acquisti inibiti per proteggere il capitale da falsi segnali.`
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
    * 4. RIAUTORIZZAZIONE E RIAPPROVVIGIONAMENTO SPAZIO IN PORTAFOGLIO (Opportunity Cost Reallocation)
-   * Valuta se una posizione esistente in perdita e con sentiment debole debba essere chiusa
-   * per liberare uno slot di portafoglio saturo (es. 10/10) a favore di un nuovo acquisto ad alto sentiment (> +0.40).
    */
   public static evaluateOpportunityCostExit(
     positions: Position[],
@@ -260,7 +303,6 @@ export class RiskManagementService {
       return null;
     }
 
-    // Cerca la posizione in perdita con il sentiment più basso (<= 0.15)
     let weakestPosition: Position | null = null;
     let lowestSentiment = 0.16;
 
@@ -286,8 +328,6 @@ export class RiskManagementService {
 
   /**
    * 5. CAP ESPOSIZIONE SETTORIALE SEMICONDUTTORI SU CORRELAZIONE SPY-QQQ ELEVATA (> 0.95)
-   * Se la correlazione tra SPY e QQQ supera 0.95 (regime di alta coerenza / rischio concentrazione tech),
-   * limita l'esposizione totale ai semiconduttori (AMD, AVGO, NVDA, ecc.) al 40% del valore totale del portafoglio (NAV).
    */
   public static evaluateSemiconductorExposureCap(
     symbol: string,
@@ -316,12 +356,10 @@ export class RiskManagementService {
       return { allowed: true };
     }
 
-    // Se la correlazione SPY-QQQ è inferiore alla soglia (es. < 0.95), non si applica il blocco restrittivo di concentrazione
     if (spyQqqCorrelation < minCorr) {
       return { allowed: true };
     }
 
-    // Calcolo esposizione corrente nei semiconduttori
     let currentSemiconExposure = 0;
     for (const pos of openPositions) {
       if (semiconList.includes(pos.symbol.toUpperCase())) {
@@ -332,7 +370,6 @@ export class RiskManagementService {
       }
     }
 
-    // Calcolo esposizione ordini pianificati
     for (const order of queuedOrders) {
       if (semiconList.includes(order.symbol.toUpperCase())) {
         currentSemiconExposure += order.amount;

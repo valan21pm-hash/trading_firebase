@@ -1249,7 +1249,14 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 {qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}
                               </td>
                               <td className="py-3 px-3 text-slate-300">${avgEntry.toFixed(2)}</td>
-                              <td className="py-3 px-3 font-bold text-white">${currentPrice.toFixed(2)}</td>
+                              <td className="py-3 px-3">
+                                <div className="font-bold text-white">${currentPrice.toFixed(2)}</div>
+                                {pos.atr ? (
+                                  <div className="text-[9px] text-emerald-400 font-mono" title={`ATR14: $${pos.atr.toFixed(2)} | Trailing Stop (1.5x ATR): $${(pos.atrTrailingStopPrice || 0).toFixed(2)} | ADX: ${pos.adx ? pos.adx.toFixed(1) : '-'}`}>
+                                    <span>TS 1.5xATR: ${(pos.atrTrailingStopPrice || 0).toFixed(2)}</span>
+                                  </div>
+                                ) : null}
+                              </td>
                               <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
                               <td className="py-3 px-3">
                                 <SentimentBadge symbol={pos.symbol} signals={geminiSignals} showReasoning={true} />

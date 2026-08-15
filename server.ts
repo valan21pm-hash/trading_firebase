@@ -66,6 +66,7 @@ import { RiskRuleConfig } from "./src/types.js";
 import StatisticalExpertService from "./src/backend/services/StatisticalExpertService.js";
 import RssNewsService from "./src/backend/services/RssNewsService.js";
 import HourlyEfficiencyAnalyzer from "./src/backend/services/HourlyEfficiencyAnalyzer.js";
+import TechnicalIndicatorService from "./src/backend/services/TechnicalIndicatorService.js";
 
 const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   {
@@ -122,6 +123,25 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       maxSemiconExposurePct: 40,
       semiconSymbols: ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH']
     }
+  },
+  {
+    id: 'adx_volatility_filter',
+    enabled: true,
+    type: 'ADX_VOLATILITY_FILTER',
+    parameters: {
+      minAdxThreshold: 25.0,
+      minAdxPeriod: 14
+    }
+  },
+  {
+    id: 'atr_individual_trailing_stop',
+    enabled: true,
+    type: 'ATR_INDIVIDUAL_TRAILING_STOP',
+    parameters: {
+      atrMultiplier: 1.5,
+      atrPeriod: 14,
+      useAtrTrailingStop: true
+    }
   }
 ];
 
@@ -177,7 +197,8 @@ function normalizeSystemRiskRules(savedRules?: RiskRuleConfig[]): RiskRuleConfig
 function isPurchaseAllowedBySystemRules(
   minutesToClose: number | null,
   isMarketSentimentDecreasing: boolean,
-  systemRules: RiskRuleConfig[] = []
+  systemRules: RiskRuleConfig[] = [],
+  marketAdx?: number
 ): { allowed: boolean; reason?: string } {
   for (const rule of systemRules) {
     if (!rule.enabled) continue;
@@ -187,6 +208,15 @@ function isPurchaseAllowedBySystemRules(
         return {
           allowed: false,
           reason: `[Regola Sistema: EOD_BUY_LOCK] Blocco nuovi acquisti: mancano ${minutesToClose.toFixed(1)}m alla chiusura e il sentiment aggregato è in calo per 2 cicli consecutivi.`
+        };
+      }
+    }
+    if (rule.type === 'ADX_VOLATILITY_FILTER' && marketAdx !== undefined) {
+      const minAdx = rule.parameters.minAdxThreshold ?? 25.0;
+      if (marketAdx < minAdx) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] Benchmark di mercato con ADX(14) = ${marketAdx.toFixed(1)} < ${minAdx.toFixed(1)}. Mercato privo di trend direzionale (congestione / chop). Nuovi acquisti inibiti.`
         };
       }
     }
@@ -2991,6 +3021,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         positionEntryTimes[mode][symbol] = Date.now();
       }
 
+      // Indicatori Tecnici (ATR 14, 1.5x ATR e ADX 14)
+      const indResult = await TechnicalIndicatorService.getInstance().getSymbolIndicators(symbol, currentPrice, getAlpacaConfig(mode));
+
       const riskDecision = RiskManagementService.evaluateClosure({
         id: symbol,
         asset: symbol,
@@ -3001,7 +3034,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         highestPrice: peakPrice,
         sentimentScore: sentimentScore,
         vix24hChangePct: vix24hChangePct,
-        entryTime: positionEntryTimes[mode][symbol]
+        entryTime: positionEntryTimes[mode][symbol],
+        atr: indResult.atr,
+        atr1_5x: indResult.atr1_5x,
+        adx: indResult.adx
       }, botStatus.historicalProfits || 0, {
         y: botStatus.y || 1,
         defaultSL: slDollar,
@@ -3094,10 +3130,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     // 2. Fase di Acquisto (Buy phase): Acquista asset con sentiment positivo (> 0.35)
     const isDecreasingSentiment = isMarketSentimentDecreasingTwoConsecutiveScans();
     const activeRules = botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES;
+    const marketAdxRes = await TechnicalIndicatorService.getInstance().getMarketAdx(getAlpacaConfig(mode));
     const purchasePermission = isPurchaseAllowedBySystemRules(
       minutesToClose,
       isDecreasingSentiment,
-      activeRules
+      activeRules,
+      marketAdxRes.marketAdx
     );
 
     if (isPreCloseWindow) {
@@ -3344,6 +3382,23 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                   reasoning: vetoReason
                 });
                 continue;
+              }
+
+              // --- REGOLA VOLATILITÀ/TREND ADX < 25 ---
+              const adxRule = activeRules.find(r => r.type === 'ADX_VOLATILITY_FILTER');
+              if (adxRule?.enabled ?? true) {
+                const minAdx = adxRule?.parameters?.minAdxThreshold ?? 25.0;
+                const symIndicators = await TechnicalIndicatorService.getInstance().getSymbolIndicators(item.symbol, 100, getAlpacaConfig(mode));
+                if (symIndicators.adx < minAdx) {
+                  addLog(mode as 'paper' | 'live', `[Filtro Volatilità ADX < ${minAdx}] Salto acquisto ${item.symbol}: ADX(${adxRule?.parameters?.minAdxPeriod ?? 14}) = ${symIndicators.adx.toFixed(1)} < ${minAdx}. Trend direzionale assente/insufficiente.`);
+                  addLogicLog(mode, {
+                    timestamp: new Date().toISOString(),
+                    symbol: item.symbol,
+                    action: 'RISK_VETO',
+                    reasoning: `Filtro ADX < ${minAdx}: ${item.symbol} presenta ADX=${symIndicators.adx.toFixed(1)}`
+                  });
+                  continue;
+                }
               }
 
               ordersToSubmit.push({
@@ -4417,6 +4472,10 @@ async function getStatusData() {
             const trailingStopPrice = peakP * (1 - params.tsPct / 100);
             const stopLossPrice = avgEntry > 0 ? avgEntry * (1 - Math.abs(params.slPct) / 100) : 0;
 
+            const ind = await TechnicalIndicatorService.getInstance().getSymbolIndicators(sym, currP, conf);
+            const atrMultiplier = (botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP')?.parameters?.atrMultiplier) || 1.5;
+            const atrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
+
             return {
               ...pos,
               activeStrategy,
@@ -4428,7 +4487,12 @@ async function getStatusData() {
               targetActivationPrice,
               trailingStopPrice,
               stopLossPrice,
-              strategyParams: params
+              strategyParams: params,
+              atr: ind.atr,
+              atr1_5x: ind.atr1_5x,
+              adx: ind.adx,
+              atrTrailingStopPrice: parseFloat(atrTrailingStopPrice.toFixed(2)),
+              isAtrTrailingActive: true
             };
           }));
         } else {
@@ -5648,6 +5712,12 @@ async function executeAlpacaRealtimeCheck() {
 
       // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
       const signal = inMemoryGeminiSignals.get(symbol);
+      const indResult = await TechnicalIndicatorService.getInstance().getSymbolIndicators(symbol, currentPrice, {
+        apiKey,
+        secretKey,
+        baseUrl
+      });
+
       const positionObj = {
         id: symbol,
         asset: symbol,
@@ -5658,7 +5728,10 @@ async function executeAlpacaRealtimeCheck() {
         highestPrice: highestPrice,
         sentimentScore: signal?.score,
         vix24hChangePct: vix24hChangePct,
-        entryTime: positionEntryTimes[mode][symbol]
+        entryTime: positionEntryTimes[mode][symbol],
+        atr: indResult.atr,
+        atr1_5x: indResult.atr1_5x,
+        adx: indResult.adx
       };
 
       const decision = RiskManagementService.evaluateClosure(

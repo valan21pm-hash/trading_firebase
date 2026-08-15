@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
+import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -62,6 +62,25 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       minCorrelationThreshold: 0.95,
       maxSemiconExposurePct: 40,
       semiconSymbols: ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH']
+    }
+  },
+  {
+    id: 'adx_volatility_filter',
+    enabled: true,
+    type: 'ADX_VOLATILITY_FILTER',
+    parameters: {
+      minAdxThreshold: 25.0,
+      minAdxPeriod: 14
+    }
+  },
+  {
+    id: 'atr_individual_trailing_stop',
+    enabled: true,
+    type: 'ATR_INDIVIDUAL_TRAILING_STOP',
+    parameters: {
+      atrMultiplier: 1.5,
+      atrPeriod: 14,
+      useAtrTrailingStop: true
     }
   }
 ];
@@ -136,6 +155,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const eodRule = getRule('EOD_BUY_LOCK');
   const exposureRule = getRule('CUSTOM_MAX_EXPOSURE');
   const semiconRule = getRule('SPY_QQQ_CORRELATION_SEMICON_CAP');
+  const adxRule = getRule('ADX_VOLATILITY_FILTER');
+  const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -565,6 +586,144 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
               Asset monitorati: AMD, AVGO, NVDA, QCOM, INTC, MU, SMCI, ARM, TSM, ASML, SOXL, SOXX, SMH
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 7: ADX Volatility & Trend Filter (ADX < 25) */}
+        <div className={`p-4 rounded-xl border transition-all ${adxRule.enabled ? 'bg-cyan-50/40 border-cyan-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${adxRule.enabled ? 'text-cyan-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">7. Filtro Volatilità / Trend (ADX &lt; 25)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={adxRule.enabled}
+                onChange={(e) => updateRule('ADX_VOLATILITY_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Inibisce l'apertura di nuove posizioni quando l'ADX a 14 periodi scende sotto la soglia specificata (25), indicando un mercato laterale, privo di direzionalità (chop) o caratterizzato da compressione della volatilità.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Minima ADX(14) per Acquisti:</span>
+                <span className="font-mono text-cyan-600 font-bold">&ge; {(adxRule.parameters.minAdxThreshold ?? 25.0).toFixed(1)}</span>
+              </div>
+              <input
+                type="range"
+                min="15"
+                max="40"
+                step="1"
+                value={adxRule.parameters.minAdxThreshold ?? 25.0}
+                onChange={(e) => updateRule('ADX_VOLATILITY_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minAdxThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!adxRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Periodi di Calcolo ADX (Barre 15m / 1D):</span>
+                <span className="font-mono text-cyan-600 font-bold">{adxRule.parameters.minAdxPeriod ?? 14} periodi (Wilder)</span>
+              </div>
+              <input
+                type="range"
+                min="7"
+                max="28"
+                step="1"
+                value={adxRule.parameters.minAdxPeriod ?? 14}
+                onChange={(e) => updateRule('ADX_VOLATILITY_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minAdxPeriod: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!adxRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
+              />
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Formula: Wilder's Smoothing True Range, +DI / -DI e Directional Movement Index (DMI).
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 8: Individual Trailing Stop based on 1.5x ATR */}
+        <div className={`p-4 rounded-xl border transition-all ${atrRule.enabled ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className={`w-4 h-4 ${atrRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">8. Trailing Stop Individuale Dinamico (1.5x ATR)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={atrRule.enabled}
+                onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Sostituisce la chiusura massiva e indiscriminata del portafoglio con una gestione del rischio sartoriale per singolo titolo: calcola l'ATR (Average True Range) del sottostante e imposta un Trailing Stop dinamico ancorato al Massimo Raggiunto (High-Water Mark) a -1.5x ATR.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Moltiplicatore ATR di Trailing Stop:</span>
+                <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.atrMultiplier ?? 1.5).toFixed(1)}x ATR</span>
+              </div>
+              <input
+                type="range"
+                min="0.5"
+                max="3.0"
+                step="0.1"
+                value={atrRule.parameters.atrMultiplier ?? 1.5}
+                onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, atrMultiplier: parseFloat(e.target.value) }
+                }))}
+                disabled={!atrRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Periodi di Calcolo ATR (Barre di Volatilità):</span>
+                <span className="font-mono text-emerald-600 font-bold">{atrRule.parameters.atrPeriod ?? 14} periodi</span>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="30"
+                step="1"
+                value={atrRule.parameters.atrPeriod ?? 14}
+                onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, atrPeriod: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!atrRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Protezione individuale: Trigger Chiusura = PeakPrice - (1.5 &times; ATR14). Nessun impatto sulle altre posizioni in profitto.
             </div>
           </div>
         </div>
