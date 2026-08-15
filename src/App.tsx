@@ -1475,6 +1475,7 @@ export default function App() {
   const [isFeedbackCollapsed, setIsFeedbackCollapsed] = useState(false);
   const [isLogicLogsCollapsed, setIsLogicLogsCollapsed] = useState(false);
   const [isApiSettingsCollapsed, setIsApiSettingsCollapsed] = useState(false);
+  const [dailyDebriefDate, setDailyDebriefDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   // Stato per la Sezione Operazioni Chiuse con Filtro Data
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
@@ -1892,20 +1893,22 @@ export default function App() {
     }
   };
 
-  const handleGenerateDebrief = async () => {
+  const handleGenerateDebrief = async (customDate?: string) => {
     setDebriefLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
+    const dateToSend = customDate || dailyDebriefDate || new Date().toISOString().split('T')[0];
     try {
       const res = await fetch('/api/generate-daily-debrief', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: dateToSend })
       });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.debrief) {
           setStatus(prev => prev ? { ...prev, latestDailyDebrief: data.debrief } : null);
-          const msg = 'Debriefing Giornaliero AI generato con successo!';
+          const msg = `Debriefing Giornaliero AI per il ${dateToSend} generato con successo!`;
           setSuccessMessage(msg);
           showToast(msg, 'success', 'AI Debriefing');
           setTimeout(() => setSuccessMessage(null), 5000);
@@ -2768,7 +2771,7 @@ export default function App() {
             </div>
             {!isDailyDebriefCollapsed && (
               <button
-                onClick={handleGenerateDebrief}
+                onClick={() => handleGenerateDebrief()}
                 disabled={debriefLoading}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition shadow-sm cursor-pointer ${
                   debriefLoading 
@@ -2786,17 +2789,84 @@ export default function App() {
             <div className="space-y-6">
               {/* Sotto-sezione 1: Debriefing Giornaliero */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-mono">
-                    <Activity className="w-4 h-4 text-indigo-600" />
-                    Debriefing Giornaliero di Fine Seduta
-                  </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                      <Activity className="w-4 h-4 text-indigo-600" />
+                      Debriefing Giornaliero di Fine Seduta
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Analisi approfondita, riesame decisionale e fasce orarie con sincronizzazione diretta Alpaca & Firestore.
+                    </p>
+                  </div>
                   {status?.latestDailyDebrief?.timestamp && (
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                    <div className="text-[10px] text-slate-400 flex items-center gap-1 font-mono self-start sm:self-auto">
                       <Clock className="w-3 h-3" />
                       {new Date(status.latestDailyDebrief.timestamp).toLocaleString('it-IT')}
                     </div>
                   )}
+                </div>
+
+                {/* Selettore Data Seduta Debriefing */}
+                <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider font-mono">Data Seduta:</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const today = new Date().toISOString().split('T')[0];
+                        setDailyDebriefDate(today);
+                        handleGenerateDebrief(today);
+                      }}
+                      disabled={debriefLoading}
+                      className={`px-2.5 py-1 text-xs rounded-md font-medium transition cursor-pointer ${
+                        dailyDebriefDate === new Date().toISOString().split('T')[0]
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200'
+                      }`}
+                    >
+                      Oggi
+                    </button>
+                    <button
+                      onClick={() => {
+                        const yesterday = new Date();
+                        yesterday.setDate(yesterday.getDate() - 1);
+                        const yStr = yesterday.toISOString().split('T')[0];
+                        setDailyDebriefDate(yStr);
+                        handleGenerateDebrief(yStr);
+                      }}
+                      disabled={debriefLoading}
+                      className="px-2.5 py-1 text-xs rounded-md font-medium bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200 transition cursor-pointer"
+                    >
+                      Ieri
+                    </button>
+                    <button
+                      onClick={() => {
+                        const aug7 = '2026-08-07';
+                        setDailyDebriefDate(aug7);
+                        handleGenerateDebrief(aug7);
+                      }}
+                      disabled={debriefLoading}
+                      className="px-2.5 py-1 text-xs rounded-md font-medium bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200 transition cursor-pointer"
+                    >
+                      7 Agosto
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 ml-auto">
+                    <input
+                      type="date"
+                      value={dailyDebriefDate}
+                      onChange={(e) => setDailyDebriefDate(e.target.value)}
+                      className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-mono text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      onClick={() => handleGenerateDebrief(dailyDebriefDate)}
+                      disabled={debriefLoading}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white rounded-md text-xs font-semibold hover:bg-indigo-700 transition shadow-sm cursor-pointer disabled:opacity-50"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${debriefLoading ? 'animate-spin' : ''}`} />
+                      {debriefLoading ? 'Analizzando...' : 'Analizza Data'}
+                    </button>
+                  </div>
                 </div>
 
                 {status?.latestDailyDebrief ? (

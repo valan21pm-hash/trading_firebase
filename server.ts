@@ -1090,6 +1090,126 @@ function getAlpacaConfig(mode: 'paper' | 'live') {
   return { isConfigured, isLive, baseUrl, apiKey, secretKey };
 }
 
+// Sincronizzazione automatica e recupero storico delle operazioni eseguite su Alpaca
+async function fetchAlpacaHistoricalOperations(
+  mode: 'paper' | 'live',
+  startDate?: string,
+  endDate?: string
+): Promise<{ logicLogs: any[]; fills: any[]; orders: any[] }> {
+  const conf = getAlpacaConfig(mode);
+  const result = { logicLogs: [] as any[], fills: [] as any[], orders: [] as any[] };
+  if (!conf.isConfigured) return result;
+
+  try {
+    // 1. Fetch Alpaca Activities (FILLs)
+    let fills: any[] = [];
+    try {
+      const actRes = await fetch(`${conf.baseUrl}/account/activities?activity_types=FILL&page_size=100&direction=desc`, {
+        headers: {
+          'APCA-API-KEY-ID': conf.apiKey,
+          'APCA-API-SECRET-KEY': conf.secretKey
+        }
+      });
+      if (actRes.ok) {
+        const rawFills = await actRes.json();
+        if (Array.isArray(rawFills)) {
+          fills = rawFills;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Alpaca Activities Fetch Error] (${mode}):`, err.message);
+    }
+
+    result.fills = fills;
+
+    // 2. Fetch Closed and All Orders
+    let orders: any[] = [];
+    try {
+      const ordRes = await fetch(`${conf.baseUrl}/orders?status=all&limit=500&direction=desc`, {
+        headers: {
+          'APCA-API-KEY-ID': conf.apiKey,
+          'APCA-API-SECRET-KEY': conf.secretKey
+        }
+      });
+      if (ordRes.ok) {
+        const rawOrders = await ordRes.json();
+        if (Array.isArray(rawOrders)) {
+          orders = rawOrders;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Alpaca Orders Fetch Error] (${mode}):`, err.message);
+    }
+
+    result.orders = orders;
+
+    // 3. Conversione unificata in Logic Logs dettagliati
+    const seenMap = new Set<string>();
+
+    for (const f of fills) {
+      const ts = f.transaction_time || f.timestamp || new Date().toISOString();
+      const datePart = ts.split('T')[0];
+      if (startDate && endDate && (datePart < startDate || datePart > endDate)) {
+        continue;
+      }
+      const sym = f.symbol;
+      const side = (f.side || 'buy').toUpperCase();
+      const qty = parseFloat(f.qty || '0');
+      const price = parseFloat(f.price || '0');
+      const key = `${ts.slice(0, 19)}_${sym}_${side}_${qty}`;
+
+      if (!seenMap.has(key) && sym) {
+        seenMap.add(key);
+        result.logicLogs.push({
+          timestamp: ts,
+          symbol: sym,
+          action: side,
+          price: price,
+          qty: qty,
+          reasoning: `Esecuzione Alpaca ${side} per ${qty} quote di ${sym} a $${price.toFixed(2)} [Fill ID: ${f.id || 'N/A'}]`,
+          mode,
+          source: 'Alpaca Activity Fill'
+        });
+      }
+    }
+
+    for (const o of orders) {
+      if (o.status === 'filled' || (o.filled_qty && parseFloat(o.filled_qty) > 0)) {
+        const ts = o.filled_at || o.updated_at || o.created_at || new Date().toISOString();
+        const datePart = ts.split('T')[0];
+        if (startDate && endDate && (datePart < startDate || datePart > endDate)) {
+          continue;
+        }
+        const sym = o.symbol;
+        const side = (o.side || 'buy').toUpperCase();
+        const qty = parseFloat(o.filled_qty || o.qty || '0');
+        const price = parseFloat(o.filled_avg_price || '0');
+        const key = `${ts.slice(0, 19)}_${sym}_${side}_${qty}`;
+
+        if (!seenMap.has(key) && sym) {
+          seenMap.add(key);
+          result.logicLogs.push({
+            timestamp: ts,
+            symbol: sym,
+            action: side,
+            price: price,
+            qty: qty,
+            reasoning: `Ordine Alpaca Eseguito (${side} ${o.type || 'market'}) per ${qty} quote di ${sym} a $${price.toFixed(2)}`,
+            mode,
+            source: 'Alpaca Order History'
+          });
+        }
+      }
+    }
+
+    result.logicLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  } catch (e: any) {
+    console.error(`[fetchAlpacaHistoricalOperations] Global Error (${mode}):`, e.message);
+  }
+
+  return result;
+}
+
 const ALPACA_DATA_URL = 'https://data.alpaca.markets/v2';
 
 const basePrices: Record<string, number> = {
@@ -3489,34 +3609,127 @@ app.all(['/run-daily-report', '/api/trigger-daily-report'], async (req, res) => 
 app.post('/api/generate-daily-debrief', async (req, res) => {
   addLog('system', '[Debriefing AI] Inizio generazione Debriefing Giornaliero con Gemini 3.5...');
   
-  const todayStr = new Date().toISOString().split('T')[0];
+  const requestedDate = (req.body && req.body.date) ? req.body.date : (req.query?.date as string || '');
+  let targetDate = requestedDate || new Date().toISOString().split('T')[0];
   const targetMode = (botStatus.tradingMode as 'paper' | 'live') || 'paper';
 
+  let allLogsTodayForStats: any[] = [];
+  const paperLogsArr: any[] = [];
+  const liveLogsArr: any[] = [];
+
+  // 1. Recupero da Firestore
+  if (db) {
+    try {
+      const startOfDay = targetDate + 'T00:00:00.000Z';
+      const endOfDay = targetDate + 'T23:59:59.999Z';
+      
+      const alpacaLogsSnap = await db.collection('logic_logs')
+        .where('timestamp', '>=', startOfDay)
+        .where('timestamp', '<=', endOfDay)
+        .orderBy('timestamp', 'asc')
+        .get();
+      
+      alpacaLogsSnap.forEach((doc: any) => {
+        const data = doc.data();
+        allLogsTodayForStats.push(data);
+        if (data.mode === 'paper') paperLogsArr.push(data);
+        else if (data.mode === 'live') liveLogsArr.push(data);
+      });
+    } catch (err) {
+      console.error('[Firebase] Errore nel recupero dei log da Firestore per debriefing:', err);
+    }
+  }
+
+  // 2. Recupero da in-memory logic logs
+  const startOfDayIso = targetDate + 'T00:00:00.000Z';
+  const endOfDayIso = targetDate + 'T23:59:59.999Z';
+  const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDayIso && l.timestamp <= endOfDayIso);
+  const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDayIso && l.timestamp <= endOfDayIso);
+  allLogsTodayForStats.push(...localPaper, ...localLive);
+  paperLogsArr.push(...localPaper);
+  liveLogsArr.push(...localLive);
+
+  // 3. Sincronizzazione DIRETTA con Alpaca API (Fills effettivi & Ordini eseguiti)
+  try {
+    const alpacaPaperOps = await fetchAlpacaHistoricalOperations('paper', targetDate, targetDate);
+    const alpacaLiveOps = await fetchAlpacaHistoricalOperations('live', targetDate, targetDate);
+    
+    if (alpacaPaperOps.logicLogs.length > 0) {
+      paperLogsArr.push(...alpacaPaperOps.logicLogs);
+      allLogsTodayForStats.push(...alpacaPaperOps.logicLogs);
+    }
+    if (alpacaLiveOps.logicLogs.length > 0) {
+      liveLogsArr.push(...alpacaLiveOps.logicLogs);
+      allLogsTodayForStats.push(...alpacaLiveOps.logicLogs);
+    }
+  } catch (alpacaErr: any) {
+    console.warn('[Debriefing AI] Errore fetch diretto Alpaca:', alpacaErr.message);
+  }
+
+  // Deduplicazione log per evitare duplicati tra Firestore, in-memory e Alpaca API
+  const dedupMap = new Map<string, any>();
+  for (const logItem of allLogsTodayForStats) {
+    const ts = (logItem.timestamp || '').slice(0, 19);
+    const key = `${ts}_${logItem.symbol}_${logItem.action}_${logItem.mode || targetMode}`;
+    if (!dedupMap.has(key)) {
+      dedupMap.set(key, logItem);
+    }
+  }
+  allLogsTodayForStats = Array.from(dedupMap.values());
+
+  // 4. Se la data richiesta (es. oggi) non ha operazioni (es. pre-market o festivo), scansiona gli ultimi 14 giorni su Alpaca
+  let autoDetectedSession = false;
+  if (allLogsTodayForStats.length === 0 && !requestedDate) {
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+    const twoWeeksAgoStr = twoWeeksAgo.toISOString().split('T')[0];
+
+    try {
+      const recentAlpacaOps = await fetchAlpacaHistoricalOperations(targetMode, twoWeeksAgoStr, targetDate);
+      if (recentAlpacaOps.logicLogs.length > 0) {
+        // Trova la data più recente con operazioni registrate
+        const datesWithOps = Array.from(new Set(recentAlpacaOps.logicLogs.map(l => (l.timestamp || '').split('T')[0]))).filter(Boolean).sort().reverse();
+        if (datesWithOps.length > 0) {
+          const mostRecentDate = datesWithOps[0];
+          targetDate = mostRecentDate;
+          autoDetectedSession = true;
+          allLogsTodayForStats = recentAlpacaOps.logicLogs.filter(l => (l.timestamp || '').startsWith(mostRecentDate));
+          if (targetMode === 'paper') {
+            paperLogsArr.push(...allLogsTodayForStats);
+          } else {
+            liveLogsArr.push(...allLogsTodayForStats);
+          }
+          addLog('system', `[Debriefing AI] Nessuna operazione in data odierna: analizzo automaticamente la più recente seduta operativa (${mostRecentDate}) con ${allLogsTodayForStats.length} operazioni reali Alpaca.`);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Debriefing AI] Fallback scan giorni precedenti non riuscito:', e.message);
+    }
+  }
+
   // Calcolo preliminare inferenziale e statistico delle fasce orarie per fallback ed AI
-  const allCurrentLogs = [
-    ...(botData.paper.dailyLogicLogs || []),
-    ...(botData.live.dailyLogicLogs || [])
-  ];
   const preliminaryHourlyReport = HourlyEfficiencyAnalyzer.analyze(
-    allCurrentLogs,
+    allLogsTodayForStats,
     botData[targetMode]?.dailyPnL || [],
     targetMode,
-    { startDate: todayStr, endDate: todayStr }
+    { startDate: targetDate, endDate: targetDate }
   );
 
   const fallbackDebrief = {
-    analysis: `### Debriefing Giornaliero - Fallback Locale (IA in Cooldown)
-Il servizio di intelligenza artificiale è momentaneamente in cooldown per via del superamento della quota server. Di seguito il riepilogo matematico e statistico generato automaticamente:
+    analysis: `### Debriefing Giornaliero - Seduta del ${targetDate} (Fallback Locale)
+${autoDetectedSession ? `*(Nota: Analisi calcolata sulla più recente seduta operativa del **${targetDate}** poiché la data corrente non presenta esecuzioni concluse)*\n\n` : ''}
+Il servizio di intelligenza artificiale è momentaneamente in cooldown per via del superamento della quota server. Di seguito il riepilogo matematico e statistico generato automaticamente dai dati Alpaca:
 
-#### 1. Riesame Decisionale & Operatività Odierna:
-Le operazioni odierne sono state elaborate in conformità con i filtri di rischio e il sentiment di mercato.
+#### 1. Riesame Decisionale & Operatività della Seduta (${targetDate}):
+- **Operazioni Registrate su Alpaca:** ${allLogsTodayForStats.length} transazioni eseguite.
+- Le operazioni sono state elaborate in conformità con i filtri di rischio e la liquidità disponibile.
 
 #### 2. ⏰ Valutazione Statistica & Inferenziale delle Fasce Orarie:
 ${preliminaryHourlyReport.markdownTable}
 
 - **Fascia a Massima Efficienza:** ${preliminaryHourlyReport.bestHourlyWindow ? `${preliminaryHourlyReport.bestHourlyWindow.slotKey} (Win Rate: ${preliminaryHourlyReport.bestHourlyWindow.winRatePct}%, PnL Medio: $${preliminaryHourlyReport.bestHourlyWindow.meanPnL})` : 'Dati in consolidamento'}
 - **Verifica di Costanza:** ${preliminaryHourlyReport.constancySummary.keyInsight}
-- **Significatività Inferenziale:** ${preliminaryHourlyReport.constancySummary.hasProvenConstantEdge ? 'Presenza di un edge statistico comprovato con confidenza al 95%.' : 'Campione in accumulo per il calcolo della significatività p < 0.05.'}
+- **Significatività Inferenziale:** ${preliminaryHourlyReport.constancySummary.hasProvenConstantEdge ? 'Presenza di un edge statistico comprovato con confidenza al 95%.' : 'Campione in accumulo per la convergenza asintotica.'}
 
 #### 3. Correlazioni Latenti & Scenari Alternativi:
 Il sentiment generale mantiene una correlazione con gli indici guida (SPY/QQQ). La gestione dinamica del rischio ha presidiato l'esposizione.
@@ -3540,11 +3753,11 @@ Regola Proposta: "Concentra le nuove aperture nelle fasce a massima efficienza s
   }
 
   try {
-    const todaysPnLPaper = botData.paper.dailyPnL?.find(d => d.date === todayStr) || { 
+    const todaysPnLPaper = botData.paper.dailyPnL?.find(d => d.date === targetDate) || { 
       balance: botData.paper.balance, 
       pnl: botData.paper.dailyPnL?.length ? botData.paper.dailyPnL[botData.paper.dailyPnL.length - 1].pnl : 0 
     };
-    const todaysPnLLive = botData.live.dailyPnL?.find(d => d.date === todayStr) || { 
+    const todaysPnLLive = botData.live.dailyPnL?.find(d => d.date === targetDate) || { 
       balance: botData.live.balance, 
       pnl: botData.live.dailyPnL?.length ? botData.live.dailyPnL[botData.live.dailyPnL.length - 1].pnl : 0 
     };
@@ -3552,70 +3765,15 @@ Regola Proposta: "Concentra le nuove aperture nelle fasce a massima efficienza s
     const paperLogs = botData.paper.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
     const liveLogs = botData.live.logs.slice(0, 40).join('\n') || 'Nessun log operativo registrato.';
     
-    let paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
-    let liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
-    let allLogsTodayForStats: any[] = [];
-    
-    if (db) {
-      try {
-        const startOfDay = todayStr + 'T00:00:00.000Z';
-        const endOfDay = todayStr + 'T23:59:59.999Z';
-        
-        // Alpaca logic logs completi per oggi
-        const alpacaLogsSnap = await db.collection('logic_logs')
-          .where('timestamp', '>=', startOfDay)
-          .where('timestamp', '<=', endOfDay)
-          .orderBy('timestamp', 'asc')
-          .get();
-        
-        const paperLogsArr: any[] = [];
-        const liveLogsArr: any[] = [];
-        alpacaLogsSnap.forEach((doc: any) => {
-          const data = doc.data();
-          allLogsTodayForStats.push(data);
-          if (data.mode === 'paper') paperLogsArr.push(data);
-          else if (data.mode === 'live') liveLogsArr.push(data);
-        });
-        
-        // Fallback automatico ai log locali in-memory se Firestore non ha dati o fallisce
-        if (paperLogsArr.length === 0) {
-          const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
-          paperLogsArr.push(...localPaper);
-          allLogsTodayForStats.push(...localPaper);
-        }
-        if (liveLogsArr.length === 0) {
-          const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
-          liveLogsArr.push(...localLive);
-          allLogsTodayForStats.push(...localLive);
-        }
-
-        if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
-        if (liveLogsArr.length > 0) liveLogicLogs = JSON.stringify(liveLogsArr);
-      } catch (err) {
-        console.error('[Firebase] Errore nel recupero dei log completi per debriefing giornaliero, uso dei log in-memory:', err);
-        const startOfDay = todayStr + 'T00:00:00.000Z';
-        const endOfDay = todayStr + 'T23:59:59.999Z';
-        const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
-        const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
-        allLogsTodayForStats.push(...localPaper, ...localLive);
-        if (localPaper.length > 0) paperLogicLogs = JSON.stringify(localPaper);
-        if (localLive.length > 0) liveLogicLogs = JSON.stringify(localLive);
-      }
-    }
-
-    if (allLogsTodayForStats.length === 0) {
-      allLogsTodayForStats = [
-        ...(botData.paper.dailyLogicLogs || []),
-        ...(botData.live.dailyLogicLogs || [])
-      ];
-    }
+    const paperLogicLogs = JSON.stringify(paperLogsArr.slice(-40));
+    const liveLogicLogs = JSON.stringify(liveLogsArr.slice(-40));
 
     // Esecuzione dell'analisi quantitativa inferenziale delle fasce orarie
     const hourlyReport = HourlyEfficiencyAnalyzer.analyze(
       allLogsTodayForStats,
       botData[targetMode]?.dailyPnL || [],
       targetMode,
-      { startDate: todayStr, endDate: todayStr }
+      { startDate: targetDate, endDate: targetDate }
     );
     
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
@@ -3623,38 +3781,41 @@ Regola Proposta: "Concentra le nuove aperture nelle fasce a massima efficienza s
       : 'Nessuna regola personalizzata attualmente attiva';
 
     const prompt = `Sei un analista finanziario quantitativo Senior e coach esperto di trading algoritmico.
-Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di trading. Analizza accuratamente i dati operativi di oggi per identificare errori, correlazioni latenti, efficienza delle fasce orarie e proporre miglioramenti statistici ed operativi.
+Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di trading per la seduta del ${targetDate} (Conto: ${targetMode.toUpperCase()}).
+Analizza accuratamente le operazioni e le transazioni Alpaca registrate per identificare errori, correlazioni latenti, efficienza oraria e proporre miglioramenti statistici ed operativi.
 
-DATI DI OGGI (${todayStr}):
+DATI DELLA SEDUTA (${targetDate}):
+${autoDetectedSession ? `[NOTA: Analisi condotta sulla più recente seduta operativa con transazioni reali del ${targetDate}]` : ''}
 - PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
 - PNL/Bilancio Reale (Live): ${JSON.stringify(todaysPnLLive)}
+- Operazioni totali identificate per la seduta: ${allLogsTodayForStats.length}
 - Regole personalizzate attualmente in vigore:
 ${currentRules}
 
-LOG LOGICA DECISIONALE (Azioni - Paper):
+LOG LOGICA DECISIONALE & TRANSAZIONI ALPACA (Paper):
 ${paperLogicLogs}
 
-LOG LOGICA DECISIONALE (Azioni - Live):
+LOG LOGICA DECISIONALE & TRANSAZIONI ALPACA (Live):
 ${liveLogicLogs}
 
-ULTIMI LOG OPERATIVI (Azioni - Paper):
+ULTIMI LOG OPERATIVI (Paper):
 ${paperLogs}
 
-ULTIMI LOG OPERATIVI (Azioni - Live):
+ULTIMI LOG OPERATIVI (Live):
 ${liveLogs}
 
 ${hourlyReport.formattedSummaryPrompt}
 
 ISTRUZIONI DI ANALISI STRUTTURATA (in lingua italiana):
-1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mancate prese di profitto, o vendite affrettate).
+1. **Riesame Decisionale della Seduta (${targetDate})**: Valuta le operazioni eseguite/chiuse registrate su Alpaca. Trova eventuali punti di forza o errori (es. entrate anticipate, timing di uscita, rispetto del risk management).
 2. **⏰ Analisi Statistica ed Inferenziale delle Fasce Orarie (Intraday Hourly Efficiency & Costanza)**:
-   - Inserisci un'approfondita sezione analitica commentando la tabella statistica delle fasce orarie.
+   - Inserisci un'approfondita sezione analitica commentando la tabella statistica delle fasce orarie della giornata.
    - Identifica con precisione **gli orari migliori e più efficienti della giornata** (Win Rate %, PnL medio, Intervallo di Confidenza al 95%, campione $N$).
-   - **Verifica di Costanza**: Valuta espressamente se l'efficienza registrata negli orari di punta è una **costante empirica stabile e replicabile** nelle varie sessioni (confrontando la persistenza e il tasso di costanza intergiornaliera) oppure un'anomalia/varianza statistica isolata.
-   - Fornisci una valutazione inferenziale su significatività ($p$-value, t-stat) e indica eventuali fasce orarie a rischio di chop/drawdown da filtrare.
-3. **Correlazioni Latenti**: Trova correlazioni latenti tra l'andamento di mercato di oggi, le notizie macro o settoriali e le performance dei ticker gestiti (SPY, QQQ, DIA, ecc.).
-4. **Scenari Alternativi**: Ipotizza scenari alternativi (es. "Se avessimo chiuso la posizione prima o concentrato l'esposizione nelle ore migliori, avremmo gestito meglio il rischio").
-5. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot, tenendo conto anche dei vincoli orari o di settore emersi.
+   - **Verifica di Costanza**: Valuta se l'efficienza registrata negli orari di punta è una **costante empirica solida** oppure varianza isolata.
+   - Fornisci una valutazione inferenziale su significatività ($p$-value, t-stat) e indica eventuali fasce orarie a rischio di drawdown da filtrare.
+3. **Correlazioni Latenti**: Trova correlazioni latenti tra l'andamento di mercato della seduta, le notizie macro o settoriali e le performance dei ticker gestiti.
+4. **Scenari Alternativi**: Ipotizza scenari alternativi su timing ed esposizione.
+5. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot.
 
 CRITICAL: All'interno del campo 'analysis' (in fondo alla stringa markdown, dopo tutte le tue analisi), devi obbligatoriamente aggiungere una sezione formattata esattamente in questo modo (in italiano):
 
@@ -3666,7 +3827,7 @@ Ciao! Implementa ed integra nel codice sorgente (es. in \`server.ts\` o \`RiskMa
 
 Regola Proposta: "[Inserisci qui la tua regola ottimizzata proposta]"
 
-Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance e all'analisi oraria inferenziale di oggi]"
+Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance e all'analisi oraria inferenziale del ${targetDate}]"
 \`\`\`
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
@@ -3698,7 +3859,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
-    addLog('system', '[Debriefing AI] Debriefing generato con successo con analisi statistica oraria inferenziale.');
+    addLog('system', `[Debriefing AI] Debriefing generato con successo per la data ${targetDate} (${allLogsTodayForStats.length} operazioni analizzate).`);
     res.json({ success: true, debrief: botStatus.latestDailyDebrief });
   } catch (error: any) {
     const message = error.message || String(error);
@@ -3737,6 +3898,8 @@ app.post('/api/generate-range-debrief', async (req, res) => {
     await flushLogs();
 
     let rangeLogicLogs: any[] = [];
+    
+    // 1. Recupero da Firestore
     if (db) {
       if (mode === 'paper' || mode === 'live') {
         try {
@@ -3758,33 +3921,50 @@ app.post('/api/generate-range-debrief', async (req, res) => {
       }
     }
 
-    // Fallback automatico in-memory e Google Drive se Firestore ha riscontrato errori o non ha dati
-    if (rangeLogicLogs.length === 0) {
-      console.log(`[Debriefing Periodico AI] Nessun log da Firestore. Controllo log in-memory e Google Drive (StoriaLOG.json) per ${mode}...`);
-      const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];
-      rangeLogicLogs = sourceLogs.filter(l => {
-        return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
-      });
+    // 2. Recupero da in-memory e Google Drive (StoriaLOG.json)
+    const sourceLogs = botData[mode as 'paper' | 'live']?.dailyLogicLogs || [];
+    const localLogs = sourceLogs.filter(l => {
+      return l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z';
+    });
+    rangeLogicLogs.push(...localLogs);
 
-      // Tenta recupero aggiuntivo da StoriaLOG.json su Google Drive
-      if (rangeLogicLogs.length === 0) {
-        try {
-          const driveData = await GoogleDriveService.readJsonFile<any>('StoriaLOG.json');
-          if (driveData) {
-            const logs = Array.isArray(driveData) ? driveData : (driveData.logs || []);
-            rangeLogicLogs = logs.filter((l: any) => {
-              const ts = typeof l === 'string' ? '' : (l.timestamp || '');
-              return ts >= startDate + 'T00:00:00.000Z' && ts <= endDate + 'T23:59:59.999Z';
-            });
-            console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log da StoriaLOG.json su Google Drive.`);
-          }
-        } catch (err: any) {
-          console.warn('[GoogleDrive] Avviso lettura StoriaLOG.json per debriefing:', err.message);
+    if (rangeLogicLogs.length === 0) {
+      try {
+        const driveData = await GoogleDriveService.readJsonFile<any>('StoriaLOG.json');
+        if (driveData) {
+          const logs = Array.isArray(driveData) ? driveData : (driveData.logs || []);
+          const driveLogs = logs.filter((l: any) => {
+            const ts = typeof l === 'string' ? '' : (l.timestamp || '');
+            return ts >= startDate + 'T00:00:00.000Z' && ts <= endDate + 'T23:59:59.999Z';
+          });
+          rangeLogicLogs.push(...driveLogs);
         }
-      } else {
-        console.log(`[Debriefing Periodico AI] Recuperati ${rangeLogicLogs.length} log locali.`);
+      } catch (err: any) {
+        console.warn('[GoogleDrive] Avviso lettura StoriaLOG.json per debriefing:', err.message);
       }
     }
+
+    // 3. Sincronizzazione DIRETTA con Alpaca API per il periodo
+    try {
+      const alpacaPeriodOps = await fetchAlpacaHistoricalOperations(mode as 'paper' | 'live', startDate, endDate);
+      if (alpacaPeriodOps.logicLogs.length > 0) {
+        rangeLogicLogs.push(...alpacaPeriodOps.logicLogs);
+      }
+    } catch (alpacaErr: any) {
+      console.warn('[Debriefing Periodico AI] Errore fetch Alpaca:', alpacaErr.message);
+    }
+
+    // Deduplicazione log
+    const dedupRangeMap = new Map<string, any>();
+    for (const item of rangeLogicLogs) {
+      const ts = (item.timestamp || '').slice(0, 19);
+      const key = `${ts}_${item.symbol}_${item.action}_${item.mode || mode}`;
+      if (!dedupRangeMap.has(key)) {
+        dedupRangeMap.set(key, item);
+      }
+    }
+    rangeLogicLogs = Array.from(dedupRangeMap.values());
+    rangeLogicLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     // Esecuzione dell'analisi quantitativa inferenziale delle fasce orarie sul periodo
     const rangeHourlyReport = HourlyEfficiencyAnalyzer.analyze(
@@ -3840,13 +4020,13 @@ CONTO ANALIZZATO: ${mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'}
 REGULATION_RULES IN VIGORE:
 ${currentRules}
 
-LOG DECISIONALI ESTRATTI NEL PERIODO:
+LOG DECISIONALI & TRANSAZIONI ALPACA NEL PERIODO (${rangeLogicLogs.length} totali):
 ${JSON.stringify(rangeLogicLogs.slice(-150))}
 
 ${rangeHourlyReport.formattedSummaryPrompt}
 
 ISTRUZIONI DI ANALISI STRUTTURATA (in lingua italiana):
-1. **Analisi del Trend di Periodo**: Valuta la coerenza complessiva delle decisioni (BUY, SELL, HOLD, SKIP) prese in questo intervallo. Identifica pattern ricorrenti di guadagno o di perdita.
+1. **Analisi del Trend di Periodo**: Valuta la coerenza complessiva delle decisioni (BUY, SELL, HOLD, SKIP) e delle transazioni Alpaca in questo intervallo. Identifica pattern ricorrenti di guadagno o di perdita.
 2. **⏰ Analisi Statistica ed Inferenziale delle Fasce Orarie (Intraday Hourly Efficiency & Costanza Multigiornaliera)**:
    - Commenta dettagliatamente la tabella di distribuzione temporale fornita.
    - Identifica **gli orari migliori e più efficienti della giornata** nel periodo (Win Rate %, PnL medio, 95% Confidence Interval, t-statistic).
@@ -3892,7 +4072,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       data: { startDate, endDate, mode, analysis: result.analysis, suggestedRule: result.suggestedRule }
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
 
-    addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo con inferenza oraria.');
+    addLog('system', `[Debriefing Periodico AI] Analisi periodica generata con successo (${rangeLogicLogs.length} operazioni esaminate).`);
     res.json({ 
       success: true, 
       analysis: result.analysis, 
