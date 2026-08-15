@@ -65,6 +65,7 @@ import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js
 import { RiskRuleConfig } from "./src/types.js";
 import StatisticalExpertService from "./src/backend/services/StatisticalExpertService.js";
 import RssNewsService from "./src/backend/services/RssNewsService.js";
+import HourlyEfficiencyAnalyzer from "./src/backend/services/HourlyEfficiencyAnalyzer.js";
 
 const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   {
@@ -3489,24 +3490,50 @@ app.post('/api/generate-daily-debrief', async (req, res) => {
   addLog('system', '[Debriefing AI] Inizio generazione Debriefing Giornaliero con Gemini 3.5...');
   
   const todayStr = new Date().toISOString().split('T')[0];
+  const targetMode = (botStatus.tradingMode as 'paper' | 'live') || 'paper';
+
+  // Calcolo preliminare inferenziale e statistico delle fasce orarie per fallback ed AI
+  const allCurrentLogs = [
+    ...(botData.paper.dailyLogicLogs || []),
+    ...(botData.live.dailyLogicLogs || [])
+  ];
+  const preliminaryHourlyReport = HourlyEfficiencyAnalyzer.analyze(
+    allCurrentLogs,
+    botData[targetMode]?.dailyPnL || [],
+    targetMode,
+    { startDate: todayStr, endDate: todayStr }
+  );
+
   const fallbackDebrief = {
     analysis: `### Debriefing Giornaliero - Fallback Locale (IA in Cooldown)
-Il servizio di intelligenza artificiale è momentaneamente saturo o in cooldown per via del superamento della quota giornaliera del server.
+Il servizio di intelligenza artificiale è momentaneamente in cooldown per via del superamento della quota server. Di seguito il riepilogo matematico e statistico generato automaticamente:
 
-#### Riesame Decisionale (Stima):
-Le operazioni odierne sono state eseguite correttamente in conformità con i trend identificati. Nessun errore critico rilevato nei passaggi di portafoglio.
+#### 1. Riesame Decisionale & Operatività Odierna:
+Le operazioni odierne sono state elaborate in conformità con i filtri di rischio e il sentiment di mercato.
 
-#### Correlazioni Latenti:
-Il sentiment generale mantiene una correlazione robusta con i principali indici di riferimento (SPY/QQQ).
+#### 2. ⏰ Valutazione Statistica & Inferenziale delle Fasce Orarie:
+${preliminaryHourlyReport.markdownTable}
 
-#### Scenari Alternativi:
-La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.`,
-    suggestedRule: "Incrementa lo stop loss su asset volatili se l'IA è in cooldown.",
+- **Fascia a Massima Efficienza:** ${preliminaryHourlyReport.bestHourlyWindow ? `${preliminaryHourlyReport.bestHourlyWindow.slotKey} (Win Rate: ${preliminaryHourlyReport.bestHourlyWindow.winRatePct}%, PnL Medio: $${preliminaryHourlyReport.bestHourlyWindow.meanPnL})` : 'Dati in consolidamento'}
+- **Verifica di Costanza:** ${preliminaryHourlyReport.constancySummary.keyInsight}
+- **Significatività Inferenziale:** ${preliminaryHourlyReport.constancySummary.hasProvenConstantEdge ? 'Presenza di un edge statistico comprovato con confidenza al 95%.' : 'Campione in accumulo per il calcolo della significatività p < 0.05.'}
+
+#### 3. Correlazioni Latenti & Scenari Alternativi:
+Il sentiment generale mantiene una correlazione con gli indici guida (SPY/QQQ). La gestione dinamica del rischio ha presidiato l'esposizione.
+
+### 🤖 PROMPT PER GOOGLE AI STUDIO (COPIA & INCOLLA)
+\`\`\`text
+Ciao! Implementa ed integra nel codice sorgente la seguente regola ottimizzata dal debriefing odierno:
+Regola Proposta: "Concentra le nuove aperture nelle fasce a massima efficienza statistica (${preliminaryHourlyReport.bestHourlyWindow?.slotKey || 'Apertura'}) e mantieni filtri di protezione durante le finestre di consolidamento."
+\`\`\``,
+    suggestedRule: preliminaryHourlyReport.bestHourlyWindow 
+      ? `Privilegia entrate nella fascia oraria ${preliminaryHourlyReport.bestHourlyWindow.slotKey} con Win Rate del ${preliminaryHourlyReport.bestHourlyWindow.winRatePct}%.`
+      : "Incrementa lo stop loss su asset volatili se l'IA è in cooldown.",
     timestamp: new Date().toISOString()
   };
 
   if (checkQuotaExceeded()) {
-    addLog('system', '[Debriefing AI] Cooldown attivo: Uso immediato del fallback locale salvato.');
+    addLog('system', '[Debriefing AI] Cooldown attivo: Uso immediato del fallback locale salvato con inferenza oraria.');
     botStatus.latestDailyDebrief = fallbackDebrief;
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief fallback:', err));
     return res.json({ success: true, debrief: fallbackDebrief });
@@ -3527,6 +3554,7 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
     
     let paperLogicLogs = JSON.stringify(botData.paper.dailyLogicLogs?.slice(-20) || []);
     let liveLogicLogs = JSON.stringify(botData.live.dailyLogicLogs?.slice(-20) || []);
+    let allLogsTodayForStats: any[] = [];
     
     if (db) {
       try {
@@ -3544,6 +3572,7 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
         const liveLogsArr: any[] = [];
         alpacaLogsSnap.forEach((doc: any) => {
           const data = doc.data();
+          allLogsTodayForStats.push(data);
           if (data.mode === 'paper') paperLogsArr.push(data);
           else if (data.mode === 'live') liveLogsArr.push(data);
         });
@@ -3552,10 +3581,12 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
         if (paperLogsArr.length === 0) {
           const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
           paperLogsArr.push(...localPaper);
+          allLogsTodayForStats.push(...localPaper);
         }
         if (liveLogsArr.length === 0) {
           const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
           liveLogsArr.push(...localLive);
+          allLogsTodayForStats.push(...localLive);
         }
 
         if (paperLogsArr.length > 0) paperLogicLogs = JSON.stringify(paperLogsArr);
@@ -3566,17 +3597,33 @@ La gestione dinamica del rischio ha protetto il capitale da drawdown improvvisi.
         const endOfDay = todayStr + 'T23:59:59.999Z';
         const localPaper = (botData.paper.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
         const localLive = (botData.live.dailyLogicLogs || []).filter(l => l.timestamp >= startOfDay && l.timestamp <= endOfDay);
+        allLogsTodayForStats.push(...localPaper, ...localLive);
         if (localPaper.length > 0) paperLogicLogs = JSON.stringify(localPaper);
         if (localLive.length > 0) liveLogicLogs = JSON.stringify(localLive);
       }
     }
+
+    if (allLogsTodayForStats.length === 0) {
+      allLogsTodayForStats = [
+        ...(botData.paper.dailyLogicLogs || []),
+        ...(botData.live.dailyLogicLogs || [])
+      ];
+    }
+
+    // Esecuzione dell'analisi quantitativa inferenziale delle fasce orarie
+    const hourlyReport = HourlyEfficiencyAnalyzer.analyze(
+      allLogsTodayForStats,
+      botData[targetMode]?.dailyPnL || [],
+      targetMode,
+      { startDate: todayStr, endDate: todayStr }
+    );
     
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
       ? botStatus.userFeedbackRules.join('\n- ')
       : 'Nessuna regola personalizzata attualmente attiva';
 
     const prompt = `Sei un analista finanziario quantitativo Senior e coach esperto di trading algoritmico.
-Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di trading. Analizza accuratamente i dati operativi di oggi per identificare errori, correlazioni latenti e proporre miglioramenti.
+Stai conducendo un Debriefing Giornaliero (Daily Debriefing) con il bot di trading. Analizza accuratamente i dati operativi di oggi per identificare errori, correlazioni latenti, efficienza delle fasce orarie e proporre miglioramenti statistici ed operativi.
 
 DATI DI OGGI (${todayStr}):
 - PNL/Bilancio Simulazione (Paper): ${JSON.stringify(todaysPnLPaper)}
@@ -3596,11 +3643,18 @@ ${paperLogs}
 ULTIMI LOG OPERATIVI (Azioni - Live):
 ${liveLogs}
 
-ISTRUZIONI DI ANALISI:
-1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mankate prese di profitto, o vendite affrettate).
-2. **Correlazioni Latenti**: Trova correlazioni latenti tra l'andamento di mercato di oggi, le notizie macro o settoriali e le performance dei ticker gestiti (SPY, QQQ, DIA, ecc.).
-3. **Scenari Alternativi**: Ipotizza scenari alternativi (es. "Se avessimo chiuso la posizione prima, avremmo gestito meglio il rischio").
-4. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot. Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
+${hourlyReport.formattedSummaryPrompt}
+
+ISTRUZIONI DI ANALISI STRUTTURATA (in lingua italiana):
+1. **Riesame Decisionale**: Valuta se le operazioni eseguite (o mantenute) sono state coerenti con il sentiment e le regole. Trova eventuali errori (es. acquisti ritardati, mancate prese di profitto, o vendite affrettate).
+2. **⏰ Analisi Statistica ed Inferenziale delle Fasce Orarie (Intraday Hourly Efficiency & Costanza)**:
+   - Inserisci un'approfondita sezione analitica commentando la tabella statistica delle fasce orarie.
+   - Identifica con precisione **gli orari migliori e più efficienti della giornata** (Win Rate %, PnL medio, Intervallo di Confidenza al 95%, campione $N$).
+   - **Verifica di Costanza**: Valuta espressamente se l'efficienza registrata negli orari di punta è una **costante empirica stabile e replicabile** nelle varie sessioni (confrontando la persistenza e il tasso di costanza intergiornaliera) oppure un'anomalia/varianza statistica isolata.
+   - Fornisci una valutazione inferenziale su significatività ($p$-value, t-stat) e indica eventuali fasce orarie a rischio di chop/drawdown da filtrare.
+3. **Correlazioni Latenti**: Trova correlazioni latenti tra l'andamento di mercato di oggi, le notizie macro o settoriali e le performance dei ticker gestiti (SPY, QQQ, DIA, ecc.).
+4. **Scenari Alternativi**: Ipotizza scenari alternativi (es. "Se avessimo chiuso la posizione prima o concentrato l'esposizione nelle ore migliori, avremmo gestito meglio il rischio").
+5. **Regola Ottimizzata Proposta**: Formula un suggerimento (prompt/regola) chiaro, sintetico e in italiano, pronto da inserire come feedback rule del bot, tenendo conto anche dei vincoli orari o di settore emersi.
 
 CRITICAL: All'interno del campo 'analysis' (in fondo alla stringa markdown, dopo tutte le tue analisi), devi obbligatoriamente aggiungere una sezione formattata esattamente in questo modo (in italiano):
 
@@ -3612,7 +3666,7 @@ Ciao! Implementa ed integra nel codice sorgente (es. in \`server.ts\` o \`RiskMa
 
 Regola Proposta: "[Inserisci qui la tua regola ottimizzata proposta]"
 
-Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance di oggi]"
+Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance e all'analisi oraria inferenziale di oggi]"
 \`\`\`
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
@@ -3644,7 +3698,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
-    addLog('system', '[Debriefing AI] Debriefing generato con successo.');
+    addLog('system', '[Debriefing AI] Debriefing generato con successo con analisi statistica oraria inferenziale.');
     res.json({ success: true, debrief: botStatus.latestDailyDebrief });
   } catch (error: any) {
     const message = error.message || String(error);
@@ -3678,31 +3732,6 @@ app.post('/api/generate-range-debrief', async (req, res) => {
 
   addLog('system', `[Debriefing Periodico AI] Inizio generazione analisi per periodo da ${startDate} a ${endDate} (Conto: ${mode})...`);
   
-  const fallbackRangeDebrief = {
-    analysis: `### Valutazione di Periodo - Fallback Locale (IA in Cooldown)
-Il servizio di intelligenza artificiale è momentaneamente saturo o in cooldown per via del superamento della quota giornaliera del server.
-
-#### Analisi del Trend di Periodo (Stima da ${startDate} a ${endDate}):
-- Il bot ha mantenuto correttamente la strategia di momentum e monitorato l'account.
-- Le posizioni storiche mostrano resilienza alle fluttuazioni di mercato a breve termine.
-
-#### Correlazioni e Anomalie:
-Nessuna anomalia grave rilevata nell'intervallo temporale specificato.
-
-#### Miglioramenti Strategici:
-Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi operativi.`,
-    suggestedRule: `Mantieni posizioni bilanciate e monitora la liquidità durante fasi di cooldown dell'IA.`
-  };
-
-  if (checkQuotaExceeded()) {
-    addLog('system', '[Debriefing Periodico AI] Cooldown attivo: Uso immediato del fallback locale.');
-    return res.json({ 
-      success: true, 
-      analysis: fallbackRangeDebrief.analysis, 
-      suggestedRule: fallbackRangeDebrief.suggestedRule 
-    });
-  }
-
   try {
     // Forza il salvataggio dei log in sospeso prima dell'analisi
     await flushLogs();
@@ -3757,12 +3786,54 @@ Si consiglia di ottimizzare l'allocazione della liquidità per mitigare i costi 
       }
     }
 
+    // Esecuzione dell'analisi quantitativa inferenziale delle fasce orarie sul periodo
+    const rangeHourlyReport = HourlyEfficiencyAnalyzer.analyze(
+      rangeLogicLogs,
+      botData[mode as 'paper' | 'live']?.dailyPnL || [],
+      mode as 'paper' | 'live',
+      { startDate, endDate }
+    );
+
+    const fallbackRangeDebrief = {
+      analysis: `### Valutazione di Periodo - Fallback Locale (IA in Cooldown)
+Il servizio di intelligenza artificiale è momentaneamente in cooldown. Riepilogo quantitativo e inferenziale per il periodo da ${startDate} a ${endDate} (Conto: ${mode}):
+
+#### 1. Analisi delle Performance di Periodo:
+- Operazioni totali esaminate: ${rangeHourlyReport.totalOperations} su ${rangeHourlyReport.totalTradingDays} giornate.
+- Win Rate medio di periodo: ${rangeHourlyReport.overallWinRatePct}%.
+
+#### 2. ⏰ Valutazione Statistica & Inferenziale delle Fasce Orarie:
+${rangeHourlyReport.markdownTable}
+
+- **Fascia a Massima Efficienza:** ${rangeHourlyReport.bestHourlyWindow ? `${rangeHourlyReport.bestHourlyWindow.slotKey} (WR: ${rangeHourlyReport.bestHourlyWindow.winRatePct}%, PnL: $${rangeHourlyReport.bestHourlyWindow.meanPnL})` : 'Dati in consolidamento'}
+- **Verifica di Costanza nel Periodo:** ${rangeHourlyReport.constancySummary.keyInsight}
+- **Valutazione Inferenziale:** ${rangeHourlyReport.constancySummary.hasProvenConstantEdge ? 'Edge orario costante e statisticamente significativo (p < 0.05).' : 'Campione in accumulo per la convergenza asintotica.'}
+
+### 🤖 PROMPT PER GOOGLE AI STUDIO (COPIA & INCOLLA)
+\`\`\`text
+Ciao! Implementa ed integra nel codice sorgente la seguente nuova regola emersa dal debriefing periodico:
+Regola Proposta: "Ottimizza il timing di entrata nella finestra ${rangeHourlyReport.bestHourlyWindow?.slotKey || 'mattutina'} e applica riduzione del risk exposure nelle ore ad alta varianza."
+\`\`\``,
+      suggestedRule: rangeHourlyReport.bestHourlyWindow 
+        ? `Mantieni operatività concentrata nella fascia ${rangeHourlyReport.bestHourlyWindow.slotKey} con costanza ${rangeHourlyReport.bestHourlyWindow.constancyScorePct}%.`
+        : `Mantieni posizioni bilanciate e monitora la liquidità durante fasi di cooldown dell'IA.`
+    };
+
+    if (checkQuotaExceeded()) {
+      addLog('system', '[Debriefing Periodico AI] Cooldown attivo: Uso immediato del fallback locale.');
+      return res.json({ 
+        success: true, 
+        analysis: fallbackRangeDebrief.analysis, 
+        suggestedRule: fallbackRangeDebrief.suggestedRule 
+      });
+    }
+
     const currentRules = botStatus.userFeedbackRules && botStatus.userFeedbackRules.length > 0
       ? botStatus.userFeedbackRules.join('\n- ')
       : 'Nessuna regola personalizzata attualmente attiva';
 
     const prompt = `Sei un analista finanziario quantitativo Senior e coach esperto di trading algoritmico.
-Stai conducendo una Valutazione di Periodo (Period Debriefing) con il bot di trading. Analizza accuratamente i dati operativi raccolti in questo intervallo per identificare trend, correlazioni di medio periodo e proporre ottimizzazioni strategiche.
+Stai conducendo una Valutazione di Periodo (Period Debriefing) con il bot di trading. Analizza accuratamente i dati operativi raccolti in questo intervallo per identificare trend, correlazioni di medio periodo, efficienza statistica degli orari di negoziazione e proporre ottimizzazioni strategiche.
 
 PERIODO DI ANALISI: Da ${startDate} a ${endDate}
 CONTO ANALIZZATO: ${mode === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'}
@@ -3772,11 +3843,18 @@ ${currentRules}
 LOG DECISIONALI ESTRATTI NEL PERIODO:
 ${JSON.stringify(rangeLogicLogs.slice(-150))}
 
-ISTRUZIONI DI ANALISI:
+${rangeHourlyReport.formattedSummaryPrompt}
+
+ISTRUZIONI DI ANALISI STRUTTURATA (in lingua italiana):
 1. **Analisi del Trend di Periodo**: Valuta la coerenza complessiva delle decisioni (BUY, SELL, HOLD, SKIP) prese in questo intervallo. Identifica pattern ricorrenti di guadagno o di perdita.
-2. **Correlazioni e Anomalie**: Identifica eventuali reazioni anomale del mercato o risposte del bot di fronte ad eventi macro o movimenti di prezzo.
-3. **Miglioramenti Strategici**: Suggerisci affinamenti operativi strutturati per questo orizzonte temporale.
-4. **Regola Ottimizzata Proposta**: Formula una regola chiara, sintetica e in italiano, pronta da inserire como feedback rule del bot (massimo 150 caratteri). Ad esempio: "Evita acquisti di SPY se il sentiment di QQQ è inferiore a 0.1, poiché correlati negativamente in questa fase".
+2. **⏰ Analisi Statistica ed Inferenziale delle Fasce Orarie (Intraday Hourly Efficiency & Costanza Multigiornaliera)**:
+   - Commenta dettagliatamente la tabella di distribuzione temporale fornita.
+   - Identifica **gli orari migliori e più efficienti della giornata** nel periodo (Win Rate %, PnL medio, 95% Confidence Interval, t-statistic).
+   - **Verifica di Costanza su Orizzonte Multigiornaliero**: Verifica rigorosamente se le finestre orarie più redditizie rappresentano una **costante empirica solida** (confermato dall'indice di costanza intergiornaliera >= 65% e significatività $p < 0.05$) oppure semplici oscillazioni o anomalie transitorie.
+   - Evidenzia le fasce "Golden Hours" e le fasce a rischio di drawdown/falsa rottura.
+3. **Correlazioni e Anomalie**: Identifica eventuali reazioni anomale del mercato o risposte del bot di fronte ad eventi macro o movimenti di prezzo.
+4. **Miglioramenti Strategici**: Suggerisci affinamenti operativi strutturati per questo orizzonte temporale.
+5. **Regola Ottimizzata Proposta**: Formula una regola chiara, sintetica e in italiano, pronta da inserire come feedback rule del bot (massimo 150 caratteri).
 
 CRITICAL: All'interno del campo 'analysis' (in fondo alla stringa markdown, dopo tutte le tue analisi), devi obbligatoriamente aggiungere una sezione formattata esattamente in questo modo (in italiano):
 
@@ -3788,7 +3866,7 @@ Ciao! Implementa ed integra nel codice sorgente (es. in \`server.ts\` o \`RiskMa
 
 Regola Proposta: "[Inserisci qui la tua regola ottimizzata proposta]"
 
-Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance di questo periodo]"
+Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del perché questa regola è importante in base alle performance di questo periodo e all'analisi oraria inferenziale]"
 \`\`\`
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
@@ -3814,7 +3892,7 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       data: { startDate, endDate, mode, analysis: result.analysis, suggestedRule: result.suggestedRule }
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
 
-    addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo.');
+    addLog('system', '[Debriefing Periodico AI] Analisi periodica generata con successo con inferenza oraria.');
     res.json({ 
       success: true, 
       analysis: result.analysis, 
@@ -3826,20 +3904,65 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       console.warn(`[Debriefing Periodico AI] API Quota Exceeded (429/RESOURCE_EXHAUSTED). Falling back to local range-debrief.`);
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
+      
+      const fallbackRangeReport = HourlyEfficiencyAnalyzer.analyze(
+        botData[mode as 'paper' | 'live']?.dailyLogicLogs || [],
+        botData[mode as 'paper' | 'live']?.dailyPnL || [],
+        mode as 'paper' | 'live',
+        { startDate, endDate }
+      );
+      const fallbackRange = {
+        analysis: `### Valutazione di Periodo - Fallback Locale (IA in Cooldown)
+Il servizio di intelligenza artificiale è momentaneamente in cooldown. Riepilogo quantitativo per il periodo da ${startDate} a ${endDate} (Conto: ${mode}):
+
+#### ⏰ Valutazione Statistica & Inferenziale delle Fasce Orarie:
+${fallbackRangeReport.markdownTable}
+
+- **Fascia Più Efficiente:** ${fallbackRangeReport.bestHourlyWindow ? `${fallbackRangeReport.bestHourlyWindow.slotKey} (Win Rate ${fallbackRangeReport.bestHourlyWindow.winRatePct}%)` : 'N/A'}
+- **Costanza:** ${fallbackRangeReport.constancySummary.keyInsight}`,
+        suggestedRule: `Privilegia entrate nelle finestre a maggior costanza (${fallbackRangeReport.bestHourlyWindow?.slotKey || '09:30-10:30 EST'}).`
+      };
+
       sendToGoogleSheets({
         eventType: 'range_debrief_fallback',
-        data: { startDate, endDate, mode, analysis: fallbackRangeDebrief.analysis, suggestedRule: fallbackRangeDebrief.suggestedRule }
+        data: { startDate, endDate, mode, analysis: fallbackRange.analysis, suggestedRule: fallbackRange.suggestedRule }
       }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
       return res.json({ 
         success: true, 
-        analysis: fallbackRangeDebrief.analysis, 
-        suggestedRule: fallbackRangeDebrief.suggestedRule 
+        analysis: fallbackRange.analysis, 
+        suggestedRule: fallbackRange.suggestedRule 
       });
     }
 
     addLog('system', `[Debriefing Periodico AI Errore] ${error.message}`);
     console.error(error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Endpoint diretto per recuperare il report statistico ed inferenziale orario
+app.get('/api/hourly-efficiency-analysis', async (req, res) => {
+  try {
+    const mode = (req.query.mode as 'paper' | 'live') || (botStatus.tradingMode as 'paper' | 'live') || 'paper';
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    
+    let logs = botData[mode]?.dailyLogicLogs || [];
+    if (startDate && endDate) {
+      logs = logs.filter(l => l.timestamp >= startDate + 'T00:00:00.000Z' && l.timestamp <= endDate + 'T23:59:59.999Z');
+    }
+    
+    const pnlHistory = botData[mode]?.dailyPnL || [];
+    const report = HourlyEfficiencyAnalyzer.analyze(
+      logs,
+      pnlHistory,
+      mode,
+      startDate && endDate ? { startDate, endDate } : undefined
+    );
+    
+    res.json({ success: true, report });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

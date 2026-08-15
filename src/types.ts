@@ -76,6 +76,53 @@ export interface GeminiSignal {
   timestamp?: string;
 }
 
+export interface HourlySlotStat {
+  slotKey: string;
+  hourBucket: number;
+  tradesCount: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRatePct: number;
+  totalPnL: number;
+  meanPnL: number;
+  meanReturnPct: number;
+  stdDev: number;
+  standardError: number;
+  tStatistic: number;
+  pValueEstimate: number;
+  isStatisticallySignificant: boolean;
+  confidenceInterval95: [number, number];
+  distinctDaysCount: number;
+  positiveDaysCount: number;
+  constancyScorePct: number;
+  isPersistentConstant: boolean;
+  inferentialRating: 'GOLDEN_CONSTANT' | 'PROMISING_EDGE' | 'NEUTRAL_NOISE' | 'HIGH_RISK_DRAWDOWNS';
+  verbalEvaluation: string;
+}
+
+export interface HourlyEfficiencyReport {
+  analyzedPeriod: {
+    startDate: string;
+    endDate: string;
+    mode: 'paper' | 'live';
+  };
+  totalOperations: number;
+  totalTradingDays: number;
+  overallWinRatePct: number;
+  overallNetPnL: number;
+  slotStats: HourlySlotStat[];
+  bestHourlyWindow: HourlySlotStat | null;
+  worstHourlyWindow: HourlySlotStat | null;
+  constancySummary: {
+    hasProvenConstantEdge: boolean;
+    provenConstantSlots: string[];
+    riskProneSlots: string[];
+    keyInsight: string;
+  };
+  markdownTable: string;
+  formattedSummaryPrompt: string;
+}
+
 export interface BotStatus {
   active: boolean; // For legacy compatibility
   paperActive: boolean;
