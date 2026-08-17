@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // es. 0.20 o 0.15
@@ -20,6 +20,13 @@ export interface RiskRuleConfig {
     atrMultiplier?: number;           // default 1.5 per Trailing Stop 1.5x ATR
     atrPeriod?: number;               // default 14
     useAtrTrailingStop?: boolean;     // attiva trailing stop individuale su volatilità reale ATR
+    maxConcurrentPositions?: number;  // default 5 (limite max posizioni simultanee)
+    blockMorningOpeningWindow?: boolean;   // default true (inibizione 09:30-10:30 EST)
+    blockAfternoonClosingWindow?: boolean; // default true (inibizione 15:30-16:00 EST)
+    morningBlockStart?: string;       // default '09:30'
+    morningBlockEnd?: string;         // default '10:30'
+    afternoonBlockStart?: string;     // default '15:30'
+    afternoonBlockEnd?: string;       // default '16:00'
   };
 }
 

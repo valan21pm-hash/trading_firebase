@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge } from 'lucide-react';
+import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge, Sliders, Clock3, Lock } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -82,6 +82,27 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       atrPeriod: 14,
       useAtrTrailingStop: true
     }
+  },
+  {
+    id: 'max_concurrent_positions_cap',
+    enabled: true,
+    type: 'MAX_CONCURRENT_POSITIONS_CAP',
+    parameters: {
+      maxConcurrentPositions: 5
+    }
+  },
+  {
+    id: 'volatility_time_window_lock',
+    enabled: true,
+    type: 'VOLATILITY_TIME_WINDOW_LOCK',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00'
+    }
   }
 ];
 
@@ -157,6 +178,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const semiconRule = getRule('SPY_QQQ_CORRELATION_SEMICON_CAP');
   const adxRule = getRule('ADX_VOLATILITY_FILTER');
   const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
+  const maxPosRule = getRule('MAX_CONCURRENT_POSITIONS_CAP');
+  const timeLockRule = getRule('VOLATILITY_TIME_WINDOW_LOCK');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -724,6 +747,130 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
               Protezione individuale: Trigger Chiusura = PeakPrice - (1.5 &times; ATR14). Nessun impatto sulle altre posizioni in profitto.
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 9: Max Concurrent Positions Cap (Cap a 5 posizioni) */}
+        <div className={`p-4 rounded-xl border transition-all ${maxPosRule.enabled ? 'bg-violet-50/40 border-violet-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sliders className={`w-4 h-4 ${maxPosRule.enabled ? 'text-violet-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">9. Limite Max Posizioni Simultanee (Cap = 5)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={maxPosRule.enabled}
+                onChange={(e) => updateRule('MAX_CONCURRENT_POSITIONS_CAP', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-violet-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Evita l'eccessiva frammentazione del capitale limitando a un massimo di 5 le posizioni aperte simultaneamente. Concentra la liquidità sui migliori asset con il sentiment più elevato.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Numero Massimo Posizioni Aperte:</span>
+                <span className="font-mono text-violet-600 font-bold">{maxPosRule.parameters.maxConcurrentPositions ?? 5} posizioni</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                value={maxPosRule.parameters.maxConcurrentPositions ?? 5}
+                onChange={(e) => updateRule('MAX_CONCURRENT_POSITIONS_CAP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, maxConcurrentPositions: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!maxPosRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-violet-600"
+              />
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Quando sono aperte 5 posizioni, i nuovi ordini vengono scartati finché non viene liberato uno slot.
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 10: Inibizione Operatività nelle Fasce di Volatilità (09:30-10:30 & 15:30-16:00 EST) */}
+        <div className={`p-4 rounded-xl border transition-all ${timeLockRule.enabled ? 'bg-amber-50/40 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock3 className={`w-4 h-4 ${timeLockRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">10. Inibizione Fasce Orarie ad Alta Volatilità (EST)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={timeLockRule.enabled}
+                onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Inibisce l'apertura di posizioni a mercato nei momenti critici di rumore e instabilità: nei primi 60 minuti dopo la campana d'apertura (09:30 - 10:30 EST) e negli ultimi 30 minuti di asta/chiusura (15:30 - 16:00 EST).
+          </p>
+
+          <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Fascia Apertura (09:30 - 10:30 EST)</span>
+                  <p className="text-[10px] text-slate-500">Evita i falsi breakout e lo spread elevato di inizio sessione</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={timeLockRule.parameters.blockMorningOpeningWindow ?? true}
+                  onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, blockMorningOpeningWindow: e.target.checked }
+                  }))}
+                  disabled={!timeLockRule.enabled}
+                  className="sr-only peer"
+                />
+                <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Fascia Chiusura / Asta (15:30 - 16:00 EST)</span>
+                  <p className="text-[10px] text-slate-500">Evita il ribilanciamento degli ETF e la volatilità di chiusura</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={timeLockRule.parameters.blockAfternoonClosingWindow ?? true}
+                  onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, blockAfternoonClosingWindow: e.target.checked }
+                  }))}
+                  disabled={!timeLockRule.enabled}
+                  className="sr-only peer"
+                />
+                <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+              </label>
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Fascia di trading attivo consentita: 10:30 EST - 15:30 EST (16:30 - 21:30 CET).
             </div>
           </div>
         </div>

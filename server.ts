@@ -142,8 +142,89 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       atrPeriod: 14,
       useAtrTrailingStop: true
     }
+  },
+  {
+    id: 'max_concurrent_positions_cap',
+    enabled: true,
+    type: 'MAX_CONCURRENT_POSITIONS_CAP',
+    parameters: {
+      maxConcurrentPositions: 5
+    }
+  },
+  {
+    id: 'volatility_time_window_lock',
+    enabled: true,
+    type: 'VOLATILITY_TIME_WINDOW_LOCK',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00'
+    }
   }
 ];
+
+export interface EstTimeInfo {
+  hours: number;
+  minutes: number;
+  totalMinutes: number;
+  timeFormatted: string;
+  isMorningVolatileLock: boolean;
+  isAfternoonVolatileLock: boolean;
+  isMarketTimeLocked: boolean;
+  lockReason?: string;
+}
+
+export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInfo {
+  const date = dateInput ? new Date(dateInput) : new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  }).formatToParts(date);
+  
+  let hours = 0;
+  let minutes = 0;
+  
+  for (const part of parts) {
+    if (part.type === 'hour') {
+      hours = parseInt(part.value, 10);
+      if (hours === 24) hours = 0;
+    } else if (part.type === 'minute') {
+      minutes = parseInt(part.value, 10);
+    }
+  }
+  
+  const totalMinutes = hours * 60 + minutes;
+  const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} EST`;
+  
+  // 09:30 - 10:30 EST => 570 - 630 minuti
+  // 15:30 - 16:00 EST => 930 - 960 minuti
+  const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 630;
+  const isAfternoonVolatileLock = totalMinutes >= 930 && totalMinutes <= 960;
+  const isMarketTimeLocked = isMorningVolatileLock || isAfternoonVolatileLock;
+  
+  let lockReason: string | undefined;
+  if (isMorningVolatileLock) {
+    lockReason = `Fascia di apertura ad alta volatilità e rumore (09:30 - 10:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per preservare il capitale.`;
+  } else if (isAfternoonVolatileLock) {
+    lockReason = `Fascia pre-chiusura / asta di fine sessione ad alta instabilità (15:30 - 16:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti.`;
+  }
+  
+  return {
+    hours,
+    minutes,
+    totalMinutes,
+    timeFormatted,
+    isMorningVolatileLock,
+    isAfternoonVolatileLock,
+    isMarketTimeLocked,
+    lockReason
+  };
+}
 
 function getSymbolSector(symbol: string): string {
   const sym = symbol.toUpperCase();
@@ -198,10 +279,13 @@ function isPurchaseAllowedBySystemRules(
   minutesToClose: number | null,
   isMarketSentimentDecreasing: boolean,
   systemRules: RiskRuleConfig[] = [],
-  marketAdx?: number
+  marketAdx?: number,
+  currentOpenPositionsCount?: number
 ): { allowed: boolean; reason?: string } {
   for (const rule of systemRules) {
     if (!rule.enabled) continue;
+    
+    // Regola 4: EOD_BUY_LOCK (Blocco acquisti a fine giornata con sentiment calante)
     if (rule.type === 'EOD_BUY_LOCK') {
       const windowMins = rule.parameters.eodWindowMinutes ?? 30;
       if (minutesToClose !== null && minutesToClose > 0 && minutesToClose <= windowMins && isMarketSentimentDecreasing) {
@@ -211,12 +295,46 @@ function isPurchaseAllowedBySystemRules(
         };
       }
     }
+
+    // Regola 7: ADX_VOLATILITY_FILTER (Filtro Volatilità ADX < 25)
     if (rule.type === 'ADX_VOLATILITY_FILTER' && marketAdx !== undefined) {
       const minAdx = rule.parameters.minAdxThreshold ?? 25.0;
       if (marketAdx < minAdx) {
         return {
           allowed: false,
           reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] Benchmark di mercato con ADX(14) = ${marketAdx.toFixed(1)} < ${minAdx.toFixed(1)}. Mercato privo di trend direzionale (congestione / chop). Nuovi acquisti inibiti.`
+        };
+      }
+    }
+
+    // Regola 9: MAX_CONCURRENT_POSITIONS_CAP (Cap a 5 posizioni simultanee)
+    if (rule.type === 'MAX_CONCURRENT_POSITIONS_CAP' && currentOpenPositionsCount !== undefined) {
+      const maxPositions = rule.parameters.maxConcurrentPositions ?? 5;
+      if (currentOpenPositionsCount >= maxPositions) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: MAX_CONCURRENT_POSITIONS_CAP] Raggiunto il limite massimo di ${maxPositions} posizioni simultanee (${currentOpenPositionsCount}/${maxPositions} occupate). Nuovi acquisti bloccati per concentrare il capitale ed evitare frammentazione eccessiva.`
+        };
+      }
+    }
+
+    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-10:30 e 15:30-16:00 EST)
+    if (rule.type === 'VOLATILITY_TIME_WINDOW_LOCK') {
+      const estInfo = getEstMarketTime();
+      const blockMorning = rule.parameters.blockMorningOpeningWindow ?? true;
+      const blockAfternoon = rule.parameters.blockAfternoonClosingWindow ?? true;
+
+      if (blockMorning && estInfo.isMorningVolatileLock) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella fascia di apertura ad alta volatilità (09:30-10:30 EST, orario: ${estInfo.timeFormatted}). Ingressi bloccati per evitare il rumore di mercato.`
+        };
+      }
+
+      if (blockAfternoon && estInfo.isAfternoonVolatileLock) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella fascia pre-chiusura / asta di fine sessione (15:30-16:00 EST, orario: ${estInfo.timeFormatted}). Ingressi bloccati per evitare instabilità estreme.`
         };
       }
     }
@@ -1314,7 +1432,7 @@ let botStatus: {
   trailingStop: 1.0,
   timeframe: 15,
   riskPercentage: 95,
-  maxConcurrentPositions: 10,
+  maxConcurrentPositions: 5,
   llmPreferredProvider: 'gemini',
   llmFailoverEnabled: true,
   llmProviderOrder: ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
@@ -3135,7 +3253,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       minutesToClose,
       isDecreasingSentiment,
       activeRules,
-      marketAdxRes.marketAdx
+      marketAdxRes.marketAdx,
+      openPositions.length
     );
 
     if (isPreCloseWindow) {
@@ -3203,9 +3322,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         });
 
         // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95%)
-        const maxPositions = botStatus.maxConcurrentPositions ?? 10;
+        const maxPosRule = activeRules.find(r => r.type === 'MAX_CONCURRENT_POSITIONS_CAP');
+        const maxPositions = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
         const currentSlotsFilled = openPositions.length;
         let availableSlots = maxPositions - currentSlotsFilled;
+
+        if (availableSlots <= 0) {
+          addLog(mode as 'paper' | 'live', `[Cap Posizioni Simultanee] Limite massimo di ${maxPositions} posizioni raggiunto (${currentSlotsFilled}/${maxPositions} occupate). Nessun nuovo acquisto effettuato.`);
+        }
 
         if (currentBuyingPower < 100) {
           availableSlots = Math.min(availableSlots, 1);
