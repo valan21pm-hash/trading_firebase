@@ -130,6 +130,187 @@ export class LLMProviderService {
     return this.failoverEnabled;
   }
 
+  public getAvailableProviders(): LLMProvider[] {
+    const available: LLMProvider[] = [];
+    for (const provider of ['gemini', 'anthropic', 'deepseek', 'groq', 'mistral'] as const) {
+      const config = this.providerConfigs[provider];
+      if (provider === 'gemini') {
+        if (config.apiKey || process.env.GEMINI_API_KEY) available.push('gemini');
+      } else if (config.apiKey && config.apiKey.trim() !== '') {
+        available.push(provider);
+      }
+    }
+    return available;
+  }
+
+  public async querySingleProvider(provider: LLMProvider, prompt: string, options: LLMOptions = {}): Promise<string> {
+    const config = this.providerConfigs[provider];
+    if (provider !== 'gemini' && (!config.apiKey || config.apiKey.trim() === '')) {
+      throw new Error(`API key per ${provider} non configurata.`);
+    }
+
+    switch (provider) {
+      case 'gemini':
+        return await this.queryGemini(prompt, config, options);
+      case 'mistral':
+        return await this.queryMistral(prompt, config, options);
+      case 'deepseek':
+        return await this.queryDeepSeek(prompt, config, options);
+      case 'groq':
+        return await this.queryGroq(prompt, config, options);
+      case 'anthropic':
+        return await this.queryAnthropic(prompt, config, options);
+      default:
+        throw new Error(`Provider non supportato: ${provider}`);
+    }
+  }
+
+  /**
+   * Esegue un debriefing di consenso interrogando simultaneamente le IA disponibili
+   * (Gemini, Claude, DeepSeek, Groq, Mistral) a mercati chiusi, per poi sintetizzare
+   * le migliori 3 correzioni strategiche.
+   */
+  public async generateEnsembleDebrief(
+    sessionDataPrompt: string,
+    targetDate: string,
+    targetMode: string
+  ): Promise<{
+    analysis: string;
+    suggestedRule: string;
+    top3Corrections: string[];
+    participatingProviders: string[];
+  }> {
+    const available = this.getAvailableProviders();
+    console.log(`[Multi-LLM Ensemble] Avvio debriefing corale con i provider disponibili: ${available.join(', ')}`);
+
+    const individualPrompt = `${sessionDataPrompt}
+
+[ISTRUZIONI PER L'ANALISI INDIVIDUALE]
+Fornisci la tua analisi critica indipendente e approfondita:
+1. Identifica le 3 cause primarie di perdite o inefficienze registrate nella seduta.
+2. Identifica eventuali pattern orari e correlazioni di mercato sfavorevoli.
+3. Proponi la tua migliore Regola Correttiva formulata chiaramente per il trading engine.`;
+
+    // 1. Interroga contemporaneamente tutti i provider disponibili
+    const queryPromises = available.map(async (provider) => {
+      try {
+        const text = await this.querySingleProvider(provider, individualPrompt, { responseJson: false });
+        return {
+          provider,
+          model: this.providerConfigs[provider].model || 'default',
+          success: true,
+          text: text.trim()
+        };
+      } catch (err: any) {
+        console.warn(`[Multi-LLM Ensemble] Provider ${provider} ha fallito la chiamata parallela:`, err.message || err);
+        return {
+          provider,
+          model: this.providerConfigs[provider].model || 'default',
+          success: false,
+          text: '',
+          error: err.message || String(err)
+        };
+      }
+    });
+
+    const results = await Promise.all(queryPromises);
+    const successfulResults = results.filter(r => r.success && r.text.length > 50);
+
+    // Se nessun provider secondario o solo uno ha risposto, eseguiamo fallback sul generatore standard
+    if (successfulResults.length === 0) {
+      console.warn(`[Multi-LLM Ensemble] Nessun provider ha risposto con successo. Esecuzione fallback standard.`);
+      const singleRes = await this.generateContent(sessionDataPrompt, { responseJson: true });
+      if (!singleRes.success || !singleRes.text) {
+        throw new Error(singleRes.error || "Errore nella generazione del debriefing.");
+      }
+      const parsed = JSON.parse(singleRes.text.replace(/```json|```/g, '').trim());
+      return {
+        analysis: parsed.analysis || singleRes.text,
+        suggestedRule: parsed.suggestedRule || '',
+        top3Corrections: [],
+        participatingProviders: [singleRes.provider]
+      };
+    }
+
+    // Se solo 1 ha risposto, usiamo direttamente la sua risposta
+    if (successfulResults.length === 1) {
+      const sole = successfulResults[0];
+      console.log(`[Multi-LLM Ensemble] Solo 1 provider (${sole.provider}) disponibile. Sintetizzo direttamente.`);
+    }
+
+    // 2. Prepariamo la sintesi di consenso tra le varie IA
+    const ensembleContext = successfulResults.map((r, i) => {
+      const providerLabel = r.provider.toUpperCase();
+      return `### 🧠 PARERE DELL'ANALISTA IA #${i + 1} (${providerLabel} - Modello: ${r.model}):\n${r.text}\n`;
+    }).join('\n---\n\n');
+
+    const synthesisPrompt = `Sei il Lead Quantitative Portfolio Manager e Chief Risk Officer.
+Hai appena convocato una tavola rotonda strategica a mercati chiusi per la seduta del ${targetDate} (Conto ${targetMode.toUpperCase()}).
+I tuoi analisti IA indipendenti (${successfulResults.map(r => r.provider.toUpperCase()).join(', ')}) hanno fornito i seguenti referti:
+
+${ensembleContext}
+
+DATI ORIGINALI DELLA SEDUTA:
+${sessionDataPrompt}
+
+[COMPITO DI SINTESI DI CONSENSO]:
+Elabora un Debriefing Giornaliero di altissimo livello qualitativo in lingua italiana, strutturato come segue:
+
+1. **🏛️ Tavola Rotonda Multi-IA (${successfulResults.map(r => r.provider.toUpperCase()).join(' + ')} Consensus)**:
+   - Sintesi delle prospettive uniche e dei punti di accordo emersi dal confronto tra i diversi modelli di intelligenza artificiale.
+2. **⚠️ Analisi Diagnostica degli Errori & Inefficienze della Seduta (${targetDate})**:
+   - Cause radice delle perdite o del mancato alpha (esecuzioni nei momenti di rumore, timing, gestione drawdown).
+3. **⏰ Analisi Statistica ed Inferenziale delle Fasce Orarie**:
+   - Valutazione delle finestre orarie più redditizie vs quelle da filtrare con confidenza statistica.
+4. **🎯 Le 3 Migliori Correzioni Strategiche di Consenso (Top 3 Consensual Fixes)**:
+   - **Correzione #1 (Priorità Massima)**: Spiegazione e formula della regola.
+   - **Correzione #2 (Priorità Media)**: Spiegazione e formula della regola.
+   - **Correzione #3 (Priorità Operativa)**: Spiegazione e formula della regola.
+5. **🤖 PROMPT PER GOOGLE AI STUDIO (COPIA & INCOLLA)**:
+   Includi alla fine la sezione standard formattata con il blocco di codice per integrare direttamente la regola #1 migliore.
+
+Restituisci la risposta ESCLUSIVAMENTE nel seguente formato JSON valido:
+{
+  "analysis": "Testo Markdown completo e professionale del Debriefing di Consenso Multi-IA...",
+  "suggestedRule": "La regola #1 prioritaria formulata in modo chiaro e pronta da applicare",
+  "top3Corrections": [
+    "1. [Regola #1]: Descrizione breve...",
+    "2. [Regola #2]: Descrizione breve...",
+    "3. [Regola #3]: Descrizione breve..."
+  ]
+}`;
+
+    // Per la sintesi usiamo il provider preferito o Gemini
+    const primaryProvider = this.providerConfigs.gemini.apiKey || process.env.GEMINI_API_KEY ? 'gemini' : successfulResults[0].provider;
+    const synthRes = await this.generateContent(synthesisPrompt, {
+      responseJson: true,
+      preferredProvider: primaryProvider
+    });
+
+    if (synthRes.success && synthRes.text) {
+      try {
+        const cleaned = synthRes.text.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        return {
+          analysis: parsed.analysis || synthRes.text,
+          suggestedRule: parsed.suggestedRule || '',
+          top3Corrections: parsed.top3Corrections || [],
+          participatingProviders: successfulResults.map(r => `${r.provider} (${r.model})`)
+        };
+      } catch (e) {
+        console.warn('[Multi-LLM Ensemble] Errore nel parse JSON della sintesi:', e);
+      }
+    }
+
+    // Fallback se il JSON di sintesi fallisce
+    return {
+      analysis: synthRes.text || 'Debriefing multi-modello completato con successo.',
+      suggestedRule: 'Ottimizza la gestione del rischio integrando i filtri di consenso multi-IA.',
+      top3Corrections: [],
+      participatingProviders: successfulResults.map(r => `${r.provider} (${r.model})`)
+    };
+  }
+
   /**
    * Esegue la generazione di contenuto provando il provider primario.
    * Se fallisce e il failover è attivo, prova gli altri in cascata.

@@ -103,6 +103,14 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       afternoonBlockStart: '15:30',
       afternoonBlockEnd: '16:00'
     }
+  },
+  {
+    id: 'ema_trend_confirmation',
+    enabled: true,
+    type: 'EMA_TREND_CONFIRMATION',
+    parameters: {
+      requireEmaBullishTrend: true
+    }
   }
 ];
 
@@ -180,6 +188,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
   const maxPosRule = getRule('MAX_CONCURRENT_POSITIONS_CAP');
   const timeLockRule = getRule('VOLATILITY_TIME_WINDOW_LOCK');
+  const emaRule = getRule('EMA_TREND_CONFIRMATION');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -871,6 +880,48 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
               Fascia di trading attivo consentita: 10:30 EST - 15:30 EST (16:30 - 21:30 CET).
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 11: Conferma Tecnica di Trend EMA 20/50 (Timeframe 15m) */}
+        <div className={`p-4 rounded-xl border transition-all ${emaRule.enabled ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${emaRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">11. Conferma Trend Tecnico EMA 20/50 (Swing 15m)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={emaRule.enabled}
+                onChange={(e) => updateRule('EMA_TREND_CONFIRMATION', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Elimina il micro-scalping casuale e i falsi segnali richiedendo la conferma tecnica su barre a 15 minuti: un asset viene acquistato solo se <strong>Prezzo &gt; EMA(20)</strong> e la media veloce è superiore a quella lenta (<strong>EMA 20 &gt; EMA 50</strong>).
+          </p>
+
+          <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="flex items-center justify-between p-2 rounded bg-emerald-50/50 border border-emerald-100">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Allineamento Medie Mobili Esponenziali</span>
+                  <p className="text-[10px] text-slate-500">Inibisce acquisti in contro-trend o durante ribassi prolungati anche in presenza di sentiment positivo</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                15m Bullish Regime
+              </span>
+            </div>
+
+            <div className="pt-1 text-[10px] text-slate-500 font-mono">
+              Condizione di ingresso: Prezzo &gt;= EMA(20) &amp;&amp; EMA(20) &gt;= EMA(50). Target TP medio: +2.50%, Trailing Stop: 1.5x ATR (~1.2%).
             </div>
           </div>
         </div>

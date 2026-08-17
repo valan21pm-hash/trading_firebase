@@ -2871,9 +2871,43 @@ export default function App() {
 
                 {status?.latestDailyDebrief ? (
                   <div className="space-y-4">
+                    {status.latestDailyDebrief.participatingProviders && status.latestDailyDebrief.participatingProviders.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 p-2.5 rounded-lg bg-indigo-50/60 border border-indigo-100 text-xs">
+                        <span className="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          Tavola Rotonda Multi-IA ({status.latestDailyDebrief.participatingProviders.length} modelli consultati):
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {status.latestDailyDebrief.participatingProviders.map((p, idx) => (
+                            <span key={idx} className="px-2 py-0.5 rounded-md bg-white border border-indigo-200 text-indigo-800 font-mono text-[10px] font-medium shadow-2xs">
+                              {p.toUpperCase()}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
                       <ReactMarkdown>{status.latestDailyDebrief.analysis}</ReactMarkdown>
                     </div>
+
+                    {/* Top 3 Correzioni di Consenso se presenti */}
+                    {status.latestDailyDebrief.top3Corrections && status.latestDailyDebrief.top3Corrections.length > 0 && (
+                      <div className="bg-amber-50/60 border border-amber-200/80 p-4 rounded-xl space-y-2.5">
+                        <h4 className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                          <ShieldAlert className="w-4 h-4 text-amber-600" />
+                          Le 3 Migliori Correzioni Strategiche di Consenso Multi-IA
+                        </h4>
+                        <div className="space-y-1.5">
+                          {status.latestDailyDebrief.top3Corrections.map((corr, cIdx) => (
+                            <div key={cIdx} className="p-2 bg-white rounded-lg border border-amber-100 text-xs text-slate-800 flex items-start gap-2 shadow-2xs">
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-mono text-[10px] font-bold shrink-0">#{cIdx + 1}</span>
+                              <span className="font-medium text-[11px] leading-snug">{corr}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
                       <div className="flex justify-between items-center">

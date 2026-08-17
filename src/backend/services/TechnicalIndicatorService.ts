@@ -26,6 +26,9 @@ export interface IndicatorResult {
   plusDI: number; // +DI(14)
   minusDI: number; // -DI(14)
   isTrendStrong: boolean; // ADX >= 25
+  ema20: number; // EMA 20 periodi (su timeframe 15m)
+  ema50: number; // EMA 50 periodi (su timeframe 15m)
+  isBullishEmaTrend: boolean; // Prezzo > EMA20 e EMA20 >= EMA50
   regime: 'TRENDING_BULLISH' | 'TRENDING_BEARISH' | 'CHOP_NO_TREND' | 'LOW_VOLATILITY';
   timestamp: string;
 }
@@ -182,6 +185,27 @@ export class TechnicalIndicatorService {
   }
 
   /**
+   * Calcolo standard dell'EMA (Exponential Moving Average)
+   */
+  public static calculateEMA(bars: PriceBar[], period: number): number {
+    if (bars.length === 0) return 0;
+    if (bars.length < period) {
+      const sum = bars.reduce((acc, b) => acc + b.close, 0);
+      return sum / bars.length;
+    }
+
+    const multiplier = 2 / (period + 1);
+    // Prima stima: SMA dei primi 'period' elementi
+    let ema = bars.slice(0, period).reduce((acc, b) => acc + b.close, 0) / period;
+
+    for (let i = period; i < bars.length; i++) {
+      ema = (bars[i].close - ema) * multiplier + ema;
+    }
+
+    return ema;
+  }
+
+  /**
    * Genera barre storiche sintetiche coerenti se non sono disponibili barre API in tempo reale
    */
   public generateSyntheticBars(symbol: string, currentPrice: number): PriceBar[] {
@@ -315,18 +339,22 @@ export class TechnicalIndicatorService {
       this.priceHistory.set(sym, bars);
     }
 
-    // 4. Calcolo matematico deterministico di ATR e ADX
+    // 4. Calcolo matematico deterministico di ATR, ADX e Medie Mobili Esponenziali (EMA 20 & 50)
     const atr = TechnicalIndicatorService.calculateATR(bars, 14);
     const { adx, plusDI, minusDI } = TechnicalIndicatorService.calculateADX(bars, 14);
+    const ema20 = TechnicalIndicatorService.calculateEMA(bars, 20);
+    const ema50 = TechnicalIndicatorService.calculateEMA(bars, 50);
 
     const price = currentPrice > 0 ? currentPrice : (bars[bars.length - 1]?.close || 100);
     const atrPercent = (atr / price) * 100;
     const atr1_5x = atr * 1.5;
     const atr1_5xPercent = (atr1_5x / price) * 100;
 
+    const isBullishEmaTrend = (price >= ema20 * 0.998) && (ema20 >= ema50 * 0.998);
+
     let regime: IndicatorResult['regime'] = 'CHOP_NO_TREND';
     if (adx >= 25) {
-      regime = plusDI > minusDI ? 'TRENDING_BULLISH' : 'TRENDING_BEARISH';
+      regime = (plusDI > minusDI && isBullishEmaTrend) ? 'TRENDING_BULLISH' : 'TRENDING_BEARISH';
     } else if (atrPercent < 0.6) {
       regime = 'LOW_VOLATILITY';
     }
@@ -342,6 +370,9 @@ export class TechnicalIndicatorService {
       plusDI: parseFloat(plusDI.toFixed(1)),
       minusDI: parseFloat(minusDI.toFixed(1)),
       isTrendStrong: adx >= 25.0,
+      ema20: parseFloat(ema20.toFixed(2)),
+      ema50: parseFloat(ema50.toFixed(2)),
+      isBullishEmaTrend,
       regime,
       timestamp: new Date().toISOString()
     };

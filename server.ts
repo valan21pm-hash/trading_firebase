@@ -148,7 +148,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'MAX_CONCURRENT_POSITIONS_CAP',
     parameters: {
-      maxConcurrentPositions: 5
+      maxConcurrentPositions: 3
     }
   },
   {
@@ -162,6 +162,14 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       morningBlockEnd: '10:30',
       afternoonBlockStart: '15:30',
       afternoonBlockEnd: '16:00'
+    }
+  },
+  {
+    id: 'ema_trend_confirmation',
+    enabled: true,
+    type: 'EMA_TREND_CONFIRMATION',
+    parameters: {
+      requireEmaBullishTrend: true
     }
   }
 ];
@@ -1390,6 +1398,8 @@ let botStatus: {
   latestDailyDebrief?: {
     analysis: string;
     suggestedRule: string;
+    top3Corrections?: string[];
+    participatingProviders?: string[];
     timestamp: string;
   };
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
@@ -1427,12 +1437,12 @@ let botStatus: {
   monitoredSymbols: [],
   historicalProfits: 2.50,
   y: 1,
-  defaultTP: 2.00,
-  defaultSL: -0.50,
-  trailingStop: 1.0,
+  defaultTP: 2.50,
+  defaultSL: -1.00,
+  trailingStop: 1.2,
   timeframe: 15,
   riskPercentage: 95,
-  maxConcurrentPositions: 5,
+  maxConcurrentPositions: 3,
   llmPreferredProvider: 'gemini',
   llmFailoverEnabled: true,
   llmProviderOrder: ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
@@ -3508,11 +3518,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
-              // --- REGOLA VOLATILITÀ/TREND ADX < 25 ---
+              // --- REGOLA VOLATILITÀ/TREND ADX < 25 & CONFERMA TREND EMA 20/50 ---
+              const symIndicators = await TechnicalIndicatorService.getInstance().getSymbolIndicators(item.symbol, 100, getAlpacaConfig(mode));
+              
               const adxRule = activeRules.find(r => r.type === 'ADX_VOLATILITY_FILTER');
               if (adxRule?.enabled ?? true) {
                 const minAdx = adxRule?.parameters?.minAdxThreshold ?? 25.0;
-                const symIndicators = await TechnicalIndicatorService.getInstance().getSymbolIndicators(item.symbol, 100, getAlpacaConfig(mode));
                 if (symIndicators.adx < minAdx) {
                   addLog(mode as 'paper' | 'live', `[Filtro Volatilità ADX < ${minAdx}] Salto acquisto ${item.symbol}: ADX(${adxRule?.parameters?.minAdxPeriod ?? 14}) = ${symIndicators.adx.toFixed(1)} < ${minAdx}. Trend direzionale assente/insufficiente.`);
                   addLogicLog(mode, {
@@ -3523,6 +3534,27 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                   });
                   continue;
                 }
+              }
+
+              // --- CONFERMA TECNICA EMA 20/50 (Timeframe 15m) ---
+              const emaFilterRes = RiskManagementService.evaluateEmaTrendFilter(
+                item.symbol,
+                symIndicators.currentPrice,
+                symIndicators.ema20,
+                symIndicators.ema50,
+                symIndicators.isBullishEmaTrend,
+                activeRules
+              );
+              if (!emaFilterRes.allowed) {
+                const vetoReason = emaFilterRes.reason || `Trend tecnico ribassista su timeframe 15m (Prezzo < EMA20 o EMA20 < EMA50)`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'RISK_VETO',
+                  reasoning: vetoReason
+                });
+                continue;
               }
 
               ordersToSubmit.push({
@@ -4011,25 +4043,17 @@ Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del pe
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
-    const response = await LLMProviderService.getInstance().generateContent(prompt, {
-      responseJson: true,
-      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
-    });
+    const ensembleResult = await LLMProviderService.getInstance().generateEnsembleDebrief(
+      prompt,
+      targetDate,
+      targetMode
+    );
 
-    if (!response.success || !response.text) {
-      throw new Error(response.error || "Errore nella generazione con LLM");
-    }
-
-    const text = response.text;
-    if (!text) {
-      throw new Error("Risposta vuota da parte del modello AI.");
-    }
-
-    const result = JSON.parse(text.trim());
-    
     botStatus.latestDailyDebrief = {
-      analysis: result.analysis,
-      suggestedRule: result.suggestedRule,
+      analysis: ensembleResult.analysis,
+      suggestedRule: ensembleResult.suggestedRule,
+      top3Corrections: ensembleResult.top3Corrections,
+      participatingProviders: ensembleResult.participatingProviders,
       timestamp: new Date().toISOString()
     };
     sendToGoogleSheets({
@@ -4038,7 +4062,10 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
     saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief update:', err));
 
-    addLog('system', `[Debriefing AI] Debriefing generato con successo per la data ${targetDate} (${allLogsTodayForStats.length} operazioni analizzate).`);
+    const providersNote = ensembleResult.participatingProviders?.length > 0 
+      ? ` (Consenso Multi-IA: ${ensembleResult.participatingProviders.join(', ')})`
+      : '';
+    addLog('system', `[Debriefing AI] Debriefing generato con successo per la data ${targetDate} (${allLogsTodayForStats.length} operazioni analizzate)${providersNote}.`);
     res.json({ success: true, debrief: botStatus.latestDailyDebrief });
   } catch (error: any) {
     const message = error.message || String(error);
@@ -4230,32 +4257,27 @@ Dettagli e Razionale di Analisi: "[Inserisci qui una sintesi in 1-2 frasi del pe
 
 Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve contenere il resoconto strutturato in Markdown leggibile e motivazionale (comprensivo della sezione PROMPT PER GOOGLE AI STUDIO sopra descritta). Il campo 'suggestedRule' deve contenere SOLO la regola formulata pronta da copiare.`;
 
-    const response = await LLMProviderService.getInstance().generateContent(prompt, {
-      responseJson: true,
-      preferredProvider: botStatus.llmPreferredProvider || 'gemini'
-    });
-
-    if (!response.success || !response.text) {
-      throw new Error(response.error || "Errore nella generazione con LLM");
-    }
-
-    const text = response.text;
-    if (!text) {
-      throw new Error("Risposta vuota da parte del modello AI.");
-    }
-
-    const result = JSON.parse(text.trim());
+    const ensembleResult = await LLMProviderService.getInstance().generateEnsembleDebrief(
+      prompt,
+      `${startDate} -> ${endDate}`,
+      mode
+    );
     
     sendToGoogleSheets({
       eventType: 'range_debrief',
-      data: { startDate, endDate, mode, analysis: result.analysis, suggestedRule: result.suggestedRule }
+      data: { startDate, endDate, mode, analysis: ensembleResult.analysis, suggestedRule: ensembleResult.suggestedRule }
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
 
-    addLog('system', `[Debriefing Periodico AI] Analisi periodica generata con successo (${rangeLogicLogs.length} operazioni esaminate).`);
+    const providersNote = ensembleResult.participatingProviders?.length > 0 
+      ? ` (Consenso Multi-IA: ${ensembleResult.participatingProviders.join(', ')})`
+      : '';
+    addLog('system', `[Debriefing Periodico AI] Analisi periodica generata con successo (${rangeLogicLogs.length} operazioni esaminate)${providersNote}.`);
     res.json({ 
       success: true, 
-      analysis: result.analysis, 
-      suggestedRule: result.suggestedRule 
+      analysis: ensembleResult.analysis, 
+      suggestedRule: ensembleResult.suggestedRule,
+      top3Corrections: ensembleResult.top3Corrections,
+      participatingProviders: ensembleResult.participatingProviders
     });
   } catch (error: any) {
     const message = error.message || String(error);

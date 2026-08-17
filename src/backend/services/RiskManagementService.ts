@@ -292,6 +292,33 @@ export class RiskManagementService {
   }
 
   /**
+   * Valuta il filtro di conferma tecnica del trend su timeframe 15m (Prezzo >= EMA 20 e EMA 20 >= EMA 50)
+   */
+  public static evaluateEmaTrendFilter(
+    symbol: string,
+    currentPrice: number,
+    ema20: number,
+    ema50: number,
+    isBullishEmaTrend: boolean,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const emaRule = systemRules?.find(r => r.type === 'EMA_TREND_CONFIRMATION');
+    const isEnabled = emaRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    if (!isBullishEmaTrend) {
+      return {
+        allowed: false,
+        reason: `[Filtro Tecnico EMA 20/50 - 15m] ${symbol.toUpperCase()} ($${currentPrice.toFixed(2)}) non soddisfa la conferma tecnica di trend rialzista (EMA20: $${ema20.toFixed(2)}, EMA50: $${ema50.toFixed(2)}). Acquisto bloccato per evitare ingressi in controtendenza o caduta libera.`
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
    * 4. RIAUTORIZZAZIONE E RIAPPROVVIGIONAMENTO SPAZIO IN PORTAFOGLIO (Opportunity Cost Reallocation)
    */
   public static evaluateOpportunityCostExit(
