@@ -15,6 +15,8 @@ export interface Position {
   atr?: number; // Average True Range (14 periodi) in $ (es. 2.50$)
   atr1_5x?: number; // 1.5x ATR in $
   adx?: number; // ADX(14)
+  enableTechnicalStop?: boolean; // Override specifico per questa singola posizione
+  enableCatastrophicStop?: boolean; // Override specifico per questa singola posizione
 }
 
 export interface RiskConfig {
@@ -59,10 +61,13 @@ export class RiskManagementService {
     const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
     const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
 
-    // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE A SCELTA) ---
+    // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE) ---
     // Agisce come paracadute estremo contro crolli verticali o flash crash, impostato a -2.50% / -3.00%
     const catastrophicRule = systemRules?.find(r => r.type === 'CATASTROPHIC_CIRCUIT_BREAKER_SL');
-    const isCatastrophicEnabled = catastrophicRule?.enabled ?? true;
+    const isGlobalCatastrophicEnabled = catastrophicRule?.enabled ?? true;
+    const isCatastrophicEnabled = position.enableCatastrophicStop !== undefined 
+      ? position.enableCatastrophicStop 
+      : isGlobalCatastrophicEnabled;
     const catastrophicLossThreshold = catastrophicRule?.parameters?.catastrophicMaxLossPct ?? -3.00;
     if (isCatastrophicEnabled && currentProfitPct <= catastrophicLossThreshold) {
       return {
@@ -71,9 +76,12 @@ export class RiskManagementService {
       };
     }
 
-    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, EMA & STRATEGIE) - DISATTIVABILE DALL'UTENTE ---
+    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, EMA & STRATEGIE) - DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE ---
     const atrRule = systemRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
-    const isTechnicalDynamicStopEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
+    const isGlobalTechnicalEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
+    const isTechnicalDynamicStopEnabled = position.enableTechnicalStop !== undefined 
+      ? position.enableTechnicalStop 
+      : isGlobalTechnicalEnabled;
     const atrMultiplier = atrRule?.parameters?.atrMultiplier ?? config.atrMultiplier ?? 1.5;
 
     // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita ordinaria su volatilità ATR

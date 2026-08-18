@@ -1465,6 +1465,15 @@ let positionStrategies: {
   live: {}
 };
 
+// Override per-posizione per Stop Tecnico e Stop Catastrofico
+let positionStopOverrides: {
+  paper: Record<string, { enableTechnicalStop?: boolean; enableCatastrophicStop?: boolean }>;
+  live: Record<string, { enableTechnicalStop?: boolean; enableCatastrophicStop?: boolean }>;
+} = {
+  paper: {},
+  live: {}
+};
+
 function getDefaultStrategy(symbol: string): 'Prudente' | 'Conservativa' | 'Aggressiva' {
   const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
   const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
@@ -1492,6 +1501,34 @@ const STRATEGY_PARAMS = {
 };
 
 let tradeLogs: string[] = [];
+
+// Endpoint per attivare/disattivare Stop Tecnico e Stop Catastrofico per singola posizione
+app.post("/api/trading/position-stops", async (req, res) => {
+  try {
+    const { symbol, mode = 'paper', enableTechnicalStop, enableCatastrophicStop } = req.body;
+    if (!symbol) {
+      return res.status(400).json({ success: false, error: 'Simbolo non specificato' });
+    }
+    const m = (mode === 'live' ? 'live' : 'paper') as 'paper' | 'live';
+    if (!positionStopOverrides[m]) {
+      positionStopOverrides[m] = {};
+    }
+    if (!positionStopOverrides[m][symbol]) {
+      positionStopOverrides[m][symbol] = {};
+    }
+    if (enableTechnicalStop !== undefined) {
+      positionStopOverrides[m][symbol].enableTechnicalStop = Boolean(enableTechnicalStop);
+    }
+    if (enableCatastrophicStop !== undefined) {
+      positionStopOverrides[m][symbol].enableCatastrophicStop = Boolean(enableCatastrophicStop);
+    }
+
+    addLog(m, `[Stop Loss Personalizzato] Posizione ${symbol}: Stop Tecnico=${positionStopOverrides[m][symbol].enableTechnicalStop ?? 'Globale'}, Stop Catastrofico=${positionStopOverrides[m][symbol].enableCatastrophicStop ?? 'Globale'}`);
+    res.json({ success: true, symbol, overrides: positionStopOverrides[m][symbol] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // --- Alpaca Bridge Endpoints for TradingModule ---
 app.get("/api/trading/alpaca-account", async (req, res) => {
@@ -3159,6 +3196,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
       // Indicatori Tecnici (ATR 14, 1.5x ATR e ADX 14)
       const indResult = await TechnicalIndicatorService.getInstance().getSymbolIndicators(symbol, currentPrice, getAlpacaConfig(mode));
+      const overrides = positionStopOverrides[mode as 'paper' | 'live']?.[symbol];
 
       const riskDecision = RiskManagementService.evaluateClosure({
         id: symbol,
@@ -3173,7 +3211,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         entryTime: positionEntryTimes[mode][symbol],
         atr: indResult.atr,
         atr1_5x: indResult.atr1_5x,
-        adx: indResult.adx
+        adx: indResult.adx,
+        enableTechnicalStop: overrides?.enableTechnicalStop,
+        enableCatastrophicStop: overrides?.enableCatastrophicStop
       }, botStatus.historicalProfits || 0, {
         y: botStatus.y || 1,
         defaultSL: slDollar,
@@ -4629,6 +4669,7 @@ async function getStatusData() {
             const ind = await TechnicalIndicatorService.getInstance().getSymbolIndicators(sym, currP, conf);
             const atrMultiplier = (botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP')?.parameters?.atrMultiplier) || 1.5;
             const atrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
+            const overrides = positionStopOverrides[mode]?.[sym];
 
             return {
               ...pos,
@@ -4646,7 +4687,9 @@ async function getStatusData() {
               atr1_5x: ind.atr1_5x,
               adx: ind.adx,
               atrTrailingStopPrice: parseFloat(atrTrailingStopPrice.toFixed(2)),
-              isAtrTrailingActive: true
+              isAtrTrailingActive: true,
+              enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
+              enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true
             };
           }));
         } else {

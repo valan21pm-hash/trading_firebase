@@ -64,6 +64,8 @@ export interface Position {
   adx?: number;
   atrTrailingStopPrice?: number;
   isAtrTrailingActive?: boolean;
+  enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR
+  enableCatastrophicStop?: boolean; // Se true o undefined (default true), applica il Circuit Breaker Catastrofico (-3%)
 }
 
 export interface AccountData {

@@ -1861,6 +1861,43 @@ export default function App() {
     }
   };
 
+  const handleTogglePositionStop = async (
+    symbol: string,
+    type: 'technical' | 'catastrophic',
+    currentVal: boolean | undefined
+  ) => {
+    const newVal = currentVal === undefined ? false : !currentVal;
+    try {
+      const payload: any = {
+        symbol,
+        mode: selectedTab
+      };
+      if (type === 'technical') {
+        payload.enableTechnicalStop = newVal;
+      } else {
+        payload.enableCatastrophicStop = newVal;
+      }
+      const res = await fetch('/api/trading/position-stops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        showToast(
+          `${type === 'technical' ? 'Stop Tecnico Dinamico (ATR)' : 'Stop Catastrofico (-3%)'} per ${symbol} ${newVal ? 'ATTIVATO' : 'DISATTIVATO'}!`,
+          'success',
+          'Gestione Rischio Posizione'
+        );
+        fetchOperations(true);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Errore: ${err.error || 'Salvataggio non riuscito'}`, 'error', 'Gestione Rischio Posizione');
+      }
+    } catch (e: any) {
+      showToast(`Errore di rete: ${e.message}`, 'error', 'Gestione Rischio Posizione');
+    }
+  };
+
   const handlePanicLiquidate = async () => {
     setPanicLoading(true);
     setErrorMessage(null);
@@ -2240,6 +2277,7 @@ export default function App() {
                           <th className="p-2 sm:p-3 text-right">Val. Mercato</th>
                           <th className="p-2 sm:p-3">Sentiment IA</th>
                           <th className="p-2 sm:p-3 text-right">Gain / Loss Latente</th>
+                          <th className="p-2 sm:p-3 text-center">Stop Loss Dedicati</th>
                           <th className="p-2 sm:p-3 text-right">Azione</th>
                         </tr>
                       </thead>
@@ -2251,6 +2289,8 @@ export default function App() {
                           const mktVal = parseFloat(pos.market_value || '0');
                           const pl = parseFloat(pos.unrealized_pl || '0');
                           const plpc = parseFloat(pos.unrealized_plpc || '0') * 100;
+                          const isTechStopEnabled = pos.enableTechnicalStop !== false;
+                          const isCatStopEnabled = pos.enableCatastrophicStop !== false;
                           return (
                             <tr key={idx} className="hover:bg-slate-100/30 text-slate-700">
                               <td className="p-2 sm:p-3 font-bold text-slate-900">{pos.symbol}</td>
@@ -2265,6 +2305,36 @@ export default function App() {
                                 pl > 0 ? 'text-green-600' : pl < 0 ? 'text-red-600' : 'text-slate-500'
                               }`}>
                                 {pl > 0 ? '+' : ''}${pl.toFixed(2)} ({pl > 0 ? '+' : ''}{plpc.toFixed(2)}%)
+                              </td>
+                              <td className="p-2 sm:p-3">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTogglePositionStop(pos.symbol, 'technical', isTechStopEnabled)}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                      isTechStopEnabled
+                                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                                        : 'bg-slate-100 border-slate-200 text-slate-400 line-through hover:bg-slate-200'
+                                    }`}
+                                    title={isTechStopEnabled ? 'Stop Tecnico Dinamico ATR ATTIVO (clicca per disattivare per questo asset)' : 'Stop Tecnico Dinamico DISATTIVATO (clicca per attivare)'}
+                                  >
+                                    <Shield className="w-2.5 h-2.5" />
+                                    ATR Stop
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', isCatStopEnabled)}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                      isCatStopEnabled
+                                        ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                                        : 'bg-slate-100 border-slate-200 text-slate-400 line-through hover:bg-slate-200'
+                                    }`}
+                                    title={isCatStopEnabled ? 'Stop Catastrofico -3% ATTIVO (clicca per disattivare per questo asset)' : 'Stop Catastrofico DISATTIVATO (clicca per attivare)'}
+                                  >
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    -3% Stop
+                                  </button>
+                                </div>
                               </td>
                               <td className="p-2 sm:p-3 text-right">
                                 <button
@@ -2295,6 +2365,7 @@ export default function App() {
                               }`}>
                                 {totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toFixed(2)} ({totalPct >= 0 ? '+' : ''}{totalPct.toFixed(2)}%)
                               </td>
+                              <td className="p-2 sm:p-3"></td>
                               <td className="p-2 sm:p-3"></td>
                             </tr>
                           </tfoot>
