@@ -171,6 +171,14 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     parameters: {
       requireEmaBullishTrend: true
     }
+  },
+  {
+    id: 'catastrophic_circuit_breaker_sl',
+    enabled: true,
+    type: 'CATASTROPHIC_CIRCUIT_BREAKER_SL',
+    parameters: {
+      catastrophicMaxLossPct: -3.00
+    }
   }
 ];
 

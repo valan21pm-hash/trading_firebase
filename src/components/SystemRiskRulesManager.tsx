@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge, Sliders, Clock3, Lock } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge, Sliders, Clock3, Lock } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -111,6 +111,14 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     parameters: {
       requireEmaBullishTrend: true
     }
+  },
+  {
+    id: 'catastrophic_circuit_breaker_sl',
+    enabled: true,
+    type: 'CATASTROPHIC_CIRCUIT_BREAKER_SL',
+    parameters: {
+      catastrophicMaxLossPct: -3.00
+    }
   }
 ];
 
@@ -189,6 +197,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const maxPosRule = getRule('MAX_CONCURRENT_POSITIONS_CAP');
   const timeLockRule = getRule('VOLATILITY_TIME_WINDOW_LOCK');
   const emaRule = getRule('EMA_TREND_CONFIRMATION');
+  const catastrophicRule = getRule('CATASTROPHIC_CIRCUIT_BREAKER_SL');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -691,12 +700,12 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
         </div>
 
-        {/* Rule 8: Individual Trailing Stop based on 1.5x ATR */}
+        {/* Rule 8: Individual Trailing Stop based on 1.5x ATR (Livello 1: Stop Tecnico/Dinamico) */}
         <div className={`p-4 rounded-xl border transition-all ${atrRule.enabled ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Gauge className={`w-4 h-4 ${atrRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">8. Trailing Stop Individuale Dinamico (1.5x ATR)</h3>
+              <h3 className="text-xs font-bold text-slate-900">8. Stop Tecnico / Dinamico Primario (1.5x ATR &amp; Trailing - Livello 1)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -710,7 +719,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            Sostituisce la chiusura massiva e indiscriminata del portafoglio con una gestione del rischio sartoriale per singolo titolo: calcola l'ATR (Average True Range) del sottostante e imposta un Trailing Stop dinamico ancorato al Massimo Raggiunto (High-Water Mark) a -1.5x ATR.
+            <strong>Disattivabile dall'utente</strong>: Governa l'uscita ordinaria adattandosi al respiro della volatilità reale (1.5x ATR) e delle strategie tecniche su timeframe 15m. Se disattivato, il bot non applica chiusure ordinarie su oscillazioni tecniche, lasciando agire esclusivamente il Circuit Breaker catastrofico.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
@@ -755,7 +764,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
             </div>
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Protezione individuale: Trigger Chiusura = PeakPrice - (1.5 &times; ATR14). Nessun impatto sulle altre posizioni in profitto.
+              Protezione dinamica individuale: Trigger Chiusura = PeakPrice - (1.5 &times; ATR14). Disattivabile liberamente.
             </div>
           </div>
         </div>
@@ -922,6 +931,64 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
               Condizione di ingresso: Prezzo &gt;= EMA(20) &amp;&amp; EMA(20) &gt;= EMA(50). Target TP medio: +2.50%, Trailing Stop: 1.5x ATR (~1.2%).
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 12: Stop Loss Catastrofico / Circuit Breaker (Livello 2 - Disattivabile a scelta) */}
+        <div className={`p-4 rounded-xl border transition-all ${catastrophicRule.enabled ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className={`w-4 h-4 ${catastrophicRule.enabled ? 'text-rose-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">12. Stop Loss Catastrofico / Circuit Breaker (Livello 2)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={catastrophicRule.enabled}
+                onChange={(e) => updateRule('CATASTROPHIC_CIRCUIT_BREAKER_SL', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-rose-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Attivo di default, disattivabile a scelta</strong>: Protegge il conto da crolli verticali, flash crash o notizie improvvise di shock tagliando la posizione a una perdita massima di sicurezza, senza interferire con le oscillazioni ordinarie.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Massima Perdita Catastrofica:</span>
+                <span className="font-mono text-rose-600 font-bold">{(catastrophicRule.parameters.catastrophicMaxLossPct ?? -3.00).toFixed(2)}%</span>
+              </div>
+              <input
+                type="range"
+                min="-6.0"
+                max="-1.5"
+                step="0.25"
+                value={catastrophicRule.parameters.catastrophicMaxLossPct ?? -3.00}
+                onChange={(e) => updateRule('CATASTROPHIC_CIRCUIT_BREAKER_SL', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, catastrophicMaxLossPct: parseFloat(e.target.value) }
+                }))}
+                disabled={!catastrophicRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-rose-50/50 border border-rose-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-rose-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Paracadute di Emergenza Fondi</span>
+                  <p className="text-[10px] text-slate-500">Non compete con lo Stop Tecnico (Livello 1) e interviene solo in caso di anomalie gravi</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                Hard Protection
+              </span>
             </div>
           </div>
         </div>

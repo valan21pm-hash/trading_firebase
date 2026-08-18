@@ -59,13 +59,25 @@ export class RiskManagementService {
     const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
     const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
 
-    // --- 0. REGOLE DI SISTEMA SOTTOMESSE E TRAILING STOP INDIVIDUALE 1.5x ATR ---
+    // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE A SCELTA) ---
+    // Agisce come paracadute estremo contro crolli verticali o flash crash, impostato a -2.50% / -3.00%
+    const catastrophicRule = systemRules?.find(r => r.type === 'CATASTROPHIC_CIRCUIT_BREAKER_SL');
+    const isCatastrophicEnabled = catastrophicRule?.enabled ?? true;
+    const catastrophicLossThreshold = catastrophicRule?.parameters?.catastrophicMaxLossPct ?? -3.00;
+    if (isCatastrophicEnabled && currentProfitPct <= catastrophicLossThreshold) {
+      return {
+        action: 'CLOSE',
+        reason: `[Livello 2 - Circuit Breaker Catastrofico] Posizione ${asset} in perdita critica (${currentProfitPct.toFixed(2)}% <= ${catastrophicLossThreshold.toFixed(2)}%). Chiusura di emergenza per preservare il capitale totale da crolli verticali anomali.`
+      };
+    }
+
+    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, EMA & STRATEGIE) - DISATTIVABILE DALL'UTENTE ---
     const atrRule = systemRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
-    const isAtrTrailingEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
+    const isTechnicalDynamicStopEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
     const atrMultiplier = atrRule?.parameters?.atrMultiplier ?? config.atrMultiplier ?? 1.5;
 
-    // Se abbiamo un ATR valido (> 0) e la posizione ha registrato un picco in profitto o raggiunto una dinamica positiva
-    if (isAtrTrailingEnabled && atr && atr > 0) {
+    // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita ordinaria su volatilità ATR
+    if (isTechnicalDynamicStopEnabled && atr && atr > 0) {
       const atrDistance = atrMultiplier * atr;
       const atrStopPrice = peakPrice - atrDistance;
       const atrDistancePct = (atrDistance / peakPrice) * 100;
@@ -74,7 +86,7 @@ export class RiskManagementService {
       if (currentPrice <= atrStopPrice) {
         return {
           action: 'CLOSE',
-          reason: `[Trailing Stop Individuale ${atrMultiplier.toFixed(1)}x ATR] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia dinamica di volatilità ATR a $${atrStopPrice.toFixed(2)} (ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura mirata individuale in sostituzione di liquidazioni massive.`
+          reason: `[Livello 1 - Stop Tecnico Dinamico ${atrMultiplier.toFixed(1)}x ATR] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia dinamica di volatilità ATR a $${atrStopPrice.toFixed(2)} (ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura tecnica ordinaria sul timeframe 15m.`
         };
       }
     }
@@ -239,19 +251,21 @@ export class RiskManagementService {
     } else {
       // --- REGIME POSIZIONE NON ANCORA ATTIVATA ---
 
-      // 1. Stop Loss Dinamico in percentuale rispetto all'ingresso
-      const slMagnitudePct = Math.abs(effectiveSlPercent);
-      const slThresholdPrice = openPrice * (1 - slMagnitudePct / 100);
+      // 1. Stop Loss Dinamico in percentuale rispetto all'ingresso (se lo Stop Tecnico Dinamico è abilitato)
+      if (isTechnicalDynamicStopEnabled) {
+        const slMagnitudePct = Math.abs(effectiveSlPercent);
+        const slThresholdPrice = openPrice * (1 - slMagnitudePct / 100);
 
-      if (currentPrice <= slThresholdPrice) {
-        return {
-          action: 'CLOSE',
-          reason: `[Stop Loss Dinamico ${effectiveSlPercent.toFixed(2)}%${slMultiplierNote}] Prezzo attuale $${currentPrice.toFixed(2)} <= soglia $${slThresholdPrice.toFixed(2)} (Entry: $${openPrice.toFixed(2)}, P&L: ${currentProfitPct.toFixed(2)}%).`
-        };
+        if (currentPrice <= slThresholdPrice) {
+          return {
+            action: 'CLOSE',
+            reason: `[Stop Loss Dinamico ${effectiveSlPercent.toFixed(2)}%${slMultiplierNote}] Prezzo attuale $${currentPrice.toFixed(2)} <= soglia $${slThresholdPrice.toFixed(2)} (Entry: $${openPrice.toFixed(2)}, P&L: ${currentProfitPct.toFixed(2)}%).`
+          };
+        }
       }
 
-      // 2. Stop Loss monetario in $ (se configurato)
-      if (config.defaultSL !== undefined && config.defaultSL !== 0) {
+      // 2. Stop Loss monetario in $ (se configurato e attivo)
+      if (isTechnicalDynamicStopEnabled && config.defaultSL !== undefined && config.defaultSL !== 0) {
         const slLimit = config.defaultSL < 0 ? config.defaultSL : -config.defaultSL;
         if (unrealizedProfit <= slLimit) {
           return {
