@@ -1288,49 +1288,21 @@ function AccountPanel({
                       </div>
                     </div>
 
-                    {/* Selector per le 3 Strategie consigliate ed editabili in real-time */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mr-1">Strategia di Gestione:</span>
-                        {(['Prudente', 'Conservativa', 'Aggressiva'] as const).map((strat) => {
-                          const isSelected = pos.activeStrategy === strat;
-                          return (
-                            <button
-                              key={strat}
-                              onClick={() => handleUpdateStrategy(pos.symbol, strat)}
-                              className={`px-2.5 py-1 text-xs font-semibold rounded transition duration-200 cursor-pointer ${
-                                isSelected
-                                  ? 'bg-indigo-600 text-white shadow-sm font-bold scale-[1.02]'
-                                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200 hover:text-gray-900'
-                              }`}
-                            >
-                              {strat === 'Prudente' ? '🛡️ Prudente' : strat === 'Conservativa' ? '⚖️ Conservativa' : '🚀 Aggressiva'}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="text-[10px] text-gray-400 font-mono italic">
-                        {pos.activeStrategy === 'Prudente' && 'Stop Loss: -0.40% | Target Attivazione: +0.80% | Trailing: 0.30%'}
-                        {pos.activeStrategy === 'Conservativa' && 'Stop Loss: -0.75% | Target Attivazione: +1.50% | Trailing: 1.00%'}
-                        {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Target Attivazione: +2.50% | Trailing: 0.50%'}
-                      </div>
-                    </div>
-
                     {/* Controlli Stop Loss Dedicati per Posizione (Stop Tecnico ATR & Stop Catastrofico -3%) */}
-                    <div className="p-2 bg-slate-100/70 rounded-lg border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
+                    <div className="p-2.5 bg-slate-100/80 rounded-lg border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2 pt-2 border-t border-slate-100">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stop Loss Dedicati:</span>
                         <button
                           type="button"
                           onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop !== false)}
-                          className={`px-2 py-1 rounded text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
                             pos.enableTechnicalStop !== false
                               ? 'bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700'
                               : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
                           }`}
                           title={pos.enableTechnicalStop !== false ? 'Stop Tecnico Dinamico (ATR) ATTIVO: Clicca per disattivare' : 'Stop Tecnico Dinamico (ATR) DISATTIVATO: Clicca per attivare'}
                         >
-                          <Shield className="w-3 h-3" />
+                          <Shield className="w-3.5 h-3.5" />
                           <span>Stop Tecnico (ATR)</span>
                           <span className={`w-2 h-2 rounded-full ${pos.enableTechnicalStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
                         </button>
@@ -1338,40 +1310,42 @@ function AccountPanel({
                         <button
                           type="button"
                           onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop !== false)}
-                          className={`px-2 py-1 rounded text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
                             pos.enableCatastrophicStop !== false
                               ? 'bg-rose-600 border-rose-700 text-white hover:bg-rose-700'
                               : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
                           }`}
                           title={pos.enableCatastrophicStop !== false ? 'Stop Catastrofico (-3%) ATTIVO: Clicca per disattivare' : 'Stop Catastrofico (-3%) DISATTIVATO: Clicca per attivare'}
                         >
-                          <AlertTriangle className="w-3 h-3" />
+                          <AlertTriangle className="w-3.5 h-3.5" />
                           <span>Stop Catastrofico (-3%)</span>
                           <span className={`w-2 h-2 rounded-full ${pos.enableCatastrophicStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
                         </button>
                       </div>
 
                       <div className="text-[10px] text-slate-500 font-mono">
-                        {pos.enableTechnicalStop !== false ? '🛡️ ATR attivo' : '❌ ATR disatt.'} | {pos.enableCatastrophicStop !== false ? '🚨 -3% attivo' : '❌ -3% disatt.'}
+                        {pos.enableTechnicalStop !== false ? '🛡️ ATR attivo' : '❌ ATR disattivato'} | {pos.enableCatastrophicStop !== false ? '🚨 -3% attivo' : '❌ -3% disattivato'}
                       </div>
                     </div>
 
-                    {/* Real-time Take Profit & Trailing Stop Level Indicator */}
+                    {/* Real-time Indicator: Stop Tecnico ATR e Stop Catastrofico -3% */}
                     <div className="mt-1.5 p-2 bg-white rounded-md border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${pos.isTrailingActive ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-blue-50 text-blue-700'}`}>
-                          {pos.isTrailingActive ? '🚀 Trailing Stop Attivo!' : '🎯 In attesa Target Attivazione'}
-                        </span>
-                        <span className="text-gray-700">
-                          {pos.isTrailingActive ? (
-                            <>Soglia Trailing (Picco: <strong className="font-mono text-gray-900">${pos.highestPrice?.toFixed(2)}</strong>): <strong className="font-mono text-emerald-600 font-bold">${pos.trailingStopPrice?.toFixed(2)}</strong> (-{pos.strategyParams?.tsPct || 0}%)</>
-                          ) : (
-                            <>Target Attivazione (+{pos.strategyParams?.tpPct || 2.5}%): <strong className="font-mono text-blue-600 font-bold">${pos.targetActivationPrice?.toFixed(2)}</strong></>
-                          )}
+                        {pos.atr ? (
+                          <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-indigo-50 text-indigo-700 font-mono">
+                            ATR14: ${pos.atr.toFixed(2)} | Trailing ATR (1.5x): ${(pos.atrTrailingStopPrice || 0).toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-slate-50 text-slate-600 font-mono">
+                            Stop Tecnico ATR (dinamico)
+                          </span>
+                        )}
+                        <span className="text-slate-600 font-mono text-[11px]">
+                          Soglia Catastrofica (-3%): <strong className="text-rose-600 font-bold">${((parseFloat(pos.avg_entry_price || '0')) * 0.97).toFixed(2)}</strong>
                         </span>
                       </div>
-                      <div className="text-[11px] font-mono text-gray-500">
-                        Stop Loss: <span className="text-red-600 font-semibold">${pos.stopLossPrice?.toFixed(2)}</span> ({pos.strategyParams?.slPct || -1.0}%)
+                      <div className="text-[11px] font-mono text-slate-500">
+                        P. Carico: <span className="text-slate-800 font-semibold">${parseFloat(pos.avg_entry_price || '0').toFixed(2)}</span>
                       </div>
                     </div>
                   </div>

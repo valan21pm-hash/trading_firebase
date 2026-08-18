@@ -1254,7 +1254,6 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           <th className="py-2.5 px-3">Prezzo Attuale</th>
                           <th className="py-2.5 px-3">Valore Mercato</th>
                           <th className="py-2.5 px-3">Sentiment IA</th>
-                          <th className="py-2.5 px-3">Strategia Rischio</th>
                           <th className="py-2.5 px-3 text-center">Stop Dedicati</th>
                           <th className="py-2.5 px-3">P&L Giornaliero</th>
                           <th className="py-2.5 px-3">P&L Totale</th>
@@ -1272,7 +1271,6 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
                           const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
                           const isClosing = closingSymbols.includes(pos.symbol);
-                          const currentStrategy = pos.strategy || 'Conservativa';
                           const isTechStop = pos.enableTechnicalStop !== false;
                           const isCatStop = pos.enableCatastrophicStop !== false;
 
@@ -1297,17 +1295,6 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
                               <td className="py-3 px-3">
                                 <SentimentBadge symbol={pos.symbol} signals={geminiSignals} showReasoning={true} />
-                              </td>
-                              <td className="py-3 px-3">
-                                <select
-                                  value={currentStrategy}
-                                  onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
-                                  className="bg-[#0E1526] border border-slate-700 text-xs text-indigo-300 rounded px-2 py-1 focus:outline-none"
-                                >
-                                  <option value="Prudente">Prudente</option>
-                                  <option value="Conservativa">Conservativa</option>
-                                  <option value="Aggressiva">Aggressiva</option>
-                                </select>
                               </td>
                               <td className="py-3 px-3 text-center">
                                 <div className="flex items-center justify-center gap-1">
@@ -1389,7 +1376,6 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       const intradayPL = parseFloat(pos.unrealized_intraday_pl || '0');
                       const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
                       const isClosing = closingSymbols.includes(pos.symbol);
-                      const currentStrategy = pos.strategy || 'Conservativa';
                       const isTechStop = pos.enableTechnicalStop !== false;
                       const isCatStop = pos.enableCatastrophicStop !== false;
 
@@ -1426,23 +1412,11 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <span className="text-slate-400 block text-[9px] uppercase">P. Attuale</span>
                               <span className="text-white font-bold">${currentPrice.toFixed(2)}</span>
                             </div>
-                            <div>
+                            <div className="col-span-2">
                               <span className="text-slate-400 block text-[9px] uppercase">P&L Giornaliero</span>
                               <span className={`font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                 {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)} ({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(1)}%)
                               </span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 block text-[9px] uppercase">Strategia</span>
-                              <select
-                                value={currentStrategy}
-                                onChange={(e) => handleUpdateStrategy(pos.symbol, e.target.value as any)}
-                                className="bg-[#0E1526] border border-slate-700 text-[10px] text-indigo-300 rounded px-1.5 py-0.5 mt-0.5 focus:outline-none"
-                              >
-                                <option value="Prudente">Prudente</option>
-                                <option value="Conservativa">Conservativa</option>
-                                <option value="Aggressiva">Aggressiva</option>
-                              </select>
                             </div>
                           </div>
 
