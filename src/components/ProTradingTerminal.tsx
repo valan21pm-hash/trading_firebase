@@ -400,6 +400,40 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
     }
   };
 
+  const handleTogglePositionStop = async (
+    symbol: string,
+    type: 'technical' | 'catastrophic',
+    currentVal: boolean | undefined
+  ) => {
+    const newVal = currentVal === undefined ? false : !currentVal;
+    try {
+      const payload: any = {
+        symbol,
+        mode: tradingMode
+      };
+      if (type === 'technical') {
+        payload.enableTechnicalStop = newVal;
+      } else {
+        payload.enableCatastrophicStop = newVal;
+      }
+      const res = await fetch('/api/trading/position-stops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        showToast(`✅ ${type === 'technical' ? 'Stop Tecnico (ATR)' : 'Stop Catastrofico (-3%)'} per ${symbol} ${newVal ? 'ATTIVATO' : 'DISATTIVATO'}`);
+        await refreshBackendStatus();
+        fetchOperations();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`❌ Errore: ${err.error || 'Salvataggio non riuscito'}`);
+      }
+    } catch (e: any) {
+      showToast(`❌ Errore: ${e.message}`);
+    }
+  };
+
   // 6. PANIC LIQUIDATE HANDLER
   const handlePanicLiquidate = async () => {
     setPanicLoading(true);
@@ -1221,6 +1255,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           <th className="py-2.5 px-3">Valore Mercato</th>
                           <th className="py-2.5 px-3">Sentiment IA</th>
                           <th className="py-2.5 px-3">Strategia Rischio</th>
+                          <th className="py-2.5 px-3 text-center">Stop Dedicati</th>
                           <th className="py-2.5 px-3">P&L Giornaliero</th>
                           <th className="py-2.5 px-3">P&L Totale</th>
                           <th className="py-2.5 px-3 text-right">Azione</th>
@@ -1238,6 +1273,8 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
                           const isClosing = closingSymbols.includes(pos.symbol);
                           const currentStrategy = pos.strategy || 'Conservativa';
+                          const isTechStop = pos.enableTechnicalStop !== false;
+                          const isCatStop = pos.enableCatastrophicStop !== false;
 
                           return (
                             <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
@@ -1271,6 +1308,36 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                   <option value="Conservativa">Conservativa</option>
                                   <option value="Aggressiva">Aggressiva</option>
                                 </select>
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop)}
+                                    title={isTechStop ? 'Stop Tecnico Dinamico (ATR) ATTIVO: Clicca per disattivare per questa posizione' : 'Stop Tecnico Dinamico (ATR) DISATTIVATO: Clicca per attivare'}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                      isTechStop 
+                                        ? 'bg-indigo-950/80 text-indigo-300 border-indigo-700/80 hover:bg-indigo-900' 
+                                        : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    <Shield className="w-2.5 h-2.5" />
+                                    <span>ATR</span>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${isTechStop ? 'bg-indigo-400' : 'bg-slate-600'}`} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop)}
+                                    title={isCatStop ? 'Stop Catastrofico (-3%) ATTIVO: Clicca per disattivare per questa posizione' : 'Stop Catastrofico (-3%) DISATTIVATO: Clicca per attivare'}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                      isCatStop 
+                                        ? 'bg-rose-950/80 text-rose-300 border-rose-700/80 hover:bg-rose-900' 
+                                        : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    <span>-3%</span>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${isCatStop ? 'bg-rose-400' : 'bg-slate-600'}`} />
+                                  </button>
+                                </div>
                               </td>
                               <td className={`py-3 px-3 font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                 {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)}
@@ -1323,6 +1390,8 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       const intradayPLPC = parseFloat(pos.unrealized_intraday_plpc || '0') * 100;
                       const isClosing = closingSymbols.includes(pos.symbol);
                       const currentStrategy = pos.strategy || 'Conservativa';
+                      const isTechStop = pos.enableTechnicalStop !== false;
+                      const isCatStop = pos.enableCatastrophicStop !== false;
 
                       return (
                         <div key={pos.symbol} className="bg-[#090D16] border border-slate-800 rounded-xl p-3.5 space-y-3">
@@ -1374,6 +1443,35 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 <option value="Conservativa">Conservativa</option>
                                 <option value="Aggressiva">Aggressiva</option>
                               </select>
+                            </div>
+                          </div>
+
+                          {/* Stop Loss Dedicated Controls */}
+                          <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] font-mono">
+                            <span className="text-[10px] text-slate-400">Stop Dedicati:</span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  isTechStop 
+                                    ? 'bg-indigo-950/80 text-indigo-300 border-indigo-700/80' 
+                                    : 'bg-slate-800/50 text-slate-500 border-slate-700'
+                                }`}
+                              >
+                                <Shield className="w-2.5 h-2.5" />
+                                ATR Stop
+                              </button>
+                              <button
+                                onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  isCatStop 
+                                    ? 'bg-rose-950/80 text-rose-300 border-rose-700/80' 
+                                    : 'bg-slate-800/50 text-slate-500 border-slate-700'
+                                }`}
+                              >
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                -3% Stop
+                              </button>
                             </div>
                           </div>
 

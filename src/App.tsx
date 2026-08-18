@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, ShieldAlert, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, Shield, ShieldAlert, AlertTriangle, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
