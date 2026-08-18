@@ -837,6 +837,35 @@ function AccountPanel({
     }
   };
 
+  const handleTogglePositionStop = async (
+    symbol: string,
+    stopType: 'technical' | 'catastrophic',
+    currentVal: boolean | undefined
+  ) => {
+    const newVal = currentVal === undefined ? false : !currentVal;
+    try {
+      const payload: any = {
+        symbol,
+        mode: type
+      };
+      if (stopType === 'technical') {
+        payload.enableTechnicalStop = newVal;
+      } else {
+        payload.enableCatastrophicStop = newVal;
+      }
+      const res = await fetch('/api/trading/position-stops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        await fetchStatus();
+      }
+    } catch (e: any) {
+      console.error('Errore toggle stop loss posizione:', e);
+    }
+  };
+
   const handleOpenCredsForm = async () => {
     setShowAlpacaCredsForm(!showAlpacaCredsForm);
     setShowSettingsForm(false);
@@ -1284,6 +1313,46 @@ function AccountPanel({
                         {pos.activeStrategy === 'Prudente' && 'Stop Loss: -0.40% | Target Attivazione: +0.80% | Trailing: 0.30%'}
                         {pos.activeStrategy === 'Conservativa' && 'Stop Loss: -0.75% | Target Attivazione: +1.50% | Trailing: 1.00%'}
                         {pos.activeStrategy === 'Aggressiva' && 'Stop Loss: -1.00% | Target Attivazione: +2.50% | Trailing: 0.50%'}
+                      </div>
+                    </div>
+
+                    {/* Controlli Stop Loss Dedicati per Posizione (Stop Tecnico ATR & Stop Catastrofico -3%) */}
+                    <div className="p-2 bg-slate-100/70 rounded-lg border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stop Loss Dedicati:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop !== false)}
+                          className={`px-2 py-1 rounded text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                            pos.enableTechnicalStop !== false
+                              ? 'bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700'
+                              : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
+                          }`}
+                          title={pos.enableTechnicalStop !== false ? 'Stop Tecnico Dinamico (ATR) ATTIVO: Clicca per disattivare' : 'Stop Tecnico Dinamico (ATR) DISATTIVATO: Clicca per attivare'}
+                        >
+                          <Shield className="w-3 h-3" />
+                          <span>Stop Tecnico (ATR)</span>
+                          <span className={`w-2 h-2 rounded-full ${pos.enableTechnicalStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop !== false)}
+                          className={`px-2 py-1 rounded text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                            pos.enableCatastrophicStop !== false
+                              ? 'bg-rose-600 border-rose-700 text-white hover:bg-rose-700'
+                              : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
+                          }`}
+                          title={pos.enableCatastrophicStop !== false ? 'Stop Catastrofico (-3%) ATTIVO: Clicca per disattivare' : 'Stop Catastrofico (-3%) DISATTIVATO: Clicca per attivare'}
+                        >
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>Stop Catastrofico (-3%)</span>
+                          <span className={`w-2 h-2 rounded-full ${pos.enableCatastrophicStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
+                        </button>
+                      </div>
+
+                      <div className="text-[10px] text-slate-500 font-mono">
+                        {pos.enableTechnicalStop !== false ? '🛡️ ATR attivo' : '❌ ATR disatt.'} | {pos.enableCatastrophicStop !== false ? '🚨 -3% attivo' : '❌ -3% disatt.'}
                       </div>
                     </div>
 
