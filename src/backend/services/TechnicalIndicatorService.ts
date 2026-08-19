@@ -22,6 +22,9 @@ export interface IndicatorResult {
   atrPercent: number; // ATR in % rispetto al prezzo corrente
   atr1_5x: number; // 1.5x ATR in $ per Trailing Stop
   atr1_5xPercent: number; // 1.5x ATR in %
+  atr5m: number; // ATR(14) su timeframe 5m
+  atr5mSma20: number; // SMA a 20 periodi dell'ATR(14) su 5m
+  isAtr5mVolatile: boolean; // ATR(14) 5m >= SMA(20) di ATR
   adx: number; // ADX(14) (da 0 a 100)
   plusDI: number; // +DI(14)
   minusDI: number; // -DI(14)
@@ -345,6 +348,28 @@ export class TechnicalIndicatorService {
     const ema20 = TechnicalIndicatorService.calculateEMA(bars, 20);
     const ema50 = TechnicalIndicatorService.calculateEMA(bars, 50);
 
+    // 5. Calcolo ATR(14) su timeframe 5m e SMA(20) dell'ATR stesso per il Filtro di Volatilità Operativa
+    // Se abbiamo almeno 20 barre, calcoliamo la serie rolling degli ATR(14) a ritroso
+    const atrSeries: number[] = [];
+    if (bars.length >= 15) {
+      for (let i = 14; i <= bars.length; i++) {
+        const subBars = bars.slice(0, i);
+        const subAtr = TechnicalIndicatorService.calculateATR(subBars, 14);
+        atrSeries.push(subAtr);
+      }
+    } else {
+      atrSeries.push(atr);
+    }
+
+    const atr5m = atrSeries[atrSeries.length - 1] || atr;
+    const smaWindow = Math.min(20, atrSeries.length);
+    const atr5mSma20 = smaWindow > 0 
+      ? (atrSeries.slice(-smaWindow).reduce((a, b) => a + b, 0) / smaWindow) 
+      : atr5m;
+    
+    // Inibire l'apertura di nuovi trade se ATR(14) 5m < SMA(20) dell'ATR stesso (mercato privo di volatilità/impulso)
+    const isAtr5mVolatile = atr5m >= atr5mSma20 * 0.98; // tolleranza 2% per stabilità
+
     const price = currentPrice > 0 ? currentPrice : (bars[bars.length - 1]?.close || 100);
     const atrPercent = (atr / price) * 100;
     const atr1_5x = atr * 1.5;
@@ -355,7 +380,7 @@ export class TechnicalIndicatorService {
     let regime: IndicatorResult['regime'] = 'CHOP_NO_TREND';
     if (adx >= 25) {
       regime = (plusDI > minusDI && isBullishEmaTrend) ? 'TRENDING_BULLISH' : 'TRENDING_BEARISH';
-    } else if (atrPercent < 0.6) {
+    } else if (atrPercent < 0.6 || !isAtr5mVolatile) {
       regime = 'LOW_VOLATILITY';
     }
 
@@ -366,6 +391,9 @@ export class TechnicalIndicatorService {
       atrPercent: parseFloat(atrPercent.toFixed(2)),
       atr1_5x: parseFloat(atr1_5x.toFixed(2)),
       atr1_5xPercent: parseFloat(atr1_5xPercent.toFixed(2)),
+      atr5m: parseFloat(atr5m.toFixed(2)),
+      atr5mSma20: parseFloat(atr5mSma20.toFixed(2)),
+      isAtr5mVolatile,
       adx: parseFloat(adx.toFixed(1)),
       plusDI: parseFloat(plusDI.toFixed(1)),
       minusDI: parseFloat(minusDI.toFixed(1)),

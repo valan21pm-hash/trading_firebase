@@ -1012,6 +1012,27 @@ function AccountPanel({
       </div>
 
       <div className={`p-3 sm:p-4 space-y-4 sm:space-y-6 ${isAccountCollapsed ? 'hidden' : ''}`}>
+          {account.errorAlpaca && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🚨</span>
+                <div>
+                  <strong className="font-semibold block sm:inline">Credenziali Alpaca {type === 'live' ? 'Reale (Live)' : 'Simulazione (Paper)'} non valide (401 Unauthorized):</strong>{' '}
+                  <span>Il bot è in pausa. Inserisci le chiavi corrette per riattivare la sincronizzazione.</span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowLlmSettings(true);
+                  setShowSettingsForm(false);
+                }}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer shadow-sm transition"
+              >
+                Inserisci Chiavi API
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <div className="text-xs sm:text-sm text-gray-500">Saldo Equity & Performance</div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">

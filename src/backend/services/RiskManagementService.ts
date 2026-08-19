@@ -431,8 +431,79 @@ export class RiskManagementService {
     if (prospectivePct > maxSemiconPct) {
       return {
         allowed: false,
-        reason: `[Regola Sistema: SPY_QQQ_CORRELATION_SEMICON_CAP] Correlazione SPY-QQQ a +${spyQqqCorrelation.toFixed(2)} (>= ${minCorr}). L'esposizione complessiva ai semiconduttori ($${prospectiveTotalSemicon.toFixed(2)}) raggiungerebbe il ${prospectivePct.toFixed(1)}% del NAV, eccedendo il limite massimo consentito del ${maxSemiconPct}%. Acquisto ${symUpper} bloccato per prevenire rischio di concentrazione settoriale.`
+        reason: `[Regola Sistema: SPY_QQQ_CORRELATION_SEMICON_CAP] Correlazione SPY-QQQ a +${spyQqqCorrelation.toFixed(2)} (>= ${minCorr}). L'esposizione complessiva ai semiconduttori (${prospectiveTotalSemicon.toFixed(2)}) raggiungerebbe il ${prospectivePct.toFixed(1)}% del NAV, eccedendo il limite massimo consentito del ${maxSemiconPct}%. Acquisto ${symUpper} bloccato per prevenire rischio di concentrazione settoriale.`
       };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * 1. Filtro di Volatilità Operativa (ATR):
+   * Inibisce l'apertura di nuovi trade se l'ATR(14) a 5 minuti è inferiore alla media mobile semplice a 20 periodi (SMA 20) dell'ATR stesso.
+   */
+  public static evaluateAtrVolatilityFilter(
+    symbol: string,
+    atr5m: number,
+    atr5mSma20: number,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const atrRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_FILTER');
+    const isEnabled = atrRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    // Se l'ATR(14) a 5m è inferiore alla SMA(20) dell'ATR stesso (tolleranza 2% per stabilità)
+    if (atr5m < atr5mSma20 * 0.98) {
+      return {
+        allowed: false,
+        reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione/rumore.`
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * 2. Hard-Risk Management & Cooldown Stop-Loss Consecutivi:
+   * Valuta se applicare un cooldown di 30 minuti dopo 2 stop-loss consecutivi,
+   * o se inibire l'operatività giornaliera al raggiungimento di una perdita del -1.00% del capitale.
+   */
+  public static evaluateHardRiskDailyLimit(
+    dailyNetPnLPct: number,
+    consecutiveSlCount: number,
+    lastSlTimestamp: number | null,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const hardRiskRule = systemRules?.find(r => r.type === 'HARD_RISK_MANAGEMENT');
+    const isEnabled = hardRiskRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const maxDailyLossPct = hardRiskRule?.parameters?.maxDailyLossPct ?? -1.00;
+    const cooldownMins = hardRiskRule?.parameters?.consecutiveSlCooldownMinutes ?? 30;
+    const slThreshold = hardRiskRule?.parameters?.consecutiveSlThreshold ?? 2;
+
+    // Controllo Blocco Giornaliero se PnL giornaliero <= maxDailyLossPct (es. -1.00%)
+    if (dailyNetPnLPct <= maxDailyLossPct) {
+      return {
+        allowed: false,
+        reason: `[Hard-Risk Management: Stop Giornaliero] Il P&L giornaliero netto (${dailyNetPnLPct.toFixed(2)}%) ha raggiunto o superato il limite di perdita massimo (${maxDailyLossPct.toFixed(2)}%). Operatività bloccata per il resto della sessione per proteggere il capitale.`
+      };
+    }
+
+    // Cooldown di 30 minuti dopo 2 stop-loss consecutivi
+    if (consecutiveSlCount >= slThreshold && lastSlTimestamp && lastSlTimestamp > 0) {
+      const elapsedMins = (Date.now() - lastSlTimestamp) / (60 * 1000);
+      if (elapsedMins < cooldownMins) {
+        const remainingMins = Math.ceil(cooldownMins - elapsedMins);
+        return {
+          allowed: false,
+          reason: `[Hard-Risk Management: Cooldown ${cooldownMins}m] Rilevati ${consecutiveSlCount} Stop-Loss consecutivi. Cooldown di protezione attivo: nuovi acquisti bloccati per ancora ${remainingMins} minuti.`
+        };
+      }
     }
 
     return { allowed: true };

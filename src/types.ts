@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // es. 0.20 o 0.15
@@ -30,6 +30,17 @@ export interface RiskRuleConfig {
     requireEmaBullishTrend?: boolean; // default true: richiede Prezzo > EMA 20 e EMA 20 >= EMA 50 su 15m
     catastrophicMaxLossPct?: number;  // default -3.00% (Circuit Breaker estremo sempre attivo)
     enableTechnicalDynamicStop?: boolean; // se true attiva ATR & EMA dynamic stop, se false disattivabile dall'utente
+    // --- Nuove Regole di Consenso Multi-IA ---
+    atrFilterPeriod?: number;         // default 14 (ATR su 5m)
+    atrSmaPeriod?: number;            // default 20 (SMA dell'ATR a 20 periodi)
+    consecutiveSlCooldownMinutes?: number; // default 30 minuti dopo 2 SL consecutivi
+    consecutiveSlThreshold?: number;  // default 2 SL consecutivi
+    blockToxicWindow?: boolean;       // default true (blocco 10:30-12:00 EST finestra tossica)
+    toxicWindowStart?: string;        // default '10:30'
+    toxicWindowEnd?: string;          // default '12:00'
+    hardStopLossPct?: number;         // default -1.00% (SL fisso)
+    hardTakeProfitPct?: number;       // default +2.00% (TP fisso / R:R 1:2)
+    maxDailyLossPct?: number;         // default -1.00% (blocco operatività giornaliero)
   };
 }
 

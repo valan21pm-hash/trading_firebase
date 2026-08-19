@@ -105,6 +105,37 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     }
   },
   {
+    id: 'dynamic_time_window_lock',
+    enabled: true,
+    type: 'DYNAMIC_TIME_WINDOW_LOCK',
+    parameters: {
+      blockToxicWindow: true,
+      toxicWindowStart: '10:30',
+      toxicWindowEnd: '12:00'
+    }
+  },
+  {
+    id: 'atr_volatility_filter',
+    enabled: true,
+    type: 'ATR_VOLATILITY_FILTER',
+    parameters: {
+      atrFilterPeriod: 14,
+      atrSmaPeriod: 20
+    }
+  },
+  {
+    id: 'hard_risk_management',
+    enabled: true,
+    type: 'HARD_RISK_MANAGEMENT',
+    parameters: {
+      hardStopLossPct: -1.00,
+      hardTakeProfitPct: 2.00,
+      maxDailyLossPct: -1.00,
+      consecutiveSlThreshold: 2,
+      consecutiveSlCooldownMinutes: 30
+    }
+  },
+  {
     id: 'ema_trend_confirmation',
     enabled: true,
     type: 'EMA_TREND_CONFIRMATION',
@@ -196,6 +227,9 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
   const maxPosRule = getRule('MAX_CONCURRENT_POSITIONS_CAP');
   const timeLockRule = getRule('VOLATILITY_TIME_WINDOW_LOCK');
+  const toxicWindowRule = getRule('DYNAMIC_TIME_WINDOW_LOCK');
+  const atrFilterRule = getRule('ATR_VOLATILITY_FILTER');
+  const hardRiskRule = getRule('HARD_RISK_MANAGEMENT');
   const emaRule = getRule('EMA_TREND_CONFIRMATION');
   const catastrophicRule = getRule('CATASTROPHIC_CIRCUIT_BREAKER_SL');
 
@@ -988,6 +1022,162 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               </div>
               <span className="text-xs font-mono font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
                 Hard Protection
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 13: Filtro Volatilità Operativa ATR (5m vs SMA 20) */}
+        <div className={`p-4 rounded-xl border transition-all ${atrFilterRule.enabled ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${atrFilterRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">13. Filtro Volatilità Operativa ATR [ATR(14) 5m &gt;= SMA(20)]</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={atrFilterRule.enabled}
+                onChange={(e) => updateRule('ATR_VOLATILITY_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Inibisce l&apos;apertura di nuovi trade se l&apos;<strong>ATR(14) a 5 minuti</strong> è inferiore alla sua media mobile semplice a 20 periodi (<strong>SMA 20 dell&apos;ATR</strong>), evitando di entrare durante fasi di compressione, liquidità spenta o falso movimento laterale.
+          </p>
+
+          <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <Gauge className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Controllo Espansione di Volatilità</span>
+                  <p className="text-[10px] text-slate-500">Garantisce che il mercato abbia sufficiente momentum e ampiezza per raggiungere i target di profitto</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                ATR 5m Dynamic
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 14: Blocco Finestra Tossica Multi-IA (10:30 - 12:00 EST) */}
+        <div className={`p-4 rounded-xl border transition-all ${toxicWindowRule.enabled ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock3 className={`w-4 h-4 ${toxicWindowRule.enabled ? 'text-purple-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">14. Blocco Finestra Tossica Multi-IA (10:30 - 12:00 EST)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={toxicWindowRule.enabled}
+                onChange={(e) => updateRule('DYNAMIC_TIME_WINDOW_LOCK', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Blocco algoritmico basato sull&apos;analisi di consenso Multi-IA: inibisce nuovi ingressi nella fascia <strong>10:30 - 12:00 EST</strong>, identificata come la fascia oraria ad alta inefficienza e falsi breakout (mean-reversion noise).
+          </p>
+
+          <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="flex items-center justify-between p-2 rounded bg-purple-50/50 border border-purple-100">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-purple-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Protezione da Rumore e Chop Intraday</span>
+                  <p className="text-[10px] text-slate-500">Conserva il capitale e previene l&apos;overtrading nelle ore di stallo istituzionale</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded">
+                10:30 - 12:00 EST
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 15: Hard-Risk Management (Stop Loss -1%, TP +2%, Cooldown SL & Max Daily Loss) */}
+        <div className={`p-4 rounded-xl border transition-all ${hardRiskRule.enabled ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className={`w-4 h-4 ${hardRiskRule.enabled ? 'text-indigo-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">15. Hard-Risk Management (R:R 1:2, Cooldown &amp; Daily Loss Limit)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hardRiskRule.enabled}
+                onChange={(e) => updateRule('HARD_RISK_MANAGEMENT', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Protocollo matematico di conservazione del capitale: <strong>Stop Loss -1.00%</strong>, <strong>Take Profit +2.00% (R:R 1:2)</strong>, <strong>Cooldown di 30 min</strong> dopo 2 Stop-Loss consecutivi e <strong>blocco operatività giornaliero al -1.00%</strong> di perdita sul conto.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Limite Perdita Giornaliera:</span>
+                  <span className="font-mono text-rose-600 font-bold">{(hardRiskRule.parameters.maxDailyLossPct ?? -1.00).toFixed(2)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="-3.0"
+                  max="-0.5"
+                  step="0.25"
+                  value={hardRiskRule.parameters.maxDailyLossPct ?? -1.00}
+                  onChange={(e) => updateRule('HARD_RISK_MANAGEMENT', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, maxDailyLossPct: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!hardRiskRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Cooldown Stop Consecutivi (min):</span>
+                  <span className="font-mono text-indigo-600 font-bold">{hardRiskRule.parameters.consecutiveSlCooldownMinutes ?? 30} min</span>
+                </div>
+                <input
+                  type="range"
+                  min="15"
+                  max="60"
+                  step="5"
+                  value={hardRiskRule.parameters.consecutiveSlCooldownMinutes ?? 30}
+                  onChange={(e) => updateRule('HARD_RISK_MANAGEMENT', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, consecutiveSlCooldownMinutes: parseInt(e.target.value, 10) }
+                  }))}
+                  disabled={!hardRiskRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-indigo-50/50 border border-indigo-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Regola Anti-Martingala &amp; Salvaguardia Capitale</span>
+                  <p className="text-[10px] text-slate-500">R:R 1:2 rigoroso, stop automatico alla seconda perdita consecutiva</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                Hard Stop &amp; Cooldown
               </span>
             </div>
           </div>

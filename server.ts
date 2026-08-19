@@ -165,6 +165,37 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     }
   },
   {
+    id: 'dynamic_time_window_lock',
+    enabled: true,
+    type: 'DYNAMIC_TIME_WINDOW_LOCK',
+    parameters: {
+      blockToxicWindow: true,
+      toxicWindowStart: '10:30',
+      toxicWindowEnd: '12:00'
+    }
+  },
+  {
+    id: 'atr_volatility_filter',
+    enabled: true,
+    type: 'ATR_VOLATILITY_FILTER',
+    parameters: {
+      atrFilterPeriod: 14,
+      atrSmaPeriod: 20
+    }
+  },
+  {
+    id: 'hard_risk_management',
+    enabled: true,
+    type: 'HARD_RISK_MANAGEMENT',
+    parameters: {
+      hardStopLossPct: -1.00,
+      hardTakeProfitPct: 2.00,
+      maxDailyLossPct: -1.00,
+      consecutiveSlThreshold: 2,
+      consecutiveSlCooldownMinutes: 30
+    }
+  },
+  {
     id: 'ema_trend_confirmation',
     enabled: true,
     type: 'EMA_TREND_CONFIRMATION',
@@ -188,6 +219,7 @@ export interface EstTimeInfo {
   totalMinutes: number;
   timeFormatted: string;
   isMorningVolatileLock: boolean;
+  isToxicWindowLock: boolean;
   isAfternoonVolatileLock: boolean;
   isMarketTimeLocked: boolean;
   lockReason?: string;
@@ -217,15 +249,19 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
   const totalMinutes = hours * 60 + minutes;
   const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} EST`;
   
-  // 09:30 - 10:30 EST => 570 - 630 minuti
-  // 15:30 - 16:00 EST => 930 - 960 minuti
+  // 09:30 - 10:30 EST => 570 - 630 minuti (Apertura)
+  // 10:30 - 12:00 EST => 630 - 720 minuti (Finestra Tossica Multi-IA)
+  // 15:30 - 16:00 EST => 930 - 960 minuti (Pre-chiusura / Asta)
   const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 630;
+  const isToxicWindowLock = totalMinutes >= 630 && totalMinutes < 720;
   const isAfternoonVolatileLock = totalMinutes >= 930 && totalMinutes <= 960;
-  const isMarketTimeLocked = isMorningVolatileLock || isAfternoonVolatileLock;
+  const isMarketTimeLocked = isMorningVolatileLock || isToxicWindowLock || isAfternoonVolatileLock;
   
   let lockReason: string | undefined;
   if (isMorningVolatileLock) {
     lockReason = `Fascia di apertura ad alta volatilità e rumore (09:30 - 10:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per preservare il capitale.`;
+  } else if (isToxicWindowLock) {
+    lockReason = `Fascia oraria ad alta inefficienza / tossica identificata dall'analisi Multi-IA (10:30 - 12:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare falsi breakout.`;
   } else if (isAfternoonVolatileLock) {
     lockReason = `Fascia pre-chiusura / asta di fine sessione ad alta instabilità (15:30 - 16:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti.`;
   }
@@ -236,6 +272,7 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
     totalMinutes,
     timeFormatted,
     isMorningVolatileLock,
+    isToxicWindowLock,
     isAfternoonVolatileLock,
     isMarketTimeLocked,
     lockReason
@@ -351,6 +388,18 @@ function isPurchaseAllowedBySystemRules(
         return {
           allowed: false,
           reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella fascia pre-chiusura / asta di fine sessione (15:30-16:00 EST, orario: ${estInfo.timeFormatted}). Ingressi bloccati per evitare instabilità estreme.`
+        };
+      }
+    }
+
+    // Regola 11: DYNAMIC_TIME_WINDOW_LOCK (Inibizione operatività nella fascia tossica 10:30-12:00 EST)
+    if (rule.type === 'DYNAMIC_TIME_WINDOW_LOCK') {
+      const estInfo = getEstMarketTime();
+      const blockToxic = rule.parameters.blockToxicWindow ?? true;
+      if (blockToxic && estInfo.isToxicWindowLock) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: DYNAMIC_TIME_WINDOW_LOCK] Inibizione operatività nella fascia ad alta inefficienza/tossica (10:30-12:00 EST, orario: ${estInfo.timeFormatted}). Blocco algoritmico basato sull'analisi di consenso Multi-IA.`
         };
       }
     }
@@ -2947,6 +2996,11 @@ async function getAndUpdateHighestPrice(symbol: string, currentPrice: number, av
 
 const activeTrailingStatus: Record<string, { isActivated: boolean; lastLoggedPeak: number }> = {};
 
+const consecutiveSlTracker: Record<'paper' | 'live', { count: number; lastSlTimestamp: number | null }> = {
+  paper: { count: 0, lastSlTimestamp: null },
+  live: { count: 0, lastSlTimestamp: null }
+};
+
 function checkAndLogTrailingStopStatus(
   mode: 'paper' | 'live',
   symbol: string,
@@ -3025,9 +3079,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     botData[mode].accountNumber = account.account_number;
     
     let currentBuyingPower = parseFloat(account.buying_power || '0');
+    const lastEquity = parseFloat(account.last_equity || account.equity || '0');
+    const dailyPnLPct = lastEquity > 0 ? ((botData[mode].balance - lastEquity) / lastEquity) * 100 : 0;
     const amountToBuy = mode === 'paper' ? 1000 : 5;
     
-    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
+    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} (P&L Giornaliero: ${dailyPnLPct >= 0 ? '+' : ''}${dailyPnLPct.toFixed(2)}%) | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
     // Recupero della distanza dalla chiusura del mercato per valutare il Check-Point pre-chiusura
     const minutesToClose = await getMarketMinutesToClose(baseUrl, apiKey, secretKey);
@@ -3278,8 +3334,21 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           if (closeResponse.ok) {
             delete localHighestPrices[symbol];
             delete activeTrailingStatus[symbol];
+            if (positionEntryTimes[mode]) {
+              delete positionEntryTimes[mode][symbol];
+            }
             addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo!`);
             closedSymbolsThisCycle.add(symbol);
+
+            // Aggiornamento tracker Hard-Risk per Stop-Loss consecutivi
+            if (profitAmt < 0) {
+              consecutiveSlTracker[mode].count += 1;
+              consecutiveSlTracker[mode].lastSlTimestamp = Date.now();
+              addLog(mode as 'paper' | 'live', `[Hard-Risk Tracker] Chiusura in perdita su ${symbol} ($${profitAmt.toFixed(2)}). Stop-Loss consecutivi attuali: ${consecutiveSlTracker[mode].count}.`);
+            } else {
+              consecutiveSlTracker[mode].count = 0;
+              consecutiveSlTracker[mode].lastSlTimestamp = null;
+            }
           } else {
             const errData = await closeResponse.json();
             addLog(mode as 'paper' | 'live', `[Alpaca Errore Chiusura] Impossibile chiudere posizione su ${symbol}: ${errData.message}`);
@@ -3315,10 +3384,27 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       openPositions.length
     );
 
+    // Valutazione Hard-Risk Management (Limite di perdita giornaliera -1.00% e Cooldown 30m dopo 2 Stop-Loss consecutivi)
+    const hardRiskDailyEval = RiskManagementService.evaluateHardRiskDailyLimit(
+      dailyPnLPct,
+      consecutiveSlTracker[mode].count,
+      consecutiveSlTracker[mode].lastSlTimestamp,
+      activeRules
+    );
+
     if (isPreCloseWindow) {
       addLog(mode as 'paper' | 'live', `[Check-Point EOD] Apertura nuove posizioni disabilitata negli ultimi 15 minuti di mercato.`);
     } else if (!purchasePermission.allowed) {
       const reason = purchasePermission.reason || '[Regola Sistema] Nuovi acquisti bloccati da regola di sistema.';
+      addLog(mode as 'paper' | 'live', reason);
+      addLogicLog(mode, {
+        timestamp: new Date().toISOString(),
+        symbol: 'MERCATO_GLOBALE',
+        action: 'SKIP',
+        reasoning: reason
+      });
+    } else if (!hardRiskDailyEval.allowed) {
+      const reason = hardRiskDailyEval.reason || '[Hard-Risk Management] Operatività inibita da regole di salvaguardia del capitale.';
       addLog(mode as 'paper' | 'live', reason);
       addLogicLog(mode, {
         timestamp: new Date().toISOString(),
@@ -3595,6 +3681,25 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               );
               if (!emaFilterRes.allowed) {
                 const vetoReason = emaFilterRes.reason || `Trend tecnico ribassista su timeframe 15m (Prezzo < EMA20 o EMA20 < EMA50)`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'RISK_VETO',
+                  reasoning: vetoReason
+                });
+                continue;
+              }
+
+              // --- FILTRO VOLATILITÀ OPERATIVA ATR 5m [ATR(14) 5m >= SMA(20) ATR] ---
+              const atrFilterRes = RiskManagementService.evaluateAtrVolatilityFilter(
+                item.symbol,
+                symIndicators.atr5m,
+                symIndicators.atr5mSma20,
+                activeRules
+              );
+              if (!atrFilterRes.allowed) {
+                const vetoReason = atrFilterRes.reason || `Volatilità insufficiente: ATR(14) 5m < SMA(20) ATR`;
                 addLog(mode as 'paper' | 'live', vetoReason);
                 addLogicLog(mode, {
                   timestamp: new Date().toISOString(),
