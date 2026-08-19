@@ -140,7 +140,8 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     parameters: {
       atrMultiplier: 1.5,
       atrPeriod: 14,
-      useAtrTrailingStop: true
+      useAtrTrailingStop: true,
+      minProfitBufferDollars: 0.04
     }
   },
   {
@@ -185,7 +186,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'hard_risk_management',
-    enabled: true,
+    enabled: false,
     type: 'HARD_RISK_MANAGEMENT',
     parameters: {
       hardStopLossPct: -1.00,
@@ -4772,8 +4773,12 @@ async function getStatusData() {
             const stopLossPrice = avgEntry > 0 ? avgEntry * (1 - Math.abs(params.slPct) / 100) : 0;
 
             const ind = await TechnicalIndicatorService.getInstance().getSymbolIndicators(sym, currP, conf);
-            const atrMultiplier = (botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP')?.parameters?.atrMultiplier) || 1.5;
-            const atrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
+            const atrRule = botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
+            const atrMultiplier = atrRule?.parameters?.atrMultiplier || 1.5;
+            const minProfitBuffer = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
+            const rawAtrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
+            const minRequiredAtrStopPrice = avgEntry + minProfitBuffer;
+            const isAtrTrailingActive = rawAtrTrailingStopPrice >= minRequiredAtrStopPrice;
             const overrides = positionStopOverrides[mode]?.[sym];
 
             return {
@@ -4791,8 +4796,10 @@ async function getStatusData() {
               atr: ind.atr,
               atr1_5x: ind.atr1_5x,
               adx: ind.adx,
-              atrTrailingStopPrice: parseFloat(atrTrailingStopPrice.toFixed(2)),
-              isAtrTrailingActive: true,
+              atrTrailingStopPrice: parseFloat(rawAtrTrailingStopPrice.toFixed(2)),
+              minRequiredAtrStopPrice: parseFloat(minRequiredAtrStopPrice.toFixed(2)),
+              minProfitBufferDollars: minProfitBuffer,
+              isAtrTrailingActive,
               enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
               enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true
             };

@@ -83,18 +83,24 @@ export class RiskManagementService {
       ? position.enableTechnicalStop 
       : isGlobalTechnicalEnabled;
     const atrMultiplier = atrRule?.parameters?.atrMultiplier ?? config.atrMultiplier ?? 1.5;
+    const minProfitBufferDollars = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
 
-    // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita ordinaria su volatilità ATR
+    // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita a Trailing SOLO se garantisce almeno +4 centesimi di utile
     if (isTechnicalDynamicStopEnabled && atr && atr > 0) {
       const atrDistance = atrMultiplier * atr;
-      const atrStopPrice = peakPrice - atrDistance;
-      const atrDistancePct = (atrDistance / peakPrice) * 100;
+      const rawAtrStopPrice = peakPrice - atrDistance;
+      const minRequiredTrailingStop = openPrice + minProfitBufferDollars;
 
-      // Se il prezzo corrente arretra sotto la soglia di Trailing Stop 1.5x ATR
-      if (currentPrice <= atrStopPrice) {
+      // Il trailing stop si aggancia e diventa attivo SOLO quando la soglia di trailing supera il prezzo di carico di almeno +$0.04
+      const isTrailingProfitActive = rawAtrStopPrice >= minRequiredTrailingStop;
+
+      // Se il trailing è attivo a protezione del profitto e il prezzo arretra sotto la soglia
+      if (isTrailingProfitActive && currentPrice <= rawAtrStopPrice) {
+        const atrDistancePct = (atrDistance / peakPrice) * 100;
+        const profitDollars = rawAtrStopPrice - openPrice;
         return {
           action: 'CLOSE',
-          reason: `[Livello 1 - Stop Tecnico Dinamico ${atrMultiplier.toFixed(1)}x ATR] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia dinamica di volatilità ATR a $${atrStopPrice.toFixed(2)} (ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}%). Chiusura tecnica ordinaria sul timeframe 15m.`
+          reason: `[Livello 1 - Trailing Stop Dinamico ATR ${atrMultiplier.toFixed(1)}x] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia di profitto garantito a $${rawAtrStopPrice.toFixed(2)} (Carico: $${openPrice.toFixed(2)}, Guadagno protetto: +$${profitDollars.toFixed(2)}/azione >= +$${minProfitBufferDollars.toFixed(2)}, ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: +${currentProfitPct.toFixed(2)}%). Chiusura tecnica a protezione del profitto.`
         };
       }
     }

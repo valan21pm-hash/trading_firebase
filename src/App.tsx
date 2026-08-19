@@ -1353,8 +1353,12 @@ function AccountPanel({
                     <div className="mt-1.5 p-2 bg-white rounded-md border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {pos.atr ? (
-                          <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-indigo-50 text-indigo-700 font-mono">
-                            ATR14: ${pos.atr.toFixed(2)} | Trailing ATR (1.5x): ${(pos.atrTrailingStopPrice || 0).toFixed(2)}
+                          <span className={`px-2 py-0.5 rounded font-bold text-[10px] font-mono ${pos.isAtrTrailingActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-indigo-50 text-indigo-700'}`}>
+                            ATR14: ${pos.atr.toFixed(2)} | Trailing ATR (1.5x): {pos.isAtrTrailingActive ? (
+                              <span className="text-emerald-700 font-bold">${(pos.atrTrailingStopPrice || 0).toFixed(2)} (🔒 Protetta +${((pos.atrTrailingStopPrice || 0) - parseFloat(pos.avg_entry_price || '0')).toFixed(2)}/az)</span>
+                            ) : (
+                              <span className="text-indigo-600">In attesa picco (Target: &ge;${(pos.minRequiredAtrStopPrice || (parseFloat(pos.avg_entry_price || '0') + 0.04)).toFixed(2)})</span>
+                            )}
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-slate-50 text-slate-600 font-mono">

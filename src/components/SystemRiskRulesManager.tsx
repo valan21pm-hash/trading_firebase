@@ -80,7 +80,8 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     parameters: {
       atrMultiplier: 1.5,
       atrPeriod: 14,
-      useAtrTrailingStop: true
+      useAtrTrailingStop: true,
+      minProfitBufferDollars: 0.04
     }
   },
   {
@@ -125,7 +126,7 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'hard_risk_management',
-    enabled: true,
+    enabled: false,
     type: 'HARD_RISK_MANAGEMENT',
     parameters: {
       hardStopLossPct: -1.00,
@@ -797,8 +798,28 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               />
             </div>
 
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Minima di Utile Garantito per Attivazione Trailing:</span>
+                <span className="font-mono text-emerald-600 font-bold">+${(atrRule.parameters.minProfitBufferDollars ?? 0.04).toFixed(2)}/azione</span>
+              </div>
+              <input
+                type="range"
+                min="0.01"
+                max="0.20"
+                step="0.01"
+                value={atrRule.parameters.minProfitBufferDollars ?? 0.04}
+                onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minProfitBufferDollars: parseFloat(e.target.value) }
+                }))}
+                disabled={!atrRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+            </div>
+
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Protezione dinamica individuale: Trigger Chiusura = PeakPrice - (1.5 &times; ATR14). Disattivabile liberamente.
+              Protezione dinamica individuale: Il Trailing ATR si attiva SOLO se la soglia calcolata (PeakPrice - 1.5 &times; ATR) garantisce almeno +${(atrRule.parameters.minProfitBufferDollars ?? 0.04).toFixed(2)} di utile netto rispetto al prezzo di carico.
             </div>
           </div>
         </div>

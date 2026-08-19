@@ -20,6 +20,7 @@ export interface RiskRuleConfig {
     atrMultiplier?: number;           // default 1.5 per Trailing Stop 1.5x ATR
     atrPeriod?: number;               // default 14
     useAtrTrailingStop?: boolean;     // attiva trailing stop individuale su volatilità reale ATR
+    minProfitBufferDollars?: number;  // default 0.04 (attiva trailing ATR solo quando garantisce almeno +0.04$ di profitto)
     maxConcurrentPositions?: number;  // default 3-5 (limite max posizioni simultanee)
     blockMorningOpeningWindow?: boolean;   // default true (inibizione 09:30-10:30 EST)
     blockAfternoonClosingWindow?: boolean; // default true (inibizione 15:30-16:00 EST)
@@ -74,6 +75,8 @@ export interface Position {
   atr1_5x?: number;
   adx?: number;
   atrTrailingStopPrice?: number;
+  minRequiredAtrStopPrice?: number;
+  minProfitBufferDollars?: number;
   isAtrTrailingActive?: boolean;
   enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR
   enableCatastrophicStop?: boolean; // Se true o undefined (default true), applica il Circuit Breaker Catastrofico (-3%)
