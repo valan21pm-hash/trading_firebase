@@ -5918,163 +5918,183 @@ async function executeAlpacaRealtimeCheck() {
   }
   isFastCheckRunning = true;
   try {
-    const mode = botStatus.tradingMode || 'paper';
-  const { apiKey, secretKey, isConfigured, baseUrl } = getAlpacaConfig(mode);
-  if (!isConfigured) return;
+    const modesToCheck: ('paper' | 'live')[] = [];
+    if (botStatus.paperActive || botStatus.tradingMode === 'paper') modesToCheck.push('paper');
+    if (botStatus.liveActive || botStatus.tradingMode === 'live') modesToCheck.push('live');
+    if (modesToCheck.length === 0) {
+      if (getAlpacaConfig('live').isConfigured) modesToCheck.push('live');
+      if (getAlpacaConfig('paper').isConfigured) modesToCheck.push('paper');
+    }
 
-  // Fuori orario o durante il weekend le posizioni sono congelate:
-  // evitiamo chiamate inutili ad Alpaca e azzeriamo l'uso di CPU/memoria
-  const isOpen = await isAlpacaMarketOpen(baseUrl, apiKey, secretKey);
-  if (!isOpen) return;
+    for (const mode of modesToCheck) {
+      const { apiKey, secretKey, isConfigured, baseUrl } = getAlpacaConfig(mode);
+      if (!isConfigured) continue;
 
-  try {
-    const posResponse = await fetch(`${baseUrl}/positions`, {
-      headers: {
-        'APCA-API-KEY-ID': apiKey,
-        'APCA-API-SECRET-KEY': secretKey
-      }
-    });
+      // Fuori orario o durante il weekend le posizioni sono congelate
+      const isOpen = await isAlpacaMarketOpen(baseUrl, apiKey, secretKey);
+      if (!isOpen) continue;
 
-    if (!posResponse.ok) return;
-    const positions = await posResponse.json();
-
-    const activeSymbols = positions.map((p: any) => p.symbol);
-
-    // Sincronizza posizioni attive ed eventualmente disattiva quelle non più presenti
-    if (db) {
       try {
-        const snapshot = await db.collection('alpaca_positions').where('status', '==', 'ACTIVE').get();
-        for (const doc of snapshot.docs) {
-          const sym = doc.id;
-          if (!activeSymbols.includes(sym)) {
-            await db.collection('alpaca_positions').doc(sym).update({
-              status: 'CLOSED',
-              closedAt: new Date().toISOString()
-            });
+        const posResponse = await fetch(`${baseUrl}/positions`, {
+          headers: {
+            'APCA-API-KEY-ID': apiKey,
+            'APCA-API-SECRET-KEY': secretKey
+          }
+        });
+
+        if (!posResponse.ok) continue;
+        const positions = await posResponse.json();
+
+        const activeSymbols = positions.map((p: any) => p.symbol);
+
+        // Sincronizza posizioni attive ed eventualmente disattiva quelle non più presenti
+        if (db) {
+          try {
+            const snapshot = await db.collection('alpaca_positions').where('status', '==', 'ACTIVE').get();
+            for (const doc of snapshot.docs) {
+              const sym = doc.id;
+              if (!activeSymbols.includes(sym)) {
+                await db.collection('alpaca_positions').doc(sym).update({
+                  status: 'CLOSED',
+                  closedAt: new Date().toISOString()
+                });
+              }
+            }
+          } catch (e) {
+            // Ignora silenziosamente
           }
         }
-      } catch (e) {
-        // Ignora silenziosamente
-      }
-    }
 
-    const historicalProfits = botStatus.historicalProfits || 0; // Se c'è in botStatus, altrimenti 0
-    const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
+        const historicalProfits = botStatus.historicalProfits || 0;
+        const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
 
-    for (const pos of positions) {
-      const symbol = pos.symbol;
-      const qty = parseFloat(pos.qty || '0');
-      const currentValue = parseFloat(pos.market_value || '0');
-      const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
-      const currentPrice = parseFloat(pos.current_price || '0');
-      const avgEntryPrice = parseFloat(pos.avg_entry_price || '0');
+        for (const pos of positions) {
+          const symbol = pos.symbol;
+          const qty = parseFloat(pos.qty || '0');
+          const currentValue = parseFloat(pos.market_value || '0');
+          const unrealizedPL = parseFloat(pos.unrealized_pl || '0');
+          const currentPrice = parseFloat(pos.current_price || '0');
+          const avgEntryPrice = parseFloat(pos.avg_entry_price || '0');
 
-      // Recuperiamo la strategia attiva o ne assegniamo una di default ottimizzata via IA
-      if (!positionStrategies[mode]) {
-        positionStrategies[mode] = {};
-      }
-      if (!positionStrategies[mode][symbol]) {
-        positionStrategies[mode][symbol] = getDefaultStrategy(symbol);
-        saveBotStatus();
-      }
-      const activeStrategy = positionStrategies[mode][symbol];
-      const params = STRATEGY_PARAMS[activeStrategy];
+          if (!positionStrategies[mode]) {
+            positionStrategies[mode] = {};
+          }
+          if (!positionStrategies[mode][symbol]) {
+            positionStrategies[mode][symbol] = getDefaultStrategy(symbol);
+            saveBotStatus();
+          }
+          const activeStrategy = positionStrategies[mode][symbol];
+          const params = STRATEGY_PARAMS[activeStrategy];
 
-      // Calcoliamo i limiti assoluti (TP/SL) in base alla percentuale della strategia applicata al capitale nominale
-      const costBasis = currentValue - unrealizedPL;
-      const slDollar = costBasis * (params.slPct / 100);
-      const tpDollar = costBasis * (params.tpPct / 100);
-      const trailingStopPercent = params.tsPct;
+          // Calcoliamo i limiti assoluti (TP/SL) in base alla percentuale della strategia applicata al capitale nominale
+          const costBasis = currentValue - unrealizedPL;
+          const slDollar = costBasis * (params.slPct / 100);
+          const tpDollar = costBasis * (params.tpPct / 100);
+          const trailingStopPercent = params.tsPct;
 
-      const positionConfig = {
-        y: botStatus.y || 1,
-        defaultSL: slDollar,
-        defaultTP: tpDollar,
-        trailingStop: trailingStopPercent,
-        targetTpPct: params.tpPct,
-        slPct: params.slPct,
-        isAlpaca: true
-      };
+          const positionConfig = {
+            y: botStatus.y || 1,
+            defaultSL: slDollar,
+            defaultTP: tpDollar,
+            trailingStop: trailingStopPercent,
+            targetTpPct: params.tpPct,
+            slPct: params.slPct,
+            isAlpaca: true
+          };
 
-      const highestPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
+          const highestPrice = await getAndUpdateHighestPrice(symbol, currentPrice, avgEntryPrice);
 
-      checkAndLogTrailingStopStatus(
-        mode as 'paper' | 'live',
-        symbol,
-        currentPrice,
-        avgEntryPrice,
-        highestPrice,
-        activeStrategy,
-        params
-      );
+          checkAndLogTrailingStopStatus(
+            mode,
+            symbol,
+            currentPrice,
+            avgEntryPrice,
+            highestPrice,
+            activeStrategy,
+            params
+          );
 
-      if (!positionEntryTimes[mode][symbol]) {
-        positionEntryTimes[mode][symbol] = Date.now();
-      }
+          if (!positionEntryTimes[mode][symbol]) {
+            positionEntryTimes[mode][symbol] = Date.now();
+          }
 
-      // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
-      const signal = inMemoryGeminiSignals.get(symbol);
-      const indResult = await TechnicalIndicatorService.getInstance().getSymbolIndicators(symbol, currentPrice, {
-        apiKey,
-        secretKey,
-        baseUrl
-      });
-
-      const positionObj = {
-        id: symbol,
-        asset: symbol,
-        currentValue,
-        openPrice: avgEntryPrice,
-        currentPrice: currentPrice,
-        unrealizedProfit: unrealizedPL,
-        highestPrice: highestPrice,
-        sentimentScore: signal?.score,
-        vix24hChangePct: vix24hChangePct,
-        entryTime: positionEntryTimes[mode][symbol],
-        atr: indResult.atr,
-        atr1_5x: indResult.atr1_5x,
-        adx: indResult.adx
-      };
-
-      const decision = RiskManagementService.evaluateClosure(
-        positionObj,
-        historicalProfits,
-        positionConfig,
-        botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
-      );
-
-      if (decision && decision.action === 'CLOSE') {
-        addLog(mode as 'paper' | 'live', `[Rischio Alpaca] Chiusura posizione per ${symbol}. Motivo: ${decision.reason}`);
-        
-        try {
-          const closeResponse = await fetch(`${baseUrl}/positions/${symbol}?cancel_orders=true`, {
-            method: 'DELETE',
-            headers: {
-              'APCA-API-KEY-ID': apiKey,
-              'APCA-API-SECRET-KEY': secretKey
-            }
+          // 2. Applicazione dei Vincoli Matematici di Gestione del Rischio con la configurazione specifica
+          const signal = inMemoryGeminiSignals.get(symbol);
+          const indResult = await TechnicalIndicatorService.getInstance().getSymbolIndicators(symbol, currentPrice, {
+            apiKey,
+            secretKey,
+            baseUrl
           });
+          const overrides = positionStopOverrides[mode]?.[symbol];
 
-          if (closeResponse.ok) {
-            delete localHighestPrices[symbol];
-            delete activeTrailingStatus[symbol];
-            addLog(mode as 'paper' | 'live', `[Alpaca] Posizione su ${symbol} chiusa con successo (Risk Management)!`);
-            if (db) {
-               await db.collection('alpaca_positions').doc(symbol).update({
-                 status: 'CLOSED',
-                 closedAt: new Date().toISOString(),
-                 closureReason: decision.reason,
-               });
+          const positionObj = {
+            id: symbol,
+            asset: symbol,
+            currentValue,
+            openPrice: avgEntryPrice,
+            currentPrice: currentPrice,
+            unrealizedProfit: unrealizedPL,
+            highestPrice: highestPrice,
+            sentimentScore: signal?.score,
+            vix24hChangePct: vix24hChangePct,
+            entryTime: positionEntryTimes[mode][symbol],
+            atr: indResult.atr,
+            atr1_5x: indResult.atr1_5x,
+            adx: indResult.adx,
+            enableTechnicalStop: overrides?.enableTechnicalStop,
+            enableCatastrophicStop: overrides?.enableCatastrophicStop
+          };
+
+          const decision = RiskManagementService.evaluateClosure(
+            positionObj,
+            historicalProfits,
+            positionConfig,
+            botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES
+          );
+
+          if (decision && decision.action === 'CLOSE') {
+            addLog(mode, `[Rischio Alpaca Realtime] Chiusura immediata ${symbol}. Motivo: ${decision.reason}`);
+            
+            try {
+              const closeResponse = await fetch(`${baseUrl}/positions/${symbol}?cancel_orders=true`, {
+                method: 'DELETE',
+                headers: {
+                  'APCA-API-KEY-ID': apiKey,
+                  'APCA-API-SECRET-KEY': secretKey
+                }
+              });
+
+              if (closeResponse.ok) {
+                delete localHighestPrices[symbol];
+                delete activeTrailingStatus[symbol];
+                if (positionEntryTimes[mode]) {
+                  delete positionEntryTimes[mode][symbol];
+                }
+                if (unrealizedPL < 0) {
+                  consecutiveSlTracker[mode].count += 1;
+                  consecutiveSlTracker[mode].lastSlTimestamp = Date.now();
+                } else {
+                  consecutiveSlTracker[mode].count = 0;
+                  consecutiveSlTracker[mode].lastSlTimestamp = null;
+                }
+                addLog(mode, `[Alpaca] Posizione su ${symbol} chiusa con successo (Realtime Risk Management)!`);
+                if (db) {
+                   await db.collection('alpaca_positions').doc(symbol).update({
+                     status: 'CLOSED',
+                     closedAt: new Date().toISOString(),
+                     closureReason: decision.reason,
+                   });
+                }
+              }
+            } catch (err: any) {
+              addLog(mode, `[Alpaca Errore] Impossibile chiudere posizione per ${symbol}: ${err.message}`);
             }
           }
-        } catch (err: any) {
-          addLog(mode as 'paper' | 'live', `[Alpaca Errore] Impossibile chiudere posizione per ${symbol}: ${err.message}`);
         }
+      } catch (error) {
+        // Silenzioso per non inquinare i log nel loop veloce
       }
     }
-  } catch (error) {
-    // Silenzioso per non inquinare i log nel loop veloce
-  }
   } finally {
     isFastCheckRunning = false;
   }
