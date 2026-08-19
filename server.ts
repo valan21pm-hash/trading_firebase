@@ -4776,8 +4776,9 @@ async function getStatusData() {
             const atrRule = botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
             const atrMultiplier = atrRule?.parameters?.atrMultiplier || 1.5;
             const minProfitBuffer = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
+            const posQty = parseFloat(pos.qty || '1') || 1;
             const rawAtrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
-            const minRequiredAtrStopPrice = avgEntry + minProfitBuffer;
+            const minRequiredAtrStopPrice = avgEntry + (minProfitBuffer / posQty);
             const isAtrTrailingActive = rawAtrTrailingStopPrice >= minRequiredAtrStopPrice;
             const overrides = positionStopOverrides[mode]?.[sym];
 
@@ -6037,6 +6038,7 @@ async function executeAlpacaRealtimeCheck() {
           const positionObj = {
             id: symbol,
             asset: symbol,
+            qty: parseFloat(pos.qty || '1') || 1,
             currentValue,
             openPrice: avgEntryPrice,
             currentPrice: currentPrice,
