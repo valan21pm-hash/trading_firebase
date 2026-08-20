@@ -6997,6 +6997,13 @@
     }
   ],
   "paperLogs": [
+    "[2026-08-20T13:44:14.995Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:43:14.994Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:42:14.993Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:41:14.992Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:40:14.991Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:39:14.990Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:38:14.990Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:13:56.712Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:12:56.711Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:11:56.711Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
@@ -8259,6 +8266,13 @@
     "[2026-07-30T19:42:41.680Z] [Alpaca] In attesa finestra di calcolo (tra 12m 23s). Mercato USA APERTO."
   ],
   "liveLogs": [
+    "[2026-08-20T13:44:14.995Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:43:14.994Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:42:14.993Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:41:14.992Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:40:14.991Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:39:14.990Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
+    "[2026-08-20T13:38:14.990Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:13:56.712Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:12:56.711Z] [System] Ciclo di trading ignorato: nessun bot attivo.",
     "[2026-08-14T13:11:56.711Z] [System] Ciclo di trading ignorato: nessun bot attivo.",

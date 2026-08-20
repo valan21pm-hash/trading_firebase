@@ -296,29 +296,47 @@ export class RiskManagementService {
   }
 
   /**
-   * Valuta il filtro di volatilità/forza trend ADX (< 25 inibisce nuove aperture di posizioni)
+   * Valuta il filtro di volatilità/forza trend ADX con soglia dinamica:
+   * Se la correlazione SPY-QQQ è >= 0.95, il filtro ADX per l'ingresso si riduce automaticamente da 19 a 14.
    */
   public static evaluateAdxVolatilityFilter(
     symbol: string,
     adxValue: number,
-    systemRules?: RiskRuleConfig[]
-  ): { allowed: boolean; reason?: string } {
+    systemRules?: RiskRuleConfig[],
+    spyQqqCorrelation?: number
+  ): { allowed: boolean; reason?: string; effectiveThreshold?: number; isDynamic?: boolean } {
     const adxRule = systemRules?.find(r => r.type === 'ADX_VOLATILITY_FILTER');
     const isEnabled = adxRule?.enabled ?? true;
     if (!isEnabled) {
       return { allowed: true };
     }
 
-    const minAdx = adxRule?.parameters?.minAdxThreshold ?? 25.0;
+    const baseMinAdx = adxRule?.parameters?.minAdxThreshold ?? 19.0;
+    const dynamicEnabled = adxRule?.parameters?.dynamicThresholdEnabled ?? true;
+    const highCorrThreshold = adxRule?.parameters?.highCorrThreshold ?? 0.95;
+    const reducedAdxThreshold = adxRule?.parameters?.reducedAdxThreshold ?? 14.0;
 
-    if (adxValue < minAdx) {
+    const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= highCorrThreshold;
+    const effectiveMinAdx = (dynamicEnabled && isHighCorr) ? reducedAdxThreshold : baseMinAdx;
+
+    if (adxValue < effectiveMinAdx) {
+      const dynamicReasonPart = (dynamicEnabled && isHighCorr)
+        ? ` (Correlazione SPY-QQQ ${spyQqqCorrelation!.toFixed(2)} >= ${highCorrThreshold} -> Soglia dinamica ridotta a ${reducedAdxThreshold.toFixed(1)})`
+        : ` (Soglia standard: ${baseMinAdx.toFixed(1)}${spyQqqCorrelation !== undefined ? `, Corr SPY-QQQ: ${spyQqqCorrelation.toFixed(2)}` : ''})`;
+
       return {
         allowed: false,
-        reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] ${symbol.toUpperCase()} presenta ADX(14) = ${adxValue.toFixed(1)} (< ${minAdx.toFixed(1)} soglia minima). Mercato privo di trend direzionale (fase laterale / chop zone). Nuovi acquisti inibiti per proteggere il capitale da falsi segnali.`
+        effectiveThreshold: effectiveMinAdx,
+        isDynamic: dynamicEnabled && isHighCorr,
+        reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] ${symbol.toUpperCase()} presenta ADX(14) = ${adxValue.toFixed(1)} < ${effectiveMinAdx.toFixed(1)}${dynamicReasonPart}. Trend direzionale assente o insufficiente. Nuovi acquisti inibiti.`
       };
     }
 
-    return { allowed: true };
+    return { 
+      allowed: true, 
+      effectiveThreshold: effectiveMinAdx, 
+      isDynamic: dynamicEnabled && isHighCorr 
+    };
   }
 
   /**

@@ -69,8 +69,11 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'ADX_VOLATILITY_FILTER',
     parameters: {
-      minAdxThreshold: 25.0,
-      minAdxPeriod: 14
+      minAdxThreshold: 19.0,
+      minAdxPeriod: 14,
+      dynamicThresholdEnabled: true,
+      highCorrThreshold: 0.95,
+      reducedAdxThreshold: 14.0
     }
   },
   {
@@ -704,12 +707,12 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
         </div>
 
-        {/* Rule 7: ADX Volatility & Trend Filter (ADX < 25) */}
+        {/* Rule 7: ADX Volatility & Trend Filter (Dynamic ADX Threshold) */}
         <div className={`p-4 rounded-xl border transition-all ${adxRule.enabled ? 'bg-cyan-50/40 border-cyan-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Activity className={`w-4 h-4 ${adxRule.enabled ? 'text-cyan-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">7. Filtro Volatilità / Trend (ADX &lt; 25)</h3>
+              <h3 className="text-xs font-bold text-slate-900">7. Filtro Volatilità / Trend ADX (Dynamic Threshold)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -723,21 +726,21 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            Inibisce l'apertura di nuove posizioni quando l'ADX a 14 periodi scende sotto la soglia specificata (25), indicando un mercato laterale, privo di direzionalità (chop) o caratterizzato da compressione della volatilità.
+            Inibisce l'apertura di nuove posizioni in assenza di trend direzionale (chop). Include la <strong>soglia dinamica</strong>: quando la correlazione SPY-QQQ &ge; +0.95 (sincronia elevata), la soglia minima ADX scende automaticamente da 19 a 14 per catturare il momentum senza sacrificare il controllo del rischio.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Soglia Minima ADX(14) per Acquisti:</span>
-                <span className="font-mono text-cyan-600 font-bold">&ge; {(adxRule.parameters.minAdxThreshold ?? 25.0).toFixed(1)}</span>
+                <span>Soglia Base ADX(14) per Acquisti:</span>
+                <span className="font-mono text-cyan-600 font-bold">&ge; {(adxRule.parameters.minAdxThreshold ?? 19.0).toFixed(1)}</span>
               </div>
               <input
                 type="range"
-                min="15"
-                max="40"
+                min="10"
+                max="35"
                 step="1"
-                value={adxRule.parameters.minAdxThreshold ?? 25.0}
+                value={adxRule.parameters.minAdxThreshold ?? 19.0}
                 onChange={(e) => updateRule('ADX_VOLATILITY_FILTER', r => ({
                   ...r,
                   parameters: { ...r.parameters, minAdxThreshold: parseFloat(e.target.value) }
@@ -745,6 +748,33 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                 disabled={!adxRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
               />
+            </div>
+
+            {/* Dynamic ADX Threshold toggle & reduced threshold */}
+            <div className="p-2.5 rounded-md bg-cyan-50/60 border border-cyan-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-cyan-900">Dynamic Threshold (Correlazione SPY-QQQ &ge; 0.95):</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={adxRule.parameters.dynamicThresholdEnabled ?? true}
+                    onChange={(e) => updateRule('ADX_VOLATILITY_FILTER', r => ({
+                      ...r,
+                      parameters: { ...r.parameters, dynamicThresholdEnabled: e.target.checked }
+                    }))}
+                    disabled={!adxRule.enabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-600"></div>
+                </label>
+              </div>
+
+              {(adxRule.parameters.dynamicThresholdEnabled ?? true) && (
+                <div className="flex justify-between items-center text-[11px] text-cyan-800">
+                  <span>Soglia Ridotta con Corr &ge; {(adxRule.parameters.highCorrThreshold ?? 0.95).toFixed(2)}:</span>
+                  <span className="font-mono font-bold text-cyan-700">&ge; {(adxRule.parameters.reducedAdxThreshold ?? 14.0).toFixed(1)}</span>
+                </div>
+              )}
             </div>
 
             <div>
@@ -768,7 +798,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
             </div>
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Formula: Wilder's Smoothing True Range, +DI / -DI e Directional Movement Index (DMI).
+              Formula: Wilder's Smoothing True Range &amp; DMI. Adattamento dinamico con Pearson Correlation SPY-QQQ.
             </div>
           </div>
         </div>

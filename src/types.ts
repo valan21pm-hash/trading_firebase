@@ -15,8 +15,11 @@ export interface RiskRuleConfig {
     minCorrelationThreshold?: number; // es. 0.95 per correlazione SPY-QQQ >= 0.95
     maxSemiconExposurePct?: number;   // es. 40 per limite esposizione 40% ai semiconduttori
     semiconSymbols?: string[];        // es. ['AMD', 'AVGO', 'NVDA']
-    minAdxThreshold?: number;         // es. 25 per ADX < 25 inibizione operatività
+    minAdxThreshold?: number;         // default 19.0 per ADX base
     minAdxPeriod?: number;            // default 14
+    dynamicThresholdEnabled?: boolean;// Se true, soglia dinamica ADX: SPY-QQQ >= 0.95 riduce soglia da 19 a 14
+    highCorrThreshold?: number;       // default 0.95
+    reducedAdxThreshold?: number;     // default 14.0
     atrMultiplier?: number;           // default 1.5 per Trailing Stop 1.5x ATR
     atrPeriod?: number;               // default 14
     useAtrTrailingStop?: boolean;     // attiva trailing stop individuale su volatilità reale ATR

@@ -129,8 +129,11 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'ADX_VOLATILITY_FILTER',
     parameters: {
-      minAdxThreshold: 25.0,
-      minAdxPeriod: 14
+      minAdxThreshold: 19.0,
+      minAdxPeriod: 14,
+      dynamicThresholdEnabled: true,
+      highCorrThreshold: 0.95,
+      reducedAdxThreshold: 14.0
     }
   },
   {
@@ -343,7 +346,8 @@ function isPurchaseAllowedBySystemRules(
   isMarketSentimentDecreasing: boolean,
   systemRules: RiskRuleConfig[] = [],
   marketAdx?: number,
-  currentOpenPositionsCount?: number
+  currentOpenPositionsCount?: number,
+  spyQqqCorrelation?: number
 ): { allowed: boolean; reason?: string } {
   for (const rule of systemRules) {
     if (!rule.enabled) continue;
@@ -359,13 +363,24 @@ function isPurchaseAllowedBySystemRules(
       }
     }
 
-    // Regola 7: ADX_VOLATILITY_FILTER (Filtro Volatilità ADX < 25)
+    // Regola 7: ADX_VOLATILITY_FILTER (Filtro Volatilità ADX dinamico con correlazione SPY-QQQ)
     if (rule.type === 'ADX_VOLATILITY_FILTER' && marketAdx !== undefined) {
-      const minAdx = rule.parameters.minAdxThreshold ?? 25.0;
-      if (marketAdx < minAdx) {
+      const baseMinAdx = rule.parameters.minAdxThreshold ?? 19.0;
+      const dynamicEnabled = rule.parameters.dynamicThresholdEnabled ?? true;
+      const highCorrThreshold = rule.parameters.highCorrThreshold ?? 0.95;
+      const reducedAdxThreshold = rule.parameters.reducedAdxThreshold ?? 14.0;
+
+      const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= highCorrThreshold;
+      const effectiveMinAdx = (dynamicEnabled && isHighCorr) ? reducedAdxThreshold : baseMinAdx;
+
+      if (marketAdx < effectiveMinAdx) {
+        const dynNote = (dynamicEnabled && isHighCorr)
+          ? ` (Correlazione SPY-QQQ ${spyQqqCorrelation!.toFixed(2)} >= ${highCorrThreshold} -> Soglia dinamica ridotta a ${reducedAdxThreshold.toFixed(1)})`
+          : ` (Soglia standard: ${baseMinAdx.toFixed(1)}${spyQqqCorrelation !== undefined ? `, Corr SPY-QQQ: ${spyQqqCorrelation.toFixed(2)}` : ''})`;
+
         return {
           allowed: false,
-          reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] Benchmark di mercato con ADX(14) = ${marketAdx.toFixed(1)} < ${minAdx.toFixed(1)}. Mercato privo di trend direzionale (congestione / chop). Nuovi acquisti inibiti.`
+          reason: `[Regola Sistema: ADX_VOLATILITY_FILTER] Benchmark di mercato con ADX(14) = ${marketAdx.toFixed(1)} < ${effectiveMinAdx.toFixed(1)}${dynNote}. Mercato privo di trend direzionale (congestione / chop). Nuovi acquisti inibiti.`
         };
       }
     }
@@ -3322,13 +3337,18 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         shouldClose = true;
         closeReason = riskDecision.reason;
       } else if (isPreCloseWindow) {
-        // Regola: NON chiudere automaticamente le posizioni a fine mercato se il sentiment è >= 0.40 (40%)
-        if (sentimentScore >= 0.40) {
-          shouldClose = false;
-          addLog(mode as 'paper' | 'live', `[Check-Point EOD] Posizione su ${symbol} MANTENUTA a fine giornata: Sentiment elevato (${sentimentScore.toFixed(2)} >= 0.40). Nessuna chiusura automatica EOD.`);
-        } else if (profitAmt > 0) {
+        // Regola EOD: Eliminata la chiusura automatica generica dei profitti a fine giornata.
+        // Vengono chiuse a fine giornata SOLO ed ESCLUSIVAMENTE le posizioni con margine di profitto >= +2.00%.
+        const profitMarginPct = avgEntryPrice > 0 
+          ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 
+          : (profitPct * 100);
+
+        if (profitMarginPct >= 2.0) {
           shouldClose = true;
-          closeReason = `Chiusura EOD (15 min alla fine): Sentiment ${sentimentScore.toFixed(2)} (< 0.40) con Profitto di $${profitAmt.toFixed(2)} garantito.`;
+          closeReason = `[Check-Point EOD - Target +2%] Posizione su ${symbol} ha raggiunto un margine di profitto di +${profitMarginPct.toFixed(2)}% (>= +2.00%, utile +$${profitAmt.toFixed(2)}). Chiusura e monetizzazione target a fine giornata.`;
+        } else {
+          shouldClose = false;
+          addLog(mode as 'paper' | 'live', `[Check-Point EOD] Posizione su ${symbol} MANTENUTA a fine giornata: Margine di profitto attuale (${profitMarginPct >= 0 ? '+' : ''}${profitMarginPct.toFixed(2)}%) inferiore alla soglia di uscita EOD del +2.00%. Nessuna liquidazione forzata.`);
         }
       }
 
@@ -3394,12 +3414,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const isDecreasingSentiment = isMarketSentimentDecreasingTwoConsecutiveScans();
     const activeRules = botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES;
     const marketAdxRes = await TechnicalIndicatorService.getInstance().getMarketAdx(getAlpacaConfig(mode));
+    const currentSpyQqqCorr = StatisticalExpertService.getInstance().getMetrics().correlations.spy_qqq;
     const purchasePermission = isPurchaseAllowedBySystemRules(
       minutesToClose,
       isDecreasingSentiment,
       activeRules,
       marketAdxRes.marketAdx,
-      openPositions.length
+      openPositions.length,
+      currentSpyQqqCorr
     );
 
     // Valutazione Hard-Risk Management (Limite di perdita giornaliera -1.00% e Cooldown 30m dopo 2 Stop-Loss consecutivi)
@@ -3670,22 +3692,26 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
-              // --- REGOLA VOLATILITÀ/TREND ADX < 25 & CONFERMA TREND EMA 20/50 ---
+              // --- REGOLA VOLATILITÀ/TREND ADX CON SOGLIA DINAMICA (Se SPY-QQQ >= 0.95 -> 14 altrimenti 19) & CONFERMA TREND EMA 20/50 ---
               const symIndicators = await TechnicalIndicatorService.getInstance().getSymbolIndicators(item.symbol, 100, getAlpacaConfig(mode));
               
-              const adxRule = activeRules.find(r => r.type === 'ADX_VOLATILITY_FILTER');
-              if (adxRule?.enabled ?? true) {
-                const minAdx = adxRule?.parameters?.minAdxThreshold ?? 25.0;
-                if (symIndicators.adx < minAdx) {
-                  addLog(mode as 'paper' | 'live', `[Filtro Volatilità ADX < ${minAdx}] Salto acquisto ${item.symbol}: ADX(${adxRule?.parameters?.minAdxPeriod ?? 14}) = ${symIndicators.adx.toFixed(1)} < ${minAdx}. Trend direzionale assente/insufficiente.`);
-                  addLogicLog(mode, {
-                    timestamp: new Date().toISOString(),
-                    symbol: item.symbol,
-                    action: 'RISK_VETO',
-                    reasoning: `Filtro ADX < ${minAdx}: ${item.symbol} presenta ADX=${symIndicators.adx.toFixed(1)}`
-                  });
-                  continue;
-                }
+              const adxEval = RiskManagementService.evaluateAdxVolatilityFilter(
+                item.symbol,
+                symIndicators.adx,
+                activeRules,
+                spyQqqCorr
+              );
+
+              if (!adxEval.allowed) {
+                const vetoReason = adxEval.reason || `[Filtro ADX] ${item.symbol} presenta ADX=${symIndicators.adx.toFixed(1)} insufficiente per l'ingresso`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'RISK_VETO',
+                  reasoning: vetoReason
+                });
+                continue;
               }
 
               // --- CONFERMA TECNICA EMA 20/50 (Timeframe 15m) ---
