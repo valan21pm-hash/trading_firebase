@@ -1361,7 +1361,7 @@ function AccountPanel({
                               ATR14: ${pos.atr.toFixed(2)} | Trailing ATR (1.5x): ${(pos.atrTrailingStopPrice || 0).toFixed(2)} {pos.isAtrTrailingActive ? (
                                 <span className="text-emerald-700 font-bold">(🔒 Protetta +${totalProtProfit.toFixed(2)} di utile tot)</span>
                               ) : (
-                                <span className="text-indigo-600">(In attesa picco &ge;${targetPrice.toFixed(2)} per +$${(pos.minProfitBufferDollars || 0.04).toFixed(2)} tot)</span>
+                                <span className="text-indigo-600">(In attesa picco &ge;${targetPrice.toFixed(2)} per +${(pos.minProfitBufferDollars || 0.04).toFixed(2)}$ tot)</span>
                               )}
                             </span>
                           );

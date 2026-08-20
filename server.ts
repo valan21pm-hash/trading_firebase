@@ -158,9 +158,12 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
+      blockMiddayChopWindow: true,
       blockAfternoonClosingWindow: true,
       morningBlockStart: '09:30',
       morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:00',
       afternoonBlockStart: '15:30',
       afternoonBlockEnd: '16:00'
     }
@@ -221,6 +224,7 @@ export interface EstTimeInfo {
   timeFormatted: string;
   isMorningVolatileLock: boolean;
   isToxicWindowLock: boolean;
+  isMiddayChopLock: boolean;
   isAfternoonVolatileLock: boolean;
   isMarketTimeLocked: boolean;
   lockReason?: string;
@@ -252,19 +256,23 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
   
   // 09:30 - 10:30 EST => 570 - 630 minuti (Apertura)
   // 10:30 - 12:00 EST => 630 - 720 minuti (Finestra Tossica Multi-IA)
-  // 15:30 - 16:00 EST => 930 - 960 minuti (Pre-chiusura / Asta)
+  // 12:00 - 14:00 EST => 720 - 840 minuti (Filtro Temporale Esecutivo / Chop di metà giornata)
+  // >= 15:30 EST => >= 930 minuti (Pre-chiusura 15:30-16:00 e sessione serale/after-hours)
   const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 630;
   const isToxicWindowLock = totalMinutes >= 630 && totalMinutes < 720;
-  const isAfternoonVolatileLock = totalMinutes >= 930 && totalMinutes <= 960;
-  const isMarketTimeLocked = isMorningVolatileLock || isToxicWindowLock || isAfternoonVolatileLock;
+  const isMiddayChopLock = totalMinutes >= 720 && totalMinutes < 840;
+  const isAfternoonVolatileLock = totalMinutes >= 930;
+  const isMarketTimeLocked = isMorningVolatileLock || isToxicWindowLock || isMiddayChopLock || isAfternoonVolatileLock;
   
   let lockReason: string | undefined;
   if (isMorningVolatileLock) {
     lockReason = `Fascia di apertura ad alta volatilità e rumore (09:30 - 10:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per preservare il capitale.`;
   } else if (isToxicWindowLock) {
     lockReason = `Fascia oraria ad alta inefficienza / tossica identificata dall'analisi Multi-IA (10:30 - 12:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare falsi breakout.`;
+  } else if (isMiddayChopLock) {
+    lockReason = `Filtro Temporale Esecutivo: Fascia di metà giornata ad alto rumore e chop (12:00 - 14:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare drawdown persistenti.`;
   } else if (isAfternoonVolatileLock) {
-    lockReason = `Fascia pre-chiusura / asta di fine sessione ad alta instabilità (15:30 - 16:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti.`;
+    lockReason = `Filtro Temporale Esecutivo: Fascia pre-chiusura / serale dopo le 15:30 EST (orario corrente: ${timeFormatted}). Ingressi inibiti per evitare spread elevati e volatilità non strutturata.`;
   }
   
   return {
@@ -274,6 +282,7 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
     timeFormatted,
     isMorningVolatileLock,
     isToxicWindowLock,
+    isMiddayChopLock,
     isAfternoonVolatileLock,
     isMarketTimeLocked,
     lockReason
@@ -372,10 +381,11 @@ function isPurchaseAllowedBySystemRules(
       }
     }
 
-    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-10:30 e 15:30-16:00 EST)
+    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-10:30, 12:00-14:00 e 15:30-16:00 EST)
     if (rule.type === 'VOLATILITY_TIME_WINDOW_LOCK') {
       const estInfo = getEstMarketTime();
       const blockMorning = rule.parameters.blockMorningOpeningWindow ?? true;
+      const blockMidday = rule.parameters.blockMiddayChopWindow ?? true;
       const blockAfternoon = rule.parameters.blockAfternoonClosingWindow ?? true;
 
       if (blockMorning && estInfo.isMorningVolatileLock) {
@@ -385,10 +395,17 @@ function isPurchaseAllowedBySystemRules(
         };
       }
 
+      if (blockMidday && estInfo.isMiddayChopLock) {
+        return {
+          allowed: false,
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Filtro Temporale Esecutivo: Inibizione apertura nuove posizioni BUY nella fascia di metà giornata (12:00-14:00 EST, orario: ${estInfo.timeFormatted}) per evitare il rumore (Chop) e il drawdown persistente.`
+        };
+      }
+
       if (blockAfternoon && estInfo.isAfternoonVolatileLock) {
         return {
           allowed: false,
-          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella fascia pre-chiusura / asta di fine sessione (15:30-16:00 EST, orario: ${estInfo.timeFormatted}). Ingressi bloccati per evitare instabilità estreme.`
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Filtro Temporale Esecutivo: Inibizione apertura nuove posizioni BUY dopo le 15:30 EST (orario: ${estInfo.timeFormatted}) per evitare spread elevati, pre-chiusura e volatilità serale non strutturata.`
         };
       }
     }
@@ -1495,8 +1512,8 @@ let botStatus: {
   monitoredSymbols: [],
   historicalProfits: 2.50,
   y: 1,
-  defaultTP: 2.50,
-  defaultSL: -1.00,
+  defaultTP: 2.00,
+  defaultSL: -0.50,
   trailingStop: 1.2,
   timeframe: 15,
   riskPercentage: 95,

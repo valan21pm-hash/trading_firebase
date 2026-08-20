@@ -23,9 +23,12 @@ export interface RiskRuleConfig {
     minProfitBufferDollars?: number;  // default 0.04 (attiva trailing ATR solo quando garantisce almeno +0.04$ di profitto)
     maxConcurrentPositions?: number;  // default 3-5 (limite max posizioni simultanee)
     blockMorningOpeningWindow?: boolean;   // default true (inibizione 09:30-10:30 EST)
+    blockMiddayChopWindow?: boolean;       // default true (inibizione 12:00-14:00 EST)
     blockAfternoonClosingWindow?: boolean; // default true (inibizione 15:30-16:00 EST)
     morningBlockStart?: string;       // default '09:30'
     morningBlockEnd?: string;         // default '10:30'
+    middayBlockStart?: string;        // default '12:00'
+    middayBlockEnd?: string;          // default '14:00'
     afternoonBlockStart?: string;     // default '15:30'
     afternoonBlockEnd?: string;       // default '16:00'
     requireEmaBullishTrend?: boolean; // default true: richiede Prezzo > EMA 20 e EMA 20 >= EMA 50 su 15m
