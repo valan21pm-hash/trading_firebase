@@ -1,3 +1,4 @@
+// Build Trigger: 2026-08-21T15:25:00Z - GitHub repository sync trigger
 import { GeminiSignalService } from './src/backend/services/geminiSignalService.js';
 import 'dotenv/config';
 const originalConsoleError = console.error;
