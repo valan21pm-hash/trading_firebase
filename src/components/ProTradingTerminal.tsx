@@ -793,7 +793,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
 
   const initialRefBalance = accountData.dailyPnL && accountData.dailyPnL.length > 0 && accountData.dailyPnL[0]?.balance
     ? accountData.dailyPnL[0].balance
-    : (tradingMode === 'paper' ? 100000 : 50);
+    : (tradingMode === 'paper' ? 100000 : 174.20);
 
   const rawBalance = accountData.balance;
   const totalBalance = (rawBalance !== undefined && rawBalance !== null && !isNaN(rawBalance) && rawBalance > 0)
@@ -1063,6 +1063,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
               <Wallet className="w-3 h-3 text-indigo-400" /> Capitale Totale
             </div>
             <div className="text-sm font-bold text-white mt-0.5">${totalBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div className="text-[9px] text-slate-400">Iniziale: ${initialRefBalance.toFixed(2)}</div>
           </div>
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${tradingMode === 'live' ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-indigo-950 text-indigo-400 border border-indigo-800'}`}>
             {tradingMode.toUpperCase()}
@@ -1273,6 +1274,11 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           const isClosing = closingSymbols.includes(pos.symbol);
                           const isTechStop = pos.enableTechnicalStop !== false;
                           const isCatStop = pos.enableCatastrophicStop !== false;
+                          const currentAtr = pos.atr || 0;
+                          const posQty = qty > 0 ? qty : 1;
+                          const minReqAtrStop = pos.minRequiredAtrStopPrice || (avgEntry + (0.04 / posQty));
+                          const activationP = pos.atrActivationPrice || (minReqAtrStop + (1.5 * currentAtr));
+                          const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && pos.atrTrailingStopPrice >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
 
                           return (
                             <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
@@ -1283,16 +1289,24 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <td className="py-3 px-3 font-semibold text-slate-200">
                                 {qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}
                               </td>
-                              <td className="py-3 px-3 text-slate-300">${avgEntry.toFixed(2)}</td>
+                              <td className="py-3 px-3 text-slate-300 font-mono">${avgEntry.toFixed(2)}</td>
                               <td className="py-3 px-3">
-                                <div className="font-bold text-white">${currentPrice.toFixed(2)}</div>
-                                {pos.atr ? (
-                                  <div className="text-[9px] text-emerald-400 font-mono" title={`ATR14: $${pos.atr.toFixed(2)} | Trailing Stop (1.5x ATR): $${(pos.atrTrailingStopPrice || 0).toFixed(2)} | ADX: ${pos.adx ? pos.adx.toFixed(1) : '-'}`}>
-                                    <span>TS 1.5xATR: ${(pos.atrTrailingStopPrice || 0).toFixed(2)}</span>
-                                  </div>
-                                ) : null}
+                                <div className="font-bold text-white font-mono">${currentPrice.toFixed(2)}</div>
+                                <div className="mt-0.5">
+                                  {isReached ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800" title={`Trailing Stop Attivo a $${(pos.atrTrailingStopPrice || 0).toFixed(2)}`}>
+                                      <span className="w-1 h-1 rounded-full bg-emerald-400" />
+                                      TS Attivo (${(pos.atrTrailingStopPrice || 0).toFixed(2)})
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/60" title={`Attivazione Trailing a $${activationP.toFixed(2)}`}>
+                                      <span className="w-1 h-1 rounded-full bg-rose-400" />
+                                      Attiv. ${activationP.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="py-3 px-3 font-bold text-amber-300">${marketVal.toFixed(2)}</td>
+                              <td className="py-3 px-3 font-bold text-amber-300 font-mono">${marketVal.toFixed(2)}</td>
                               <td className="py-3 px-3">
                                 <SentimentBadge symbol={pos.symbol} signals={geminiSignals} showReasoning={true} />
                               </td>
@@ -1378,6 +1392,11 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       const isClosing = closingSymbols.includes(pos.symbol);
                       const isTechStop = pos.enableTechnicalStop !== false;
                       const isCatStop = pos.enableCatastrophicStop !== false;
+                      const currentAtr = pos.atr || 0;
+                      const posQty = qty > 0 ? qty : 1;
+                      const minReqAtrStop = pos.minRequiredAtrStopPrice || (avgEntry + (0.04 / posQty));
+                      const activationP = pos.atrActivationPrice || (minReqAtrStop + (1.5 * currentAtr));
+                      const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && pos.atrTrailingStopPrice >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
 
                       return (
                         <div key={pos.symbol} className="bg-[#090D16] border border-slate-800 rounded-xl p-3.5 space-y-3">
@@ -1401,28 +1420,37 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <span className="font-semibold text-slate-200">{qty < 1 ? qty.toFixed(4) : qty.toFixed(2)}</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block text-[9px] uppercase">Valore Mercato</span>
-                              <span className="font-semibold text-amber-300">${marketVal.toFixed(2)}</span>
+                              <span className="text-slate-400 block text-[9px] uppercase">Investimento Nominale</span>
+                              <span className="font-bold text-amber-300">${marketVal.toFixed(2)}</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block text-[9px] uppercase">P. Carico</span>
+                              <span className="text-slate-400 block text-[9px] uppercase">Prezzo Acquisto</span>
                               <span className="text-slate-300">${avgEntry.toFixed(2)}</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block text-[9px] uppercase">P. Attuale</span>
+                              <span className="text-slate-400 block text-[9px] uppercase">Prezzo Attuale</span>
                               <span className="text-white font-bold">${currentPrice.toFixed(2)}</span>
                             </div>
-                            <div className="col-span-2">
-                              <span className="text-slate-400 block text-[9px] uppercase">P&L Giornaliero</span>
-                              <span className={`font-semibold ${intradayPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {intradayPL >= 0 ? '+' : ''}${intradayPL.toFixed(2)} ({intradayPLPC >= 0 ? '+' : ''}{intradayPLPC.toFixed(1)}%)
-                              </span>
+                          </div>
+
+                          {/* Trailing Stop Activation Status Card */}
+                          <div className={`p-2.5 rounded-lg border text-xs font-mono flex items-center justify-between gap-2 ${
+                            isReached 
+                              ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300' 
+                              : 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+                          }`}>
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <span className={`w-2 h-2 rounded-full ${isReached ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                              <span>{isReached ? '🟢 TRAILING ATTIVO' : '🔴 TRAILING IN ATTESA'}</span>
+                            </div>
+                            <div className="text-[11px] text-right">
+                              <span>Attivazione: <strong>${activationP.toFixed(2)}</strong></span>
                             </div>
                           </div>
 
                           {/* Stop Loss Dedicated Controls */}
                           <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] font-mono">
-                            <span className="text-[10px] text-slate-400">Stop Dedicati:</span>
+                            <span className="text-[10px] text-slate-400">Protezioni:</span>
                             <div className="flex items-center gap-1.5">
                               <button
                                 onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop)}
@@ -1433,7 +1461,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 }`}
                               >
                                 <Shield className="w-2.5 h-2.5" />
-                                ATR Stop
+                                ATR
                               </button>
                               <button
                                 onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop)}
@@ -1444,7 +1472,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 }`}
                               >
                                 <AlertTriangle className="w-2.5 h-2.5" />
-                                -3% Stop
+                                -3%
                               </button>
                             </div>
                           </div>

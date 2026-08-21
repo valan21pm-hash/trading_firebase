@@ -774,8 +774,11 @@ function AccountPanel({
     localStorage.setItem(`alpaca_${type}_isAccountCollapsed`, String(isAccountCollapsed));
   }, [isAccountCollapsed, type]);
 
-  const initialCapital = (account.dailyPnL && account.dailyPnL.length > 0) ? account.dailyPnL[0].balance : (type === 'paper' ? 100.00 : 50.00);
-  const currentBalance = account.balance ?? 0;
+  // Capitale iniziale di riferimento impostato a $174.20 per il calcolo delle variazioni percentuali
+  const initialCapital = (account.dailyPnL && account.dailyPnL.length > 0 && account.dailyPnL[0].balance && account.dailyPnL[0].balance > 0)
+    ? account.dailyPnL[0].balance
+    : (type === 'paper' ? 100000 : 174.20);
+  const currentBalance = account.balance ?? (type === 'live' ? 174.20 : 100000);
   const pnlDiff = currentBalance - initialCapital;
   const pnlPercent = initialCapital > 0 ? (pnlDiff / initialCapital) * 100 : 0;
   
@@ -1234,43 +1237,43 @@ function AccountPanel({
                 const formattedQty = qtyNum % 1 === 0 ? qtyNum.toString() : qtyNum.toFixed(4);
                 const avgPrice = parseFloat(pos.avg_entry_price || '0');
                 const currPrice = parseFloat(pos.current_price || '0');
+                const nominalVal = pos.nominalInvestment || (avgPrice * qtyNum);
+                const unRealizedVal = parseFloat(pos.unrealized_pl || '0');
+                const unRealizedPct = pos.unrealized_plpc !== undefined ? (parseFloat(pos.unrealized_plpc) * 100) : (avgPrice > 0 ? ((currPrice - avgPrice) / avgPrice) * 100 : 0);
+                const posQty = qtyNum > 0 ? qtyNum : 1;
+                
+                // Calcolo soglia di attivazione del Trailing Stop con profitto minimo garantito
+                const atrMultiplier = 1.5;
+                const currentAtr = pos.atr || 0;
+                const minRequiredAtrStop = pos.minRequiredAtrStopPrice || (avgPrice + (0.04 / posQty));
+                const activationPrice = pos.atrActivationPrice || (minRequiredAtrStop + (atrMultiplier * currentAtr));
+                const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && pos.atrTrailingStopPrice >= minRequiredAtrStop) || (currPrice >= activationPrice && activationPrice > 0);
+                const trailingStopVal = pos.atrTrailingStopPrice || (currPrice - (atrMultiplier * currentAtr));
+                const lockedProfit = Math.max(0, (trailingStopVal - avgPrice) * posQty);
+                const catastrophicStopPrice = avgPrice * 0.97;
+
                 return (
-                  <div key={i} className="flex flex-col bg-slate-50 p-3 rounded-lg border border-slate-100 gap-2.5">
-                    <div className="flex flex-col sm:flex-row justify-between sm:items-center text-sm gap-2 sm:gap-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-gray-900 text-base">{pos.symbol}</span>
-                          <SentimentBadge symbol={pos.symbol} signals={status?.geminiSignals} showReasoning={true} />
-                          <span className="text-gray-500 text-xs block sm:inline">({formattedQty} quote)</span>
-                        </div>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
-                          <div>
-                            <span className="text-gray-400">Prezzo acq: </span>
-                            <span className="font-mono font-medium text-gray-800">${avgPrice.toFixed(2)}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Quot. attuale: </span>
-                            <span className="font-mono font-medium text-gray-800">${currPrice.toFixed(2)}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Investimento nominale: </span>
-                            <span className="font-mono font-bold text-slate-800">${(pos.nominalInvestment || (avgPrice * qtyNum)).toFixed(2)}</span>
-                          </div>
-                        </div>
+                  <div key={i} className="flex flex-col bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs gap-3">
+                    {/* 1. Header Ticker, Sentiment, Quantità e P&L */}
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="font-extrabold text-slate-900 text-lg tracking-tight">{pos.symbol}</span>
+                        <SentimentBadge symbol={pos.symbol} signals={status?.geminiSignals} showReasoning={true} />
+                        <span className="text-slate-600 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded-md font-medium">
+                          {formattedQty} quote
+                        </span>
                       </div>
+
                       <div className="flex items-center gap-2 self-end sm:self-auto">
-                        <div className={`font-semibold flex items-center gap-1.5 ${parseFloat(pos.unrealized_pl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          <span>{parseFloat(pos.unrealized_pl) >= 0 ? '+' : ''}{parseFloat(pos.unrealized_pl).toFixed(2)}$</span>
-                          {pos.unrealized_plpc !== undefined && (
-                            <span className="text-xs font-semibold opacity-95 px-1.5 py-0.5 rounded bg-current/10">
-                              ({parseFloat(pos.unrealized_plpc) >= 0 ? '+' : ''}{(parseFloat(pos.unrealized_plpc) * 100).toFixed(2)}%)
-                            </span>
-                          )}
+                        {/* P&L Latente */}
+                        <div className={`px-2.5 py-1 rounded-lg font-mono font-bold text-sm flex items-center gap-1.5 ${unRealizedVal >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                          <span>{unRealizedVal >= 0 ? '+' : ''}${unRealizedVal.toFixed(2)}</span>
+                          <span className="text-xs font-semibold">({unRealizedPct >= 0 ? '+' : ''}{unRealizedPct.toFixed(2)}%)</span>
                         </div>
 
                         <button
                           onClick={() => onOpenForceBuy && onOpenForceBuy(pos.symbol)}
-                          className="px-2 py-1 text-xs font-bold rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-300 transition-colors cursor-pointer flex items-center gap-1"
+                          className="px-2.5 py-1 text-xs font-bold rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
                           title="Forza l'acquisto di ulteriori quote"
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -1282,14 +1285,14 @@ function AccountPanel({
                             <button
                               onClick={() => onClosePosition(pos.symbol, type)}
                               disabled={closingSymbols.includes(pos.symbol)}
-                              className="px-2 py-0.5 text-xs font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                              className="px-2.5 py-0.5 text-xs font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
                             >
-                              {closingSymbols.includes(pos.symbol) ? '...' : 'Chiudi'}
+                              {closingSymbols.includes(pos.symbol) ? '...' : 'Conferma'}
                             </button>
                             <button
                               onClick={() => setConfirmCloseSymbol(null)}
                               disabled={closingSymbols.includes(pos.symbol)}
-                              className="p-0.5 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors cursor-pointer disabled:opacity-50"
+                              className="p-1 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors cursor-pointer disabled:opacity-50"
                               title="Annulla"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -1299,7 +1302,7 @@ function AccountPanel({
                           <button
                             onClick={() => setConfirmCloseSymbol({ symbol: pos.symbol, type })}
                             disabled={closingSymbols.includes(pos.symbol)}
-                            className="p-1 px-2 text-xs font-semibold rounded text-red-600 hover:bg-red-50 border border-red-200 hover:border-red-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                            className="p-1 px-2.5 text-xs font-semibold rounded-lg text-rose-700 hover:bg-rose-50 border border-rose-200 hover:border-rose-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
                             title="Chiudi Posizione"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1309,73 +1312,92 @@ function AccountPanel({
                       </div>
                     </div>
 
-                    {/* Controlli Stop Loss Dedicati per Posizione (Stop Tecnico ATR & Stop Catastrofico -3%) */}
-                    <div className="p-2.5 bg-slate-100/80 rounded-lg border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2 pt-2 border-t border-slate-100">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stop Loss Dedicati:</span>
-                        <button
-                          type="button"
-                          onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop !== false)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                            pos.enableTechnicalStop !== false
-                              ? 'bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700'
-                              : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
-                          }`}
-                          title={pos.enableTechnicalStop !== false ? 'Stop Tecnico Dinamico (ATR) ATTIVO: Clicca per disattivare' : 'Stop Tecnico Dinamico (ATR) DISATTIVATO: Clicca per attivare'}
-                        >
-                          <Shield className="w-3.5 h-3.5" />
-                          <span>Stop Tecnico (ATR)</span>
-                          <span className={`w-2 h-2 rounded-full ${pos.enableTechnicalStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop !== false)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                            pos.enableCatastrophicStop !== false
-                              ? 'bg-rose-600 border-rose-700 text-white hover:bg-rose-700'
-                              : 'bg-white border-slate-300 text-slate-400 line-through hover:bg-slate-50'
-                          }`}
-                          title={pos.enableCatastrophicStop !== false ? 'Stop Catastrofico (-3%) ATTIVO: Clicca per disattivare' : 'Stop Catastrofico (-3%) DISATTIVATO: Clicca per attivare'}
-                        >
-                          <AlertTriangle className="w-3.5 h-3.5" />
-                          <span>Stop Catastrofico (-3%)</span>
-                          <span className={`w-2 h-2 rounded-full ${pos.enableCatastrophicStop !== false ? 'bg-emerald-300' : 'bg-slate-300'}`} />
-                        </button>
+                    {/* 2. Valori Nominali e Prezzi in Box Chiarissimi */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                      <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80">
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">Investimento Nominale</span>
+                        <span className="font-mono font-extrabold text-slate-900 text-base">${nominalVal.toFixed(2)}</span>
                       </div>
-
-                      <div className="text-[10px] text-slate-500 font-mono">
-                        {pos.enableTechnicalStop !== false ? '🛡️ ATR attivo' : '❌ ATR disattivato'} | {pos.enableCatastrophicStop !== false ? '🚨 -3% attivo' : '❌ -3% disattivato'}
+                      <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80">
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">Prezzo Acquisto</span>
+                        <span className="font-mono font-bold text-slate-800 text-base">${avgPrice.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80 col-span-2 sm:col-span-1">
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">Quotazione Attuale</span>
+                        <span className="font-mono font-extrabold text-slate-900 text-base">${currPrice.toFixed(2)}</span>
                       </div>
                     </div>
 
-                    {/* Real-time Indicator: Stop Tecnico ATR e Stop Catastrofico -3% */}
-                    <div className="mt-1.5 p-2 bg-white rounded-md border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {pos.atr ? (() => {
-                          const posQty = parseFloat(pos.qty || '1') || 1;
-                          const totalProtProfit = Math.max(0, ((pos.atrTrailingStopPrice || 0) - parseFloat(pos.avg_entry_price || '0')) * posQty);
-                          const targetPrice = pos.minRequiredAtrStopPrice || (parseFloat(pos.avg_entry_price || '0') + (0.04 / posQty));
-                          return (
-                            <span className={`px-2 py-0.5 rounded font-bold text-[10px] font-mono ${pos.isAtrTrailingActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-indigo-50 text-indigo-700'}`}>
-                              ATR14: ${pos.atr.toFixed(2)} | Trailing ATR (1.5x): ${(pos.atrTrailingStopPrice || 0).toFixed(2)} {pos.isAtrTrailingActive ? (
-                                <span className="text-emerald-700 font-bold">(🔒 Protetta +${totalProtProfit.toFixed(2)} di utile tot)</span>
-                              ) : (
-                                <span className="text-indigo-600">(In attesa picco &ge;${targetPrice.toFixed(2)} per +${(pos.minProfitBufferDollars || 0.04).toFixed(2)}$ tot)</span>
-                              )}
-                            </span>
-                          );
-                        })() : (
-                          <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-slate-50 text-slate-600 font-mono">
-                            Stop Tecnico ATR (dinamico)
+                    {/* 3. Trailing Stop Status Box: VERDE se Raggiunto, ROSSO se Non Raggiunto */}
+                    <div className={`p-3 rounded-lg border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 text-xs ${
+                      isReached
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                        : 'bg-rose-50 border-rose-300 text-rose-950'
+                    }`}>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center gap-1.5 font-extrabold text-xs px-2.5 py-1 rounded-full ${
+                            isReached
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-rose-600 text-white shadow-xs'
+                          }`}>
+                            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                            {isReached ? '🟢 TRAILING STOP ATTIVO (RAGGIUNTO)' : '🔴 TRAILING STOP IN ATTESA (NON RAGGIUNTO)'}
                           </span>
-                        )}
-                        <span className="text-slate-600 font-mono text-[11px]">
-                          Soglia Catastrofica (-3%): <strong className="text-rose-600 font-bold">${((parseFloat(pos.avg_entry_price || '0')) * 0.97).toFixed(2)}</strong>
-                        </span>
+                        </div>
+                        
+                        <div className="font-mono text-xs mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                          <span>
+                            Importo Attivazione: <strong className="font-bold underline">${activationPrice.toFixed(2)}</strong>
+                          </span>
+                          {isReached ? (
+                            <span className="text-emerald-700 font-bold">
+                              🔒 Stop a ${trailingStopVal.toFixed(2)} (+${lockedProfit.toFixed(2)}$ protetti)
+                            </span>
+                          ) : (
+                            <span className="text-rose-700 font-semibold">
+                              (Prezzo a ${currPrice.toFixed(2)}, mancano ${(Math.max(0, activationPrice - currPrice)).toFixed(2)}$)
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-[11px] font-mono text-slate-500">
-                        P. Carico: <span className="text-slate-800 font-semibold">${parseFloat(pos.avg_entry_price || '0').toFixed(2)}</span>
+
+                      <div className="text-[11px] font-mono text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-md border border-slate-200 self-stretch sm:self-auto text-right shadow-2xs">
+                        <div>Soglia Catastrofica (-3%): <strong className="text-rose-600 font-bold">${catastrophicStopPrice.toFixed(2)}</strong></div>
+                      </div>
+                    </div>
+
+                    {/* 4. Switch Rapidi di Controllo Stop Loss */}
+                    <div className="flex items-center justify-between gap-2 pt-1 text-[11px] text-slate-500 border-t border-slate-100 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-[10px] text-slate-400 uppercase">Protezioni:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop !== false)}
+                          className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition cursor-pointer flex items-center gap-1 ${
+                            pos.enableTechnicalStop !== false
+                              ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                              : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+                          }`}
+                        >
+                          <Shield className="w-3 h-3" />
+                          <span>Stop ATR {pos.enableTechnicalStop !== false ? 'Attivo' : 'Spento'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePositionStop(pos.symbol, 'catastrophic', pos.enableCatastrophicStop !== false)}
+                          className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition cursor-pointer flex items-center gap-1 ${
+                            pos.enableCatastrophicStop !== false
+                              ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                              : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+                          }`}
+                        >
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>-3% {pos.enableCatastrophicStop !== false ? 'Attivo' : 'Spento'}</span>
+                        </button>
+                      </div>
+                      <div className="font-mono text-[10px] text-slate-400">
+                        ATR14: ${currentAtr.toFixed(2)}
                       </div>
                     </div>
                   </div>

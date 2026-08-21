@@ -82,6 +82,7 @@ export interface Position {
   adx?: number;
   atrTrailingStopPrice?: number;
   minRequiredAtrStopPrice?: number;
+  atrActivationPrice?: number;
   minProfitBufferDollars?: number;
   isAtrTrailingActive?: boolean;
   enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR

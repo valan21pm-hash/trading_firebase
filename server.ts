@@ -1862,16 +1862,16 @@ app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
 
 const botData = {
   paper: {
-    balance: 100.0,
-    cash: 100.0,
+    balance: 100000.0,
+    cash: 100000.0,
     accountNumber: undefined as string | undefined,
     dailyPnL: [] as any[],
     dailyLogicLogs: [] as any[],
     logs: [] as string[]
   },
   live: {
-    balance: 100.0,
-    cash: 100.0,
+    balance: 174.20,
+    cash: 174.20,
     accountNumber: undefined as string | undefined,
     dailyPnL: [] as any[],
     dailyLogicLogs: [] as any[],
@@ -4820,6 +4820,7 @@ async function getStatusData() {
             const posQty = parseFloat(pos.qty || '1') || 1;
             const rawAtrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
             const minRequiredAtrStopPrice = avgEntry + (minProfitBuffer / posQty);
+            const atrActivationPrice = minRequiredAtrStopPrice + (atrMultiplier * ind.atr);
             const isAtrTrailingActive = rawAtrTrailingStopPrice >= minRequiredAtrStopPrice;
             const overrides = positionStopOverrides[mode]?.[sym];
 
@@ -4840,6 +4841,7 @@ async function getStatusData() {
               adx: ind.adx,
               atrTrailingStopPrice: parseFloat(rawAtrTrailingStopPrice.toFixed(2)),
               minRequiredAtrStopPrice: parseFloat(minRequiredAtrStopPrice.toFixed(2)),
+              atrActivationPrice: parseFloat(atrActivationPrice.toFixed(2)),
               minProfitBufferDollars: minProfitBuffer,
               isAtrTrailingActive,
               enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
@@ -4913,14 +4915,14 @@ async function getStatusData() {
     // Se non abbiamo dati storici reali o la configurazione è assente, generiamo dati simulati per garantire la visualizzazione ottimale del grafico
     if (dailyPnLList.length === 0) {
       const today = new Date();
-      const base = mode === 'paper' ? 100000 : 50;
+      const base = mode === 'paper' ? 100000 : 174.20;
       const step = mode === 'paper' ? 120 : 0.45;
       
       for (let i = 6; i >= 0; i--) {
         const dateObj = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
         const dateStr = dateObj.toISOString().split('T')[0];
         
-        const factor = i === 0 ? 5.2 : 5 - i + Math.sin(6 - i) * 1.5;
+        const factor = i === 0 ? 0 : 5 - i + Math.sin(6 - i) * 1.5;
         const pl = parseFloat((factor * step).toFixed(2));
         const unrealized = parseFloat((pl * (0.25 + 0.05 * Math.sin(6 - i))).toFixed(2));
         const realized = parseFloat((pl - unrealized).toFixed(2));
