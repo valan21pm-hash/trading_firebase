@@ -4775,6 +4775,8 @@ async function getStatusData() {
     let dailyPnLList: any[] = [];
     let baseValue = mode === 'paper' ? 100000 : 50;
     let errorAlpaca: string | null = null;
+    let totalDeposits = 0;
+    let totalWithdrawals = 0;
 
     if (conf.isConfigured) {
       try {
@@ -4875,6 +4877,32 @@ async function getStatusData() {
           botData[mode].cash = Math.max(0, (botData[mode].balance || 0) - totalInvested);
         }
 
+        try {
+          // Recupera le attività di tipo Cash Deposit (CSD), Cash Withdrawal (CSW) e Transfers (TRANS)
+          const transResponse = await fetch(`${conf.baseUrl}/account/activities?activity_types=CSD,CSW,TRANS&direction=asc&page_size=100`, {
+            headers: {
+              'APCA-API-KEY-ID': conf.apiKey,
+              'APCA-API-SECRET-KEY': conf.secretKey
+            }
+          });
+          if (transResponse.ok) {
+            const transData = await transResponse.json();
+            if (Array.isArray(transData) && transData.length > 0) {
+              for (const act of transData) {
+                const netAmt = parseFloat(act.net_amount || act.amount || '0');
+                const actType = (act.activity_type || '').toUpperCase();
+                if (actType === 'CSD' || (actType === 'TRANS' && netAmt > 0) || netAmt > 0) {
+                  totalDeposits += Math.abs(netAmt);
+                } else if (actType === 'CSW' || (actType === 'TRANS' && netAmt < 0) || netAmt < 0) {
+                  totalWithdrawals += Math.abs(netAmt);
+                }
+              }
+            }
+          }
+        } catch (transErr) {
+          console.warn(`[Alpaca Transfers Warning] Impossibile recuperare attività depositi:`, transErr);
+        }
+
         // Recuperiamo anche lo storico del portafoglio per mostrare l'andamento reale
         const histResponse = await fetch(`${conf.baseUrl}/account/portfolio/history?period=1W&timeframe=1D`, {
           headers: {
@@ -4959,9 +4987,16 @@ async function getStatusData() {
       ? botData[mode].cash
       : calculatedCash;
     
+    const initialDep = totalDeposits > 0 
+      ? totalDeposits - totalWithdrawals 
+      : (mode === 'paper' ? 100000 : 174.20);
+    
     return {
       ...botData[mode],
       cash: finalCash,
+      totalDeposits: totalDeposits > 0 ? parseFloat(totalDeposits.toFixed(2)) : undefined,
+      netDeposits: totalDeposits > 0 ? parseFloat((totalDeposits - totalWithdrawals).toFixed(2)) : undefined,
+      initialDeposit: parseFloat(initialDep.toFixed(2)),
       dailyPnL: dailyPnLList,
       modeLabel: conf.isConfigured 
         ? `Alpaca (${mode === 'live' ? 'Reale' : 'Simulazione'})` 

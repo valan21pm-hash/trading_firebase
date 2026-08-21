@@ -774,10 +774,12 @@ function AccountPanel({
     localStorage.setItem(`alpaca_${type}_isAccountCollapsed`, String(isAccountCollapsed));
   }, [isAccountCollapsed, type]);
 
-  // Capitale iniziale di riferimento impostato a $174.20 per il calcolo delle variazioni percentuali
-  const initialCapital = (account.dailyPnL && account.dailyPnL.length > 0 && account.dailyPnL[0].balance && account.dailyPnL[0].balance > 0)
-    ? account.dailyPnL[0].balance
-    : (type === 'paper' ? 100000 : 174.20);
+  // Capitale versato di riferimento ricavato direttamente da Alpaca (o fallback a $174.20)
+  const initialCapital = (account.initialDeposit && account.initialDeposit > 0)
+    ? account.initialDeposit
+    : ((account.dailyPnL && account.dailyPnL.length > 0 && account.dailyPnL[0].balance && account.dailyPnL[0].balance > 0)
+      ? account.dailyPnL[0].balance
+      : (type === 'paper' ? 100000 : 174.20));
   const currentBalance = account.balance ?? (type === 'live' ? 174.20 : 100000);
   const pnlDiff = currentBalance - initialCapital;
   const pnlPercent = initialCapital > 0 ? (pnlDiff / initialCapital) * 100 : 0;
@@ -987,9 +989,10 @@ function AccountPanel({
         </div>
         <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2 sm:gap-4" onClick={(e) => e.stopPropagation()}>
           <div className="text-xs text-slate-600 flex items-center gap-1.5 sm:gap-2 flex-wrap">
-            <span>Iniziale: <strong className="text-slate-900">${initialCapital.toFixed(2)}</strong></span>
-            <span className={`px-1.5 py-0.5 rounded font-bold ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+            <span>Versamenti: <strong className="text-slate-900">${initialCapital.toFixed(2)}</strong></span>
+            <span className={`px-2 py-0.5 rounded-md font-bold font-mono text-xs flex items-center gap-1 ${pnlDiff >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+              <span>{pnlDiff >= 0 ? '+' : ''}${pnlDiff.toFixed(2)}</span>
+              <span>({pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%)</span>
             </span>
             {account.positions && account.positions.length > 0 && (
               <span className={`px-1.5 py-0.5 rounded font-bold font-mono text-[11px] ${activePositionsUnrealizedPnL >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
@@ -1037,11 +1040,11 @@ function AccountPanel({
           )}
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-            <div className="text-xs sm:text-sm text-gray-500">Saldo Equity & Performance</div>
+            <div className="text-xs sm:text-sm text-gray-500">Saldo Equity & Variazione da Versamenti</div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              <div className="text-xs text-gray-500">Iniziale: <span className="font-semibold text-gray-800">${initialCapital.toFixed(2)}</span></div>
-              <div className={`text-xs font-bold px-2 py-1 rounded-md ${pnlPercent >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}% ({(pnlDiff >= 0 ? '+' : '') + '$' + pnlDiff.toFixed(2)})
+              <div className="text-xs text-gray-500">Versamenti Reali: <span className="font-semibold text-gray-800">${initialCapital.toFixed(2)}</span></div>
+              <div className={`text-xs font-bold px-2 py-1 rounded-md font-mono ${pnlDiff >= 0 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-rose-100 text-rose-800 border border-rose-200'}`}>
+                {pnlDiff >= 0 ? '+' : ''}${pnlDiff.toFixed(2)} ({pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%)
               </div>
               <div className="text-xl sm:text-2xl font-bold text-gray-900">${currentBalance.toFixed(2)}</div>
             </div>

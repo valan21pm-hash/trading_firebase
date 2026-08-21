@@ -791,9 +791,11 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   const totalInvested = positions.reduce((acc, pos) => acc + getPosMarketValue(pos), 0);
   const totalMarginUsed = positions.reduce((acc, pos) => acc + getPosCostBasis(pos), 0);
 
-  const initialRefBalance = accountData.dailyPnL && accountData.dailyPnL.length > 0 && accountData.dailyPnL[0]?.balance
-    ? accountData.dailyPnL[0].balance
-    : (tradingMode === 'paper' ? 100000 : 174.20);
+  const initialRefBalance = (accountData.initialDeposit && accountData.initialDeposit > 0)
+    ? accountData.initialDeposit
+    : ((accountData.dailyPnL && accountData.dailyPnL.length > 0 && accountData.dailyPnL[0]?.balance)
+      ? accountData.dailyPnL[0].balance
+      : (tradingMode === 'paper' ? 100000 : 174.20));
 
   const rawBalance = accountData.balance;
   const totalBalance = (rawBalance !== undefined && rawBalance !== null && !isNaN(rawBalance) && rawBalance > 0)
@@ -809,8 +811,7 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   const dailyPnLVal = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_intraday_pl || '0') || 0), 0);
   const dailyPnLPct = totalBalance > 0 ? (dailyPnLVal / totalBalance) * 100 : 0;
 
-  const totalUnrealizedPL = positions.reduce((acc, pos) => acc + (parseFloat(pos.unrealized_pl || '0') || 0), 0);
-  const historicalPnLVal = (totalBalance - initialRefBalance) + totalUnrealizedPL;
+  const historicalPnLVal = totalBalance - initialRefBalance;
   const historicalPnLPct = initialRefBalance > 0 ? (historicalPnLVal / initialRefBalance) * 100 : 0;
 
   return (
@@ -1060,10 +1061,10 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
           <div>
             <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1">
-              <Wallet className="w-3 h-3 text-indigo-400" /> Capitale Totale
+              <Wallet className="w-3 h-3 text-indigo-400" /> Capitale Attuale
             </div>
             <div className="text-sm font-bold text-white mt-0.5">${totalBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            <div className="text-[9px] text-slate-400">Iniziale: ${initialRefBalance.toFixed(2)}</div>
+            <div className="text-[9px] text-slate-400">Versamenti: ${initialRefBalance.toFixed(2)}</div>
           </div>
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${tradingMode === 'live' ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-indigo-950 text-indigo-400 border border-indigo-800'}`}>
             {tradingMode.toUpperCase()}
@@ -1115,10 +1116,10 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
           </div>
         </div>
 
-        {/* 6. VARIAZIONE STORICA */}
+        {/* 6. VARIAZIONE RISPETTO AI VERSAMENTI */}
         <div className="bg-[#10172A] p-2.5 rounded-xl border border-slate-800">
           <div className="text-[10px] text-slate-400 uppercase font-semibold flex items-center justify-between">
-            <span>Var. Storica Totale</span>
+            <span>Var. da Versamenti</span>
             {historicalPnLVal >= 0 ? <TrendingUp className="w-3 h-3 text-emerald-400" /> : <TrendingDown className="w-3 h-3 text-rose-400" />}
           </div>
           <div className={`text-sm font-bold mt-0.5 ${historicalPnLVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>

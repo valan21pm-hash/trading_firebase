@@ -93,6 +93,9 @@ export interface AccountData {
   balance: number;
   cash?: number;
   accountNumber?: string;
+  totalDeposits?: number;
+  netDeposits?: number;
+  initialDeposit?: number;
   modeLabel: string;
   isConfigured: boolean;
   positions?: Position[];
