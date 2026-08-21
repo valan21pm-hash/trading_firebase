@@ -4,7 +4,7 @@ export interface RiskRuleConfig {
   type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
-    minSentimentThreshold?: number; // es. 0.20 o 0.15
+    minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
     vixDropExemptionPct?: number;   // es. -2.0 per calo VIX > 2%
     eodWindowMinutes?: number;      // es. 30 minuti prima della chiusura
     stagnationMinutes?: number;     // es. 30 minuti di stasi per sentiment 0.20 - 0.29

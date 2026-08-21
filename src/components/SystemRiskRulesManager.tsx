@@ -101,19 +101,22 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
+      blockMiddayChopWindow: true,
       blockAfternoonClosingWindow: true,
       morningBlockStart: '09:30',
-      morningBlockEnd: '10:30',
+      morningBlockEnd: '09:45',
+      middayBlockStart: '12:30',
+      middayBlockEnd: '13:30',
       afternoonBlockStart: '15:30',
       afternoonBlockEnd: '16:00'
     }
   },
   {
     id: 'dynamic_time_window_lock',
-    enabled: true,
+    enabled: false,
     type: 'DYNAMIC_TIME_WINDOW_LOCK',
     parameters: {
-      blockToxicWindow: true,
+      blockToxicWindow: false,
       toxicWindowStart: '10:30',
       toxicWindowEnd: '12:00'
     }
@@ -960,7 +963,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            Inibisce l'apertura di posizioni a mercato nei momenti critici di rumore e instabilità: nei primi 60 minuti dopo la campana d'apertura (09:30 - 10:30 EST) e negli ultimi 30 minuti di asta/chiusura (15:30 - 16:00 EST).
+            Inibisce l'apertura di posizioni a mercato nei momenti critici di rumore e instabilità: nei primissimi 15 minuti d'asta (09:30 - 09:45 EST) consentendo operatività dalle <strong>09:45 EST</strong>, pausa di metà giornata (12:30 - 13:30 EST) e chiusura (15:30 - 16:00 EST).
           </p>
 
           <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
@@ -968,8 +971,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <div className="flex items-center gap-2">
                 <Lock className="w-3.5 h-3.5 text-amber-600" />
                 <div>
-                  <span className="font-semibold text-slate-800">Fascia Apertura (09:30 - 10:30 EST)</span>
-                  <p className="text-[10px] text-slate-500">Evita i falsi breakout e lo spread elevato di inizio sessione</p>
+                  <span className="font-semibold text-slate-800">Fascia Apertura Iniziale (09:30 - 09:45 EST)</span>
+                  <p className="text-[10px] text-slate-500">Assorbe lo spread dell'asta e sblocca il trading dalle 09:45 EST</p>
                 </div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -979,6 +982,29 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                   onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({
                     ...r,
                     parameters: { ...r.parameters, blockMorningOpeningWindow: e.target.checked }
+                  }))}
+                  disabled={!timeLockRule.enabled}
+                  className="sr-only peer"
+                />
+                <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Pausa Metà Giornata / Chop (12:30 - 13:30 EST)</span>
+                  <p className="text-[10px] text-slate-500">Evita periodi a basso volume e drawdown da stasi</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={timeLockRule.parameters.blockMiddayChopWindow ?? true}
+                  onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, blockMiddayChopWindow: e.target.checked }
                   }))}
                   disabled={!timeLockRule.enabled}
                   className="sr-only peer"
@@ -1011,7 +1037,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
             </div>
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Fascia di trading attivo consentita: 10:30 EST - 15:30 EST (16:30 - 21:30 CET).
+              Fasce di trading attivo consentite: 09:45 - 12:30 EST e 13:30 - 15:30 EST (15:45 - 21:30 CET).
             </div>
           </div>
         </div>

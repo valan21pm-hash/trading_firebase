@@ -152,7 +152,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'MAX_CONCURRENT_POSITIONS_CAP',
     parameters: {
-      maxConcurrentPositions: 3
+      maxConcurrentPositions: 5
     }
   },
   {
@@ -164,19 +164,19 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       blockMiddayChopWindow: true,
       blockAfternoonClosingWindow: true,
       morningBlockStart: '09:30',
-      morningBlockEnd: '10:30',
-      middayBlockStart: '12:00',
-      middayBlockEnd: '14:00',
+      morningBlockEnd: '09:45',
+      middayBlockStart: '12:30',
+      middayBlockEnd: '13:30',
       afternoonBlockStart: '15:30',
       afternoonBlockEnd: '16:00'
     }
   },
   {
     id: 'dynamic_time_window_lock',
-    enabled: true,
+    enabled: false,
     type: 'DYNAMIC_TIME_WINDOW_LOCK',
     parameters: {
-      blockToxicWindow: true,
+      blockToxicWindow: false,
       toxicWindowStart: '10:30',
       toxicWindowEnd: '12:00'
     }
@@ -257,23 +257,20 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
   const totalMinutes = hours * 60 + minutes;
   const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} EST`;
   
-  // 09:30 - 10:30 EST => 570 - 630 minuti (Apertura)
-  // 10:30 - 12:00 EST => 630 - 720 minuti (Finestra Tossica Multi-IA)
-  // 12:00 - 14:00 EST => 720 - 840 minuti (Filtro Temporale Esecutivo / Chop di metà giornata)
+  // 09:30 - 09:45 EST => 570 - 585 minuti (Filtro apertura breve per spread asta iniziale)
+  // 12:30 - 13:30 EST => 750 - 810 minuti (Pausa Chop concentrata di metà giornata)
   // >= 15:30 EST => >= 930 minuti (Pre-chiusura 15:30-16:00 e sessione serale/after-hours)
-  const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 630;
-  const isToxicWindowLock = totalMinutes >= 630 && totalMinutes < 720;
-  const isMiddayChopLock = totalMinutes >= 720 && totalMinutes < 840;
+  const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 585;
+  const isToxicWindowLock = false; // Disattivato per consentire scalping agile tra 09:45 e 12:30
+  const isMiddayChopLock = totalMinutes >= 750 && totalMinutes < 810;
   const isAfternoonVolatileLock = totalMinutes >= 930;
-  const isMarketTimeLocked = isMorningVolatileLock || isToxicWindowLock || isMiddayChopLock || isAfternoonVolatileLock;
+  const isMarketTimeLocked = isMorningVolatileLock || isMiddayChopLock || isAfternoonVolatileLock;
   
   let lockReason: string | undefined;
   if (isMorningVolatileLock) {
-    lockReason = `Fascia di apertura ad alta volatilità e rumore (09:30 - 10:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per preservare il capitale.`;
-  } else if (isToxicWindowLock) {
-    lockReason = `Fascia oraria ad alta inefficienza / tossica identificata dall'analisi Multi-IA (10:30 - 12:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare falsi breakout.`;
+    lockReason = `Fascia di apertura iniziale ad alta varianza di spread (09:30 - 09:45 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per i primi 15 minuti.`;
   } else if (isMiddayChopLock) {
-    lockReason = `Filtro Temporale Esecutivo: Fascia di metà giornata ad alto rumore e chop (12:00 - 14:00 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare drawdown persistenti.`;
+    lockReason = `Filtro Temporale Esecutivo: Fascia di metà giornata a basso volume e chop (12:30 - 13:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare stasi.`;
   } else if (isAfternoonVolatileLock) {
     lockReason = `Filtro Temporale Esecutivo: Fascia pre-chiusura / serale dopo le 15:30 EST (orario corrente: ${timeFormatted}). Ingressi inibiti per evitare spread elevati e volatilità non strutturata.`;
   }
@@ -396,7 +393,7 @@ function isPurchaseAllowedBySystemRules(
       }
     }
 
-    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-10:30, 12:00-14:00 e 15:30-16:00 EST)
+    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-09:45, 12:30-13:30 e 15:30-16:00 EST)
     if (rule.type === 'VOLATILITY_TIME_WINDOW_LOCK') {
       const estInfo = getEstMarketTime();
       const blockMorning = rule.parameters.blockMorningOpeningWindow ?? true;
@@ -406,14 +403,14 @@ function isPurchaseAllowedBySystemRules(
       if (blockMorning && estInfo.isMorningVolatileLock) {
         return {
           allowed: false,
-          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella fascia di apertura ad alta volatilità (09:30-10:30 EST, orario: ${estInfo.timeFormatted}). Ingressi bloccati per evitare il rumore di mercato.`
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nei primi 15 minuti di apertura (09:30-09:45 EST, orario: ${estInfo.timeFormatted}). Ingressi inibiti per assorbire lo spread iniziale d'asta.`
         };
       }
 
       if (blockMidday && estInfo.isMiddayChopLock) {
         return {
           allowed: false,
-          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Filtro Temporale Esecutivo: Inibizione apertura nuove posizioni BUY nella fascia di metà giornata (12:00-14:00 EST, orario: ${estInfo.timeFormatted}) per evitare il rumore (Chop) e il drawdown persistente.`
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Filtro Temporale Esecutivo: Inibizione apertura nuove posizioni BUY nella fascia di stasi di metà giornata (12:30-13:30 EST, orario: ${estInfo.timeFormatted}) per evitare drawdown da bassi volumi.`
         };
       }
 
@@ -1566,18 +1563,18 @@ function getDefaultStrategy(symbol: string): 'Prudente' | 'Conservativa' | 'Aggr
 
 const STRATEGY_PARAMS = {
   Prudente: {
-    tpPct: 0.80,     // +0.80%
-    slPct: -0.40,    // -0.40%
-    tsPct: 0.30      // Trailing Stop at 0.30%
+    tpPct: 0.60,     // +0.60% (Target rapido tutela capitale)
+    slPct: -0.40,    // -0.40% (Stop Loss stretto)
+    tsPct: 0.25      // Trailing Stop at 0.25%
   },
   Conservativa: {
-    tpPct: 1.50,     // +1.50%
-    slPct: -0.75,    // -0.75%
-    tsPct: 1.00      // Trailing Stop at 1.00%
+    tpPct: 0.80,     // +0.80% (Take profit agile)
+    slPct: -0.50,    // -0.50% (Stop Loss protettivo)
+    tsPct: 0.35      // Trailing Stop at 0.35%
   },
   Aggressiva: {
-    tpPct: 2.50,     // +2.50%
-    slPct: -1.00,    // -1.00%
+    tpPct: 1.20,     // +1.20% (Target per asset ad alto beta)
+    slPct: -0.75,    // -0.75%
     tsPct: 0.50      // Trailing Stop at 0.50%
   }
 };
@@ -2336,9 +2333,9 @@ ${context ? `- Contesto Evento Specifico: ${context}` : ''}${feedbackRules}
 
 [LOGICA DI VALUTAZIONE]
 Calcola uno score numerico compreso rigorosamente tra -1.0 (ribassista) e +1.0 (rialzista) per ciascun simbolo:
-- Score > +0.35 -> Tendenza BUY
-- Score tra -0.35 e +0.35 -> Tendenza HOLD (default di sicurezza)
-- Score < -0.35 -> Tendenza SELL
+- Score >= +0.20 -> Tendenza BUY (apertura tempestiva su primi segnali rialzisti)
+- Score tra -0.20 e +0.20 -> Tendenza HOLD (default di sicurezza)
+- Score <= -0.20 -> Tendenza SELL (liquidazione tempestiva o debolezza)
 
 [OUTPUT FORMAT - STRICT JSON]
 Rispondi RIGIDAMENTE con un singolo oggetto JSON valido (nessun testo prima o dopo) strutturato come segue:
@@ -2375,7 +2372,7 @@ Rispondi RIGIDAMENTE con un singolo oggetto JSON valido (nessun testo prima o do
       
       const parsedAction = entry.action && ['BUY', 'SELL', 'HOLD'].includes(String(entry.action).toUpperCase())
         ? String(entry.action).toUpperCase()
-        : (resultScore > 0.35 ? 'BUY' : resultScore < -0.35 ? 'SELL' : 'HOLD');
+        : (resultScore >= 0.20 ? 'BUY' : resultScore <= -0.20 ? 'SELL' : 'HOLD');
 
       const result = { score: resultScore, reasoning: resultReasoning };
       const cacheKey = `${sym}:${context || 'default'}:${context ? '' : today}:${context ? '' : hour}`;
@@ -3211,9 +3208,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const isMonitored = ALL_TRADED_SYMBOLS.includes(sym);
       
       let statusLabel = '';
-      if (score > 0.35) {
+      if (score >= 0.20) {
         statusLabel = `🟢 RIALZISTA (Punteggio: ${score.toFixed(2)})`;
-      } else if (score < -0.35) {
+      } else if (score <= -0.20) {
         statusLabel = `🔴 RIBASSISTA/NEGATIVO (Punteggio: ${score.toFixed(2)})`;
       } else {
         statusLabel = `🟡 NEUTRO/HOLD (Punteggio: ${score.toFixed(2)})`;
@@ -3227,10 +3224,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           actionLabel = `👉 [In Portafoglio] Sentiment positivo -> Mantenuto in portafoglio.`;
         }
       } else if (isMonitored) {
-        if (score > 0.35) {
-          actionLabel = `👉 [Disponibile] Sopra la soglia di 0.35 -> Idoneo all'ACQUISTO (se ci sono slot liberi).`;
+        if (score >= 0.20) {
+          actionLabel = `👉 [Disponibile] Sopra la soglia di 0.20 -> Idoneo all'ACQUISTO (se ci sono slot liberi).`;
         } else {
-          actionLabel = `👉 [Disponibile] Sotto la soglia di 0.35 -> Escluso dall'acquisto (richiesto > 0.35).`;
+          actionLabel = `👉 [Disponibile] Sotto la soglia di 0.20 -> Escluso dall'acquisto (richiesto >= 0.20).`;
         }
       } else {
         actionLabel = `👉 [Nessuna azione] Asset non monitorato per acquisti e non in portafoglio.`;
@@ -3458,11 +3455,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (currentBuyingPower < 0.05 * totalAccountEquity) {
         addLog(mode as 'paper' | 'live', `[Liquidità Critica] Liquidità disponibile ($${currentBuyingPower.toFixed(2)}) inferiore al 5% del totale conto ($${totalAccountEquity.toFixed(2)}). Apertura nuove posizioni bloccata.`);
       } else {
-        // Filtra tutti i simboli con sentiment positivo (> 0.35)
+        // Filtra tutti i simboli con sentiment positivo (>= 0.20)
         let positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
           const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
           return { symbol, score, reasoning };
-        }).filter(item => item.score > 0.35);
+        }).filter(item => item.score >= 0.20);
 
         // Veto dell'Esperto Statistico di Sfondo
         positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => {
