@@ -111,39 +111,54 @@ export class RiskManagementService {
       for (const rule of systemRules) {
         if (!rule.enabled) continue;
 
+        // Regola 2 di Consenso: TIME_BASED_HOLDING (Obbligo di mantenimento posizione per almeno 60 minuti)
+        const timeHoldingRule = systemRules?.find(r => r.type === 'TIME_BASED_HOLDING');
+        const isTimeHoldingEnabled = timeHoldingRule?.enabled ?? true;
+        const minHoldingMinutes = timeHoldingRule?.parameters?.minHoldingMinutes ?? 60;
+        const isHoldingPeriodActive = isTimeHoldingEnabled && ageMinutes !== null && ageMinutes < minHoldingMinutes;
+
         // Regola: PNL_PREVENTIVE_CLOSE
         if (rule.type === 'PNL_PREVENTIVE_CLOSE') {
-          const maxLoss = rule.parameters.maxLossPct ?? -0.80;
-          const minSent = rule.parameters.minSentimentThreshold ?? 0.20;
-          if (currentProfitPct <= maxLoss && sentimentScore !== undefined && sentimentScore < minSent) {
-            return {
-              action: 'CLOSE',
-              reason: `[Regola Sistema: PNL_PREVENTIVE_CLOSE] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= ${maxLoss}%) e Sentiment debole (${sentimentScore.toFixed(2)} < ${minSent}). Chiusura preventiva mirata per liberare slot.`
-            };
+          if (isHoldingPeriodActive) {
+            // Sotto i 60 minuti di holding, solo perdite severe oltre la soglia ordinaria o circuit breaker possono chiudere
+            // Le chiusure preventive da rumore transitorio sono congelate per evitare churn
+          } else {
+            const maxLoss = rule.parameters.maxLossPct ?? -0.80;
+            const minSent = rule.parameters.minSentimentThreshold ?? 0.20;
+            if (currentProfitPct <= maxLoss && sentimentScore !== undefined && sentimentScore < minSent) {
+              return {
+                action: 'CLOSE',
+                reason: `[Regola Sistema: PNL_PREVENTIVE_CLOSE] Posizione ${asset} con P&L negativo (${currentProfitPct.toFixed(2)}% <= ${maxLoss}%) e Sentiment debole (${sentimentScore.toFixed(2)} < ${minSent}). Chiusura preventiva mirata per liberare slot.`
+              };
+            }
           }
         }
 
         // Regola: SENTIMENT_LIQUIDITY_SELL
         if (rule.type === 'SENTIMENT_LIQUIDITY_SELL') {
-          const minSent = rule.parameters.minSentimentThreshold ?? 0.15;
-          const vixThreshold = rule.parameters.vixDropExemptionPct ?? -2.0;
+          if (isHoldingPeriodActive) {
+            // Chiusure per liquidità/sentiment congelate nei primi 60 minuti per evitare churn operativo
+          } else {
+            const minSent = rule.parameters.minSentimentThreshold ?? 0.15;
+            const vixThreshold = rule.parameters.vixDropExemptionPct ?? -2.0;
 
-          if (sentimentScore !== undefined && sentimentScore < minSent) {
-            const isVixDropping = vix24hChangePct !== undefined && vix24hChangePct < vixThreshold;
-            if (!isVixDropping) {
-              const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
-              return {
-                action: 'CLOSE',
-                reason: `[Regola Sistema: SENTIMENT_LIQUIDITY_SELL] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< ${minSent}) e VIX non in calo > ${Math.abs(vixThreshold)}% (VIX 24h: ${vixText}). Vendi singola posizione per preservare liquidità.`
-              };
+            if (sentimentScore !== undefined && sentimentScore < minSent) {
+              const isVixDropping = vix24hChangePct !== undefined && vix24hChangePct < vixThreshold;
+              if (!isVixDropping) {
+                const vixText = vix24hChangePct !== undefined ? `${vix24hChangePct.toFixed(2)}%` : 'N/A';
+                return {
+                  action: 'CLOSE',
+                  reason: `[Regola Sistema: SENTIMENT_LIQUIDITY_SELL] Sentiment per ${asset} sceso a ${sentimentScore.toFixed(2)} (< ${minSent}) e VIX non in calo > ${Math.abs(vixThreshold)}% (VIX 24h: ${vixText}). Vendi singola posizione per preservare liquidità.`
+                };
+              }
             }
           }
         }
 
         // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop)
         if (rule.type === 'TIME_STAGNATION_CLOSE' && ageMinutes !== null) {
-          const baseStagMins = rule.parameters.stagnationMinutes ?? 30;
-          const highStagMins = rule.parameters.stagnationMinutesHighSentiment ?? 60;
+          const baseStagMins = Math.max(rule.parameters.stagnationMinutes ?? 30, isTimeHoldingEnabled ? minHoldingMinutes : 30);
+          const highStagMins = Math.max(rule.parameters.stagnationMinutesHighSentiment ?? 60, isTimeHoldingEnabled ? minHoldingMinutes : 60);
           const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.10;
 
           let effectiveStagMins = baseStagMins;
@@ -151,15 +166,15 @@ export class RiskManagementService {
 
           if (sentimentScore !== undefined && sentimentScore > 0.30) {
             effectiveStagMins = highStagMins;
-            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} > 0.30 -> limite 60m)`;
+            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} > 0.30 -> limite ${effectiveStagMins}m)`;
           } else if (sentimentScore !== undefined) {
-            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} -> limite 30m)`;
+            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} -> limite ${effectiveStagMins}m)`;
           }
 
           if (ageMinutes >= effectiveStagMins && currentProfitPct <= stagMaxPnl) {
             return {
               action: 'CLOSE',
-              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite)${sentimentDetail} con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
+              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite, Holding 60m rispettato)${sentimentDetail} con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
             };
           }
         }
@@ -530,6 +545,144 @@ export class RiskManagementService {
           reason: `[Hard-Risk Management: Cooldown ${cooldownMins}m] Rilevati ${consecutiveSlCount} Stop-Loss consecutivi. Cooldown di protezione attivo: nuovi acquisti bloccati per ancora ${remainingMins} minuti.`
         };
       }
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * 3. [Consenso #1]: Trading Window Lockdown
+   * - Inibizione apertura nuovi ordini BUY nelle fasce 09:30-10:30 EST (apertura ad alta inefficienza) e 15:30-16:00 EST (pre-chiusura)
+   * - Privilegia l'esecuzione algoritmica nel blocco 12:00-14:30 EST (Win Rate 66.7%), subordinata ad ADX(14) > 14.0.
+   */
+  public static evaluateTradingWindowLockdown(
+    estInfo: { totalMinutes: number; timeFormatted: string; hours: number; minutes: number },
+    adxValue?: number,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string; inPrimeWindow?: boolean } {
+    const lockdownRule = systemRules?.find(r => r.type === 'TRADING_WINDOW_LOCKDOWN' || r.type === 'VOLATILITY_TIME_WINDOW_LOCK');
+    const isEnabled = lockdownRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const { totalMinutes, timeFormatted } = estInfo;
+    const blockMorning = lockdownRule?.parameters?.blockMorningOpeningWindow ?? true;
+    const blockAfternoon = lockdownRule?.parameters?.blockAfternoonClosingWindow ?? true;
+    const minMiddayAdx = lockdownRule?.parameters?.minMiddayAdxThreshold ?? 14.0;
+    const strictMiddayOnly = lockdownRule?.parameters?.strictMiddayOnly ?? false;
+
+    // Fascia apertura inibita: 09:30 - 10:30 EST (570 - 630 minuti)
+    const isMorningLock = totalMinutes >= 570 && totalMinutes < 630;
+    if (blockMorning && isMorningLock) {
+      return {
+        allowed: false,
+        reason: `[Trading Window Lockdown] Inibizione apertura nuovi ordini BUY nella fascia di apertura (09:30 - 10:30 EST, orario: ${timeFormatted}). Analisi inferenziale: inefficienze concentrate nell'ora di apertura. Ingressi bloccati a tutela del capitale.`
+      };
+    }
+
+    // Fascia chiusura inibita: 15:30 - 16:00 EST (930 - 960 minuti) e post-mercato (>= 960)
+    const isAfternoonLock = totalMinutes >= 930;
+    if (blockAfternoon && isAfternoonLock) {
+      return {
+        allowed: false,
+        reason: `[Trading Window Lockdown] Inibizione apertura nuovi ordini BUY nella fascia pre-chiusura / serale (>= 15:30 EST, orario: ${timeFormatted}). Spread elevati e volatilità non strutturata. Ingressi inibiti.`
+      };
+    }
+
+    // Fascia di esecuzione privilegiata Midday: 12:00 - 14:30 EST (720 - 870 minuti)
+    const isMiddayPrime = totalMinutes >= 720 && totalMinutes < 870;
+
+    if (isMiddayPrime) {
+      if (adxValue !== undefined && adxValue <= minMiddayAdx) {
+        return {
+          allowed: false,
+          inPrimeWindow: true,
+          reason: `[Trading Window Lockdown: Blocco Midday 12:00-14:30 EST] Esecuzione algoritmica privilegiata subordinata ad ADX(14) > ${minMiddayAdx.toFixed(1)}. Benchmark attuale ADX(14) = ${adxValue.toFixed(1)} <= ${minMiddayAdx.toFixed(1)} (assenza di trend direzionale). Nuovi ordini BUY temporaneamente inibiti.`
+        };
+      }
+      return { allowed: true, inPrimeWindow: true };
+    }
+
+    // Fuori dal blocco Midday
+    if (strictMiddayOnly) {
+      return {
+        allowed: false,
+        inPrimeWindow: false,
+        reason: `[Trading Window Lockdown: Strict Midday] Nuovi ingressi BUY limitati rigorosamente alla fascia ad alta efficienza (12:00 - 14:30 EST, Win Rate 66.7%). Orario attuale: ${timeFormatted}. Nuovi acquisti inibiti.`
+      };
+    }
+
+    return { allowed: true, inPrimeWindow: false };
+  }
+
+  /**
+   * 4. [Consenso #2]: Time-Based Holding
+   * - Obbligo di mantenere la posizione per almeno 60 minuti dall'apertura per evitare il churn operativo
+   * - Eccezione: Circuit Breaker Catastrofico (-3.00%) o stop estremi
+   */
+  public static evaluateTimeBasedHolding(
+    symbol: string,
+    entryTimestamp: number | null | undefined,
+    currentProfitPct: number,
+    systemRules?: RiskRuleConfig[]
+  ): { canClose: boolean; reason?: string; ageMinutes?: number } {
+    if (!entryTimestamp || entryTimestamp <= 0) {
+      return { canClose: true };
+    }
+
+    const holdingRule = systemRules?.find(r => r.type === 'TIME_BASED_HOLDING');
+    const isEnabled = holdingRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { canClose: true };
+    }
+
+    const minHoldingMins = holdingRule?.parameters?.minHoldingMinutes ?? 60;
+    const catastrophicThreshold = holdingRule?.parameters?.catastrophicMaxLossPct ?? -3.00;
+    const ageMinutes = (Date.now() - entryTimestamp) / (60 * 1000);
+
+    // Se siamo oltre i 60 minuti, il vincolo di holding è superato
+    if (ageMinutes >= minHoldingMins) {
+      return { canClose: true, ageMinutes };
+    }
+
+    // Se siamo sotto i 60 minuti ma la perdita è catastrofica (<= -3.00%), la sicurezza del conto prevale sempre
+    if (currentProfitPct <= catastrophicThreshold) {
+      return { 
+        canClose: true, 
+        ageMinutes,
+        reason: `[Livello 2 - Circuit Breaker Catastrofico] Chiusura di emergenza autorizzata durante il periodo di holding: P&L ${currentProfitPct.toFixed(2)}% <= ${catastrophicThreshold.toFixed(2)}%.`
+      };
+    }
+
+    return {
+      canClose: false,
+      ageMinutes,
+      reason: `[Time-Based Holding: 60m] Posizione ${symbol} aperta da ${ageMinutes.toFixed(1)} min (< ${minHoldingMins} min minimi). Chiusura transitoria inibita per proteggere dalla volatilità e scongiurare il churn operativo.`
+    };
+  }
+
+  /**
+   * 5. [Consenso #3]: Macro-Sentiment Filter (VIX / IV < 30%)
+   * - Inserimento obbligatorio di un filtro VIX/IV < 30% per procedere con nuovi ingressi BUY
+   */
+  public static evaluateMacroSentimentVixFilter(
+    vixValue: number | undefined,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const vixRule = systemRules?.find(r => r.type === 'MACRO_VOLATILITY_VIX_FILTER');
+    const isEnabled = vixRule?.enabled ?? true;
+    if (!isEnabled || vixValue === undefined || isNaN(vixValue)) {
+      return { allowed: true };
+    }
+
+    const maxVix = vixRule?.parameters?.maxVixThreshold ?? 30.0;
+
+    if (vixValue >= maxVix) {
+      return {
+        allowed: false,
+        reason: `[Regola Sistema: MACRO_VOLATILITY_VIX_FILTER] Indice di Volatilità VIX / IV di mercato = ${vixValue.toFixed(2)}% (>= ${maxVix.toFixed(1)}%). Regime di rischio sistemico e volatilità estrema. Nuovi ordini BUY inibiti a salvaguardia del capitale.`
+      };
     }
 
     return { allowed: true };

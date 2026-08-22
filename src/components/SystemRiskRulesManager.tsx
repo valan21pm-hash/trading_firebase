@@ -101,14 +101,52 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
-      blockMiddayChopWindow: true,
+      blockMiddayChopWindow: false,
       blockAfternoonClosingWindow: true,
       morningBlockStart: '09:30',
-      morningBlockEnd: '09:45',
-      middayBlockStart: '12:30',
-      middayBlockEnd: '13:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
       afternoonBlockStart: '15:30',
-      afternoonBlockEnd: '16:00'
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'trading_window_lockdown',
+    enabled: true,
+    type: 'TRADING_WINDOW_LOCKDOWN',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'time_based_holding',
+    enabled: true,
+    type: 'TIME_BASED_HOLDING',
+    parameters: {
+      minHoldingMinutes: 60,
+      catastrophicMaxLossPct: -3.00
+    }
+  },
+  {
+    id: 'macro_volatility_vix_filter',
+    enabled: true,
+    type: 'MACRO_VOLATILITY_VIX_FILTER',
+    parameters: {
+      maxVixThreshold: 30.0
     }
   },
   {
@@ -254,6 +292,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const hardRiskRule = getRule('HARD_RISK_MANAGEMENT');
   const emaRule = getRule('EMA_TREND_CONFIRMATION');
   const catastrophicRule = getRule('CATASTROPHIC_CIRCUIT_BREAKER_SL');
+  const holdingRule = getRule('TIME_BASED_HOLDING');
+  const vixRule = getRule('MACRO_VOLATILITY_VIX_FILTER');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -944,12 +984,12 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
         </div>
 
-        {/* Rule 10: Inibizione Operatività nelle Fasce di Volatilità (09:30-10:30 & 15:30-16:00 EST) */}
+        {/* Rule 10: Trading Window Lockdown (09:30-10:30 & 15:30-16:00 EST / Midday ADX > 14) */}
         <div className={`p-4 rounded-xl border transition-all ${timeLockRule.enabled ? 'bg-amber-50/40 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Clock3 className={`w-4 h-4 ${timeLockRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">10. Inibizione Fasce Orarie ad Alta Volatilità (EST)</h3>
+              <h3 className="text-xs font-bold text-slate-900">10. Trading Window Lockdown (09:30-10:30 &amp; 15:30-16:00 EST)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -963,7 +1003,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            Inibisce l'apertura di posizioni a mercato nei momenti critici di rumore e instabilità: nei primissimi 15 minuti d'asta (09:30 - 09:45 EST) consentendo operatività dalle <strong>09:45 EST</strong>, pausa di metà giornata (12:30 - 13:30 EST) e chiusura (15:30 - 16:00 EST).
+            Inibisce l&apos;apertura di nuovi ordini BUY nelle fasce a forte inefficienza e rumore: <strong>09:30 - 10:30 EST</strong> (prima ora di apertura) e <strong>15:30 - 16:00 EST</strong> (chiusura). Privilegia l&apos;esecuzione nel blocco <strong>12:00 - 14:30 EST</strong> (Win Rate 66.7%), subordinata ad <strong>ADX(14) &gt; 14.0</strong>.
           </p>
 
           <div className="space-y-2.5 text-xs bg-white p-3 rounded-lg border border-slate-100">
@@ -971,8 +1011,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <div className="flex items-center gap-2">
                 <Lock className="w-3.5 h-3.5 text-amber-600" />
                 <div>
-                  <span className="font-semibold text-slate-800">Fascia Apertura Iniziale (09:30 - 09:45 EST)</span>
-                  <p className="text-[10px] text-slate-500">Assorbe lo spread dell'asta e sblocca il trading dalle 09:45 EST</p>
+                  <span className="font-semibold text-slate-800">Blocco Apertura Iniziale (09:30 - 10:30 EST)</span>
+                  <p className="text-[10px] text-slate-500">Inibisce ingressi nell&apos;ora di apertura ad alta inefficienza e varianza di spread</p>
                 </div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -994,31 +1034,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <div className="flex items-center gap-2">
                 <Lock className="w-3.5 h-3.5 text-amber-600" />
                 <div>
-                  <span className="font-semibold text-slate-800">Pausa Metà Giornata / Chop (12:30 - 13:30 EST)</span>
-                  <p className="text-[10px] text-slate-500">Evita periodi a basso volume e drawdown da stasi</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={timeLockRule.parameters.blockMiddayChopWindow ?? true}
-                  onChange={(e) => updateRule('VOLATILITY_TIME_WINDOW_LOCK', r => ({
-                    ...r,
-                    parameters: { ...r.parameters, blockMiddayChopWindow: e.target.checked }
-                  }))}
-                  disabled={!timeLockRule.enabled}
-                  className="sr-only peer"
-                />
-                <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
-              </label>
-            </div>
-
-            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
-              <div className="flex items-center gap-2">
-                <Lock className="w-3.5 h-3.5 text-amber-600" />
-                <div>
-                  <span className="font-semibold text-slate-800">Fascia Chiusura / Asta (15:30 - 16:00 EST)</span>
-                  <p className="text-[10px] text-slate-500">Evita il ribilanciamento degli ETF e la volatilità di chiusura</p>
+                  <span className="font-semibold text-slate-800">Blocco Chiusura / Asta (15:30 - 16:00 EST)</span>
+                  <p className="text-[10px] text-slate-500">Evita il ribilanciamento istituzionale degli ETF e la volatilità serale non strutturata</p>
                 </div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -1036,8 +1053,21 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               </label>
             </div>
 
+            <div className="flex items-center justify-between p-2 rounded bg-emerald-50/50 border border-emerald-100">
+              <div className="flex items-center gap-2">
+                <Gauge className="w-3.5 h-3.5 text-emerald-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Esecuzione Privilegiata Midday (12:00 - 14:30 EST)</span>
+                  <p className="text-[10px] text-slate-500">Win Rate 66.7% - Richiede ADX(14) &gt; {(timeLockRule.parameters.minMiddayAdxThreshold ?? 14.0).toFixed(1)}</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                ADX &gt; 14.0
+              </span>
+            </div>
+
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Fasce di trading attivo consentite: 09:45 - 12:30 EST e 13:30 - 15:30 EST (15:45 - 21:30 CET).
+              Fasce operative autorizzate: 10:30 - 15:30 EST (con picco algoritmico concentrato 12:00 - 14:30 EST).
             </div>
           </div>
         </div>
@@ -1293,6 +1323,122 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               </div>
               <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
                 Hard Stop &amp; Cooldown
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 16: Time-Based Holding (Mantenimento Minimo 60 Minuti Anti-Churn) */}
+        <div className={`p-4 rounded-xl border transition-all ${holdingRule.enabled ? 'bg-teal-50/50 border-teal-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock className={`w-4 h-4 ${holdingRule.enabled ? 'text-teal-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">16. Time-Based Holding (Mantenimento Minimo 60 Minuti)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={holdingRule.enabled}
+                onChange={(e) => updateRule('TIME_BASED_HOLDING', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-teal-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Obbligo di mantenere la posizione per almeno <strong>60 minuti</strong> dall&apos;apertura. Inibisce uscite premature e micro-oscillazioni per sentiment transitorio, riducendo il churn operativo. Salvaguardia Circuit Breaker (-3.00%) sempre attiva.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Tempo Minimo di Mantenimento (Holding Period):</span>
+                <span className="font-mono text-teal-600 font-bold">{holdingRule.parameters.minHoldingMinutes ?? 60} minuti</span>
+              </div>
+              <input
+                type="range"
+                min="15"
+                max="120"
+                step="15"
+                value={holdingRule.parameters.minHoldingMinutes ?? 60}
+                onChange={(e) => updateRule('TIME_BASED_HOLDING', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minHoldingMinutes: parseInt(e.target.value, 10) }
+                }))}
+                disabled={!holdingRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-teal-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-teal-50/50 border border-teal-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Protezione Anti-Churn e Stabilità di Trend</span>
+                  <p className="text-[10px] text-slate-500">I trade respirano senza tagli anticipati da rumore; Stop Catastrofico (-3%) sempre vigile</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-teal-700 bg-teal-100 px-2 py-0.5 rounded">
+                60m Min Hold
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 17: Macro-Sentiment Filter (VIX / IV < 30%) */}
+        <div className={`p-4 rounded-xl border transition-all ${vixRule.enabled ? 'bg-cyan-50/50 border-cyan-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className={`w-4 h-4 ${vixRule.enabled ? 'text-cyan-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">17. Macro-Sentiment Filter (VIX / IV &lt; 30%)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vixRule.enabled}
+                onChange={(e) => updateRule('MACRO_VOLATILITY_VIX_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            Filtro macroeconomico di regime: inibisce l&apos;apertura di nuovi ordini BUY se il <strong>VIX / Volatilità Implicita di mercato è &gt;= 30.0%</strong>, proteggendo il capitale durante fasi di panico sistemico e gap down improvvisi.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Massima VIX Consentita per Ingressi:</span>
+                <span className="font-mono text-cyan-600 font-bold">{(vixRule.parameters.maxVixThreshold ?? 30.0).toFixed(1)}%</span>
+              </div>
+              <input
+                type="range"
+                min="20.0"
+                max="45.0"
+                step="1.0"
+                value={vixRule.parameters.maxVixThreshold ?? 30.0}
+                onChange={(e) => updateRule('MACRO_VOLATILITY_VIX_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, maxVixThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!vixRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-cyan-50/50 border border-cyan-100">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-cyan-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Rischio Sistemico &amp; Cigno Nero</span>
+                  <p className="text-[10px] text-slate-500">Blocca ingressi se il VIX supera la soglia di allarme volatilità</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">
+                VIX &lt; 30.0%
               </span>
             </div>
           </div>

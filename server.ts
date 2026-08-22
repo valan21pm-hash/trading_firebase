@@ -162,14 +162,52 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
-      blockMiddayChopWindow: true,
+      blockMiddayChopWindow: false,
       blockAfternoonClosingWindow: true,
       morningBlockStart: '09:30',
-      morningBlockEnd: '09:45',
-      middayBlockStart: '12:30',
-      middayBlockEnd: '13:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
       afternoonBlockStart: '15:30',
-      afternoonBlockEnd: '16:00'
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'trading_window_lockdown',
+    enabled: true,
+    type: 'TRADING_WINDOW_LOCKDOWN',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'time_based_holding',
+    enabled: true,
+    type: 'TIME_BASED_HOLDING',
+    parameters: {
+      minHoldingMinutes: 60,
+      catastrophicMaxLossPct: -3.00
+    }
+  },
+  {
+    id: 'macro_volatility_vix_filter',
+    enabled: true,
+    type: 'MACRO_VOLATILITY_VIX_FILTER',
+    parameters: {
+      maxVixThreshold: 30.0
     }
   },
   {
@@ -227,6 +265,8 @@ export interface EstTimeInfo {
   totalMinutes: number;
   timeFormatted: string;
   isMorningVolatileLock: boolean;
+  isOpeningLockdown: boolean;
+  isMiddayPrimeWindow: boolean;
   isToxicWindowLock: boolean;
   isMiddayChopLock: boolean;
   isAfternoonVolatileLock: boolean;
@@ -258,22 +298,22 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
   const totalMinutes = hours * 60 + minutes;
   const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} EST`;
   
-  // 09:30 - 09:45 EST => 570 - 585 minuti (Filtro apertura breve per spread asta iniziale)
-  // 12:30 - 13:30 EST => 750 - 810 minuti (Pausa Chop concentrata di metà giornata)
+  // 09:30 - 10:30 EST => 570 - 630 minuti (Trading Window Lockdown: Inefficienze prima ora)
+  // 12:00 - 14:30 EST => 720 - 870 minuti (Fascia Midday privilegiata ad alta efficienza)
   // >= 15:30 EST => >= 930 minuti (Pre-chiusura 15:30-16:00 e sessione serale/after-hours)
-  const isMorningVolatileLock = totalMinutes >= 570 && totalMinutes < 585;
-  const isToxicWindowLock = false; // Disattivato per consentire scalping agile tra 09:45 e 12:30
-  const isMiddayChopLock = totalMinutes >= 750 && totalMinutes < 810;
+  const isOpeningLockdown = totalMinutes >= 570 && totalMinutes < 630;
+  const isMorningVolatileLock = isOpeningLockdown;
+  const isMiddayPrimeWindow = totalMinutes >= 720 && totalMinutes < 870;
+  const isToxicWindowLock = false;
+  const isMiddayChopLock = false;
   const isAfternoonVolatileLock = totalMinutes >= 930;
-  const isMarketTimeLocked = isMorningVolatileLock || isMiddayChopLock || isAfternoonVolatileLock;
+  const isMarketTimeLocked = isMorningVolatileLock || isAfternoonVolatileLock;
   
   let lockReason: string | undefined;
   if (isMorningVolatileLock) {
-    lockReason = `Fascia di apertura iniziale ad alta varianza di spread (09:30 - 09:45 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per i primi 15 minuti.`;
-  } else if (isMiddayChopLock) {
-    lockReason = `Filtro Temporale Esecutivo: Fascia di metà giornata a basso volume e chop (12:30 - 13:30 EST, orario corrente: ${timeFormatted}). Ingressi inibiti per evitare stasi.`;
+    lockReason = `[Trading Window Lockdown] Fascia di apertura ad alta inefficienza (09:30 - 10:30 EST, orario: ${timeFormatted}). Nuovi ingressi BUY inibiti a tutela del capitale.`;
   } else if (isAfternoonVolatileLock) {
-    lockReason = `Filtro Temporale Esecutivo: Fascia pre-chiusura / serale dopo le 15:30 EST (orario corrente: ${timeFormatted}). Ingressi inibiti per evitare spread elevati e volatilità non strutturata.`;
+    lockReason = `[Trading Window Lockdown] Fascia pre-chiusura / serale dopo le 15:30 EST (orario: ${timeFormatted}). Ingressi inibiti per evitare spread elevati e volatilità non strutturata.`;
   }
   
   return {
@@ -282,6 +322,8 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
     totalMinutes,
     timeFormatted,
     isMorningVolatileLock,
+    isOpeningLockdown,
+    isMiddayPrimeWindow,
     isToxicWindowLock,
     isMiddayChopLock,
     isAfternoonVolatileLock,
@@ -345,8 +387,23 @@ function isPurchaseAllowedBySystemRules(
   systemRules: RiskRuleConfig[] = [],
   marketAdx?: number,
   currentOpenPositionsCount?: number,
-  spyQqqCorrelation?: number
+  spyQqqCorrelation?: number,
+  vixLevel?: number
 ): { allowed: boolean; reason?: string } {
+  // 1. Valutazione Prioritaria Trading Window Lockdown (09:30-10:30 & 15:30-16:00 EST / Midday ADX > 14)
+  const estInfo = getEstMarketTime();
+  const windowLockdownEval = RiskManagementService.evaluateTradingWindowLockdown(estInfo, marketAdx, systemRules);
+  if (!windowLockdownEval.allowed) {
+    return windowLockdownEval;
+  }
+
+  // 2. Valutazione Filtro Macro-Sentiment VIX (VIX/IV < 30.0%)
+  const effectiveVix = vixLevel ?? StatisticalExpertService.getInstance().getMetrics().indexPrices?.VIX ?? 15.0;
+  const vixFilterEval = RiskManagementService.evaluateMacroSentimentVixFilter(effectiveVix, systemRules);
+  if (!vixFilterEval.allowed) {
+    return vixFilterEval;
+  }
+
   for (const rule of systemRules) {
     if (!rule.enabled) continue;
     
@@ -394,24 +451,16 @@ function isPurchaseAllowedBySystemRules(
       }
     }
 
-    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-09:45, 12:30-13:30 e 15:30-16:00 EST)
+    // Regola 10: VOLATILITY_TIME_WINDOW_LOCK (Inibizione operatività 09:30-10:30 e 15:30-16:00 EST)
     if (rule.type === 'VOLATILITY_TIME_WINDOW_LOCK') {
       const estInfo = getEstMarketTime();
       const blockMorning = rule.parameters.blockMorningOpeningWindow ?? true;
-      const blockMidday = rule.parameters.blockMiddayChopWindow ?? true;
       const blockAfternoon = rule.parameters.blockAfternoonClosingWindow ?? true;
 
       if (blockMorning && estInfo.isMorningVolatileLock) {
         return {
           allowed: false,
-          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nei primi 15 minuti di apertura (09:30-09:45 EST, orario: ${estInfo.timeFormatted}). Ingressi inibiti per assorbire lo spread iniziale d'asta.`
-        };
-      }
-
-      if (blockMidday && estInfo.isMiddayChopLock) {
-        return {
-          allowed: false,
-          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Filtro Temporale Esecutivo: Inibizione apertura nuove posizioni BUY nella fascia di stasi di metà giornata (12:30-13:30 EST, orario: ${estInfo.timeFormatted}) per evitare drawdown da bassi volumi.`
+          reason: `[Regola Sistema: VOLATILITY_TIME_WINDOW_LOCK] Inibizione operatività nella prima ora di apertura (09:30-10:30 EST, orario: ${estInfo.timeFormatted}). Ingressi inibiti per inefficienze e spread iniziale.`
         };
       }
 
@@ -3325,8 +3374,17 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         }
         const entryTime = positionEntryTimes[mode][symbol];
         const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
-        if (['SPY', 'VOO'].includes(symbol) && ageMinutes < 60) {
-          addLog(mode as 'paper' | 'live', `[Portafoglio] Vincolo holding period 60m per ${symbol} (aperta da ${ageMinutes.toFixed(1)} min): chiusura per sentiment bloccata.`);
+        
+        // Time-Based Holding (Mantenimento Minimo 60 Minuti Anti-Churn)
+        const holdingRule = (botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES).find(r => r.type === 'TIME_BASED_HOLDING');
+        const minHoldingMins = (holdingRule && holdingRule.enabled) ? (holdingRule.parameters.minHoldingMinutes ?? 60) : 60;
+        const isHoldingBlocked = (holdingRule?.enabled ?? true) && ageMinutes < minHoldingMins;
+        
+        const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
+        const isCatastrophicBreach = currentPlPct <= -3.00;
+
+        if (isHoldingBlocked && !isCatastrophicBreach) {
+          addLog(mode as 'paper' | 'live', `[Time-Based Holding] Posizione su ${symbol} aperta da ${ageMinutes.toFixed(1)} min < ${minHoldingMins} min: chiusura anticipata da sentiment bloccata a tutela del trend (P&L attuale: ${currentPlPct >= 0 ? '+' : ''}${currentPlPct.toFixed(2)}%).`);
         } else {
           shouldClose = true;
           closeReason = `Sentiment negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
@@ -3413,13 +3471,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const activeRules = botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES;
     const marketAdxRes = await TechnicalIndicatorService.getInstance().getMarketAdx(getAlpacaConfig(mode));
     const currentSpyQqqCorr = StatisticalExpertService.getInstance().getMetrics().correlations.spy_qqq;
+    const currentVixLevel = StatisticalExpertService.getInstance().getMetrics().indexPrices?.VIX ?? 15.0;
     const purchasePermission = isPurchaseAllowedBySystemRules(
       minutesToClose,
       isDecreasingSentiment,
       activeRules,
       marketAdxRes.marketAdx,
       openPositions.length,
-      currentSpyQqqCorr
+      currentSpyQqqCorr,
+      currentVixLevel
     );
 
     // Valutazione Hard-Risk Management (Limite di perdita giornaliera -1.00% e Cooldown 30m dopo 2 Stop-Loss consecutivi)

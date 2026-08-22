@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
@@ -48,6 +48,14 @@ export interface RiskRuleConfig {
     hardStopLossPct?: number;         // default -1.00% (SL fisso)
     hardTakeProfitPct?: number;       // default +2.00% (TP fisso / R:R 1:2)
     maxDailyLossPct?: number;         // default -1.00% (blocco operatività giornaliero)
+    // --- Nuove Regole Consenso Trading Window Lockdown, Time-Based Holding e Macro-Sentiment Filter ---
+    minHoldingMinutes?: number;       // default 60 (mantenimento obbligatorio 60m anti-churn)
+    maxVixThreshold?: number;         // default 30.0 (filtro VIX/IV < 30% per nuovi ingressi)
+    privilegeMiddayExecution?: boolean; // default true: fascia 12:00-14:30 EST subordinata ad ADX(14) > 14.0
+    middayPrimeStart?: string;        // default '12:00'
+    middayPrimeEnd?: string;          // default '14:30'
+    minMiddayAdxThreshold?: number;   // default 14.0 (ADX(14) > 14.0 nel blocco Midday)
+    strictMiddayOnly?: boolean;       // default false (se true vincola ingressi esclusivamente al blocco 12:00-14:30)
   };
 }
 
