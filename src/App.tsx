@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, Shield, ShieldAlert, AlertTriangle, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, Shield, ShieldAlert, AlertTriangle, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart, Zap } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -13,6 +13,7 @@ import { SystemRiskRulesManager } from './components/SystemRiskRulesManager';
 import { ProTradingTerminal } from './components/ProTradingTerminal';
 import { SentimentBadge } from './components/SentimentBadge';
 import { ForceBuyModal } from './components/ForceBuyModal';
+import { SmartView } from './components/SmartView';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -1529,6 +1530,7 @@ export default function App() {
   const [showPanicConfirm, setShowPanicConfirm] = useState(false);
   const [panicLoading, setPanicLoading] = useState(false);
   const [showProTerminal, setShowProTerminal] = useState(false);
+  const [showSmartView, setShowSmartView] = useState(false);
   const [forceBuyModalOpen, setForceBuyModalOpen] = useState(false);
   const [forceBuySymbol, setForceBuySymbol] = useState('');
 
@@ -2211,6 +2213,16 @@ export default function App() {
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
               Versione Nuova
+            </button>
+
+            {/* Modalità Smart View Button */}
+            <button
+              onClick={() => setShowSmartView(true)}
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl text-[11px] sm:text-xs font-bold shadow-md hover:from-amber-600 hover:to-orange-700 active:scale-95 transition-all cursor-pointer border-none flex-1 sm:flex-none"
+              title="Apri la Modalità Smart (Solo posizioni attive, indicatori chiave & comandi rapidi)"
+            >
+              <Zap className="w-3.5 h-3.5 fill-white text-white" />
+              Modalità Smart
             </button>
 
             {/* Bottone Forza Acquisto Manuale */}
@@ -3619,6 +3631,17 @@ export default function App() {
           <ProTradingTerminal
             onClose={() => setShowProTerminal(false)}
             botStatus={status}
+          />
+        )}
+
+        {/* Smart View Modal / Overlay (Solo posizioni aperte, spie essenziali & comandi rapidi) */}
+        {showSmartView && (
+          <SmartView
+            onClose={() => setShowSmartView(false)}
+            botStatus={status}
+            initialMode={selectedTab}
+            onStatusUpdate={fetchStatus}
+            showToast={showToast}
           />
         )}
 
