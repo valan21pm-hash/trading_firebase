@@ -16,6 +16,8 @@ export interface Position {
   atr?: number; // Average True Range (14 periodi) in $ (es. 2.50$)
   atr1_5x?: number; // 1.5x ATR in $
   adx?: number; // ADX(14)
+  manualTrailingStopPrice?: number; // Stop manuale personalizzato impostato dall'utente
+  manualTrailingDistancePct?: number; // Distanza % manuale impostata dall'utente (es. 0.25%)
   enableTechnicalStop?: boolean; // Override specifico per questa singola posizione
   enableCatastrophicStop?: boolean; // Override specifico per questa singola posizione
 }
@@ -77,7 +79,26 @@ export class RiskManagementService {
       };
     }
 
-    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, DINAMICA IBRIDA A SCAGLIONI & STRATEGIE) ---
+    // --- LIVELLO 0.5: OVERRIDE MANUALE TRAILING STOP (IMPOSTATO PERSONALMENTE DALL'UTENTE) ---
+    if (position.manualTrailingStopPrice && position.manualTrailingStopPrice > 0) {
+      const manualStop = position.manualTrailingStopPrice;
+      if (currentPrice <= manualStop) {
+        return {
+          action: 'CLOSE',
+          reason: `[Trailing Stop Manuale] Posizione ${asset} ha raggiunto la soglia stop personalizzata a $${manualStop.toFixed(2)} (Prezzo attuale: $${currentPrice.toFixed(2)}, Carico: $${openPrice.toFixed(2)}, P&L: ${currentProfitPct.toFixed(2)}%). Chiusura eseguita.`
+        };
+      }
+    } else if (position.manualTrailingDistancePct && position.manualTrailingDistancePct > 0) {
+      const manualStop = peakPrice * (1 - position.manualTrailingDistancePct / 100);
+      if (currentPrice <= manualStop) {
+        return {
+          action: 'CLOSE',
+          reason: `[Trailing Stop Manuale %] Posizione ${asset} ha raggiunto la soglia stop a distanza manuale del ${position.manualTrailingDistancePct.toFixed(2)}% dal picco ($${peakPrice.toFixed(2)}) a $${manualStop.toFixed(2)} (Prezzo attuale: $${currentPrice.toFixed(2)}, Carico: $${openPrice.toFixed(2)}, P&L: ${currentProfitPct.toFixed(2)}%). Chiusura eseguita.`
+        };
+      }
+    }
+
+    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, DINAMICA IBRIDA A SCAGLIONI A DISTANZA DECRESCENTE) ---
     const atrRule = systemRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
     const isGlobalTechnicalEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
     const isTechnicalDynamicStopEnabled = position.enableTechnicalStop !== undefined 
@@ -87,58 +108,64 @@ export class RiskManagementService {
     const qty = (typeof position.qty === 'number' && position.qty > 0) ? position.qty : 1;
     const minProfitBufferDollars = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
     
-    // Parametri Dinamica Ibrida a Scaglioni (Tiered Profit Lock)
+    // Parametri Dinamica Ibrida a Scaglioni (Distanza Decrescente dal Picco %)
     const tieredLockEnabled = atrRule?.parameters?.tieredProfitLockEnabled ?? true;
-    const tier1Threshold = atrRule?.parameters?.tier1ProfitThreshold ?? 0.50; // default 0.50$
-    const tier1Ratio = atrRule?.parameters?.tier1LockRatio ?? 0.50;           // default 50% locked
-    const tier2Threshold = atrRule?.parameters?.tier2ProfitThreshold ?? 1.00; // default 1.00$
-    const tier2Ratio = atrRule?.parameters?.tier2LockRatio ?? 0.70;           // default 70% locked
+    const tier1ThresholdPct = atrRule?.parameters?.tier1ProfitThresholdPct ?? 0.50; // default +0.50%
+    const tier1DistancePct = atrRule?.parameters?.tier1DistancePct ?? 0.30;          // default distanza 0.30%
+    const tier2ThresholdPct = atrRule?.parameters?.tier2ProfitThresholdPct ?? 0.80; // default +0.80%
+    const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.20;          // default distanza 0.20%
+    const tier3ThresholdPct = atrRule?.parameters?.tier3ProfitThresholdPct ?? 1.00; // default +1.00%
+    const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.10;          // default distanza 0.10%
 
-    // Calcolo del profitto di picco (High Water Mark)
-    const peakProfitDollars = Math.max(0, (peakPrice - openPrice) * qty);
-    
-    let activeTier = 1;
-    let requiredTierLockedProfitDollars = minProfitBufferDollars;
+    let activeTier = 0;
+    let tierDistancePct = 0;
     let tierDescription = '';
+    let tieredTrailingPrice = 0;
 
-    if (tieredLockEnabled && peakProfitDollars >= tier2Threshold) {
-      // Scaglione 3: Picco >= 1.00$ -> Protezione blindata 70%
+    if (tieredLockEnabled && highestProfitPct >= tier3ThresholdPct) {
+      // Scaglione 3: Picco >= +1.00% -> Distanza decrescente 0.10% dal picco
       activeTier = 3;
-      requiredTierLockedProfitDollars = Math.max(minProfitBufferDollars, peakProfitDollars * tier2Ratio);
-      tierDescription = `Scaglione 3 (≥$${tier2Threshold.toFixed(2)}: ${(tier2Ratio * 100).toFixed(0)}% bloccato)`;
-    } else if (tieredLockEnabled && peakProfitDollars >= tier1Threshold) {
-      // Scaglione 2: Picco tra 0.50$ e 1.00$ -> Protezione 50%
+      tierDistancePct = tier3DistancePct;
+      tieredTrailingPrice = peakPrice * (1 - tierDistancePct / 100);
+      tierDescription = `Scaglione 3 (≥+${tier3ThresholdPct.toFixed(2)}%: Distanza ${tierDistancePct.toFixed(2)}% dal picco)`;
+    } else if (tieredLockEnabled && highestProfitPct >= tier2ThresholdPct) {
+      // Scaglione 2: Picco +0.80% - +1.00% -> Distanza decrescente 0.20% dal picco
       activeTier = 2;
-      requiredTierLockedProfitDollars = Math.max(minProfitBufferDollars, peakProfitDollars * tier1Ratio);
-      tierDescription = `Scaglione 2 ($${tier1Threshold.toFixed(2)}-$${tier2Threshold.toFixed(2)}: ${(tier1Ratio * 100).toFixed(0)}% bloccato)`;
-    } else {
-      // Scaglione 1: Picco < 0.50$ -> Buffer Volatilità ATR (respiro del trend) con soglia minima +0.04$
+      tierDistancePct = tier2DistancePct;
+      tieredTrailingPrice = peakPrice * (1 - tierDistancePct / 100);
+      tierDescription = `Scaglione 2 (+${tier2ThresholdPct.toFixed(2)}%-+${tier3ThresholdPct.toFixed(2)}%: Distanza ${tierDistancePct.toFixed(2)}% dal picco)`;
+    } else if (tieredLockEnabled && highestProfitPct >= tier1ThresholdPct) {
+      // Scaglione 1: Picco +0.50% - +0.80% -> Distanza 0.30% dal picco
       activeTier = 1;
-      requiredTierLockedProfitDollars = minProfitBufferDollars;
-      tierDescription = `Scaglione 1 (<$${tier1Threshold.toFixed(2)}: Buffer Volatilità ATR ${atrMultiplier.toFixed(1)}x)`;
+      tierDistancePct = tier1DistancePct;
+      tieredTrailingPrice = peakPrice * (1 - tierDistancePct / 100);
+      tierDescription = `Scaglione 1 (+${tier1ThresholdPct.toFixed(2)}%-+${tier2ThresholdPct.toFixed(2)}%: Distanza ${tierDistancePct.toFixed(2)}% dal picco)`;
+    } else {
+      // Scaglione 0: Picco < +0.50% -> Attivazione standard con Buffer Volatilità ATR 1.5x
+      activeTier = 0;
+      tierDescription = `Attivazione Base (<+${tier1ThresholdPct.toFixed(2)}%: Buffer ATR ${atrMultiplier.toFixed(1)}x)`;
     }
 
     // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita a Trailing / Scaglioni
     if (isTechnicalDynamicStopEnabled && atr && atr > 0) {
       const atrDistance = atrMultiplier * atr;
       const rawAtrStopPrice = peakPrice - atrDistance;
-      const tierMinPrice = openPrice + (requiredTierLockedProfitDollars / qty);
       
-      // La soglia effettiva di stop è il massimo tra l'ATR Stop e la quota minima garantita dallo scaglione
-      const effectiveTrailingStopPrice = (activeTier >= 2) 
-        ? Math.max(rawAtrStopPrice, tierMinPrice) 
+      // La soglia effettiva di stop è calcolata dallo scaglione se attivo (>= +0.50%), altrimenti dall'ATR
+      const effectiveTrailingStopPrice = (activeTier >= 1 && tieredTrailingPrice > 0)
+        ? Math.max(rawAtrStopPrice, tieredTrailingPrice)
         : rawAtrStopPrice;
 
       const minRequiredTrailingStop = openPrice + (minProfitBufferDollars / qty);
       const isTrailingProfitActive = effectiveTrailingStopPrice >= minRequiredTrailingStop;
       const totalProtectedProfitDollars = (effectiveTrailingStopPrice - openPrice) * qty;
+      const protectedProfitPct = ((effectiveTrailingStopPrice - openPrice) / openPrice) * 100;
 
       // Se il trailing / scaglione è attivo a protezione del profitto e il prezzo arretra sotto la soglia
       if (isTrailingProfitActive && currentPrice <= effectiveTrailingStopPrice) {
-        const atrDistancePct = (atrDistance / peakPrice) * 100;
         return {
           action: 'CLOSE',
-          reason: `[Dinamica Ibrida a Scaglioni - ${tierDescription}] Posizione ${asset} (Picco: $${peakPrice.toFixed(2)}, Guadagno max: +$${peakProfitDollars.toFixed(2)}) è rientrata sotto la soglia protetta a $${effectiveTrailingStopPrice.toFixed(2)} (Carico: $${openPrice.toFixed(2)}, Qty: ${qty}, Utile protetto bloccato: +$${totalProtectedProfitDollars.toFixed(2)}, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: +${currentProfitPct.toFixed(2)}%). Chiusura a protezione del profitto.`
+          reason: `[Dinamica Ibrida a Scaglioni - ${tierDescription}] Posizione ${asset} (Picco: $${peakPrice.toFixed(2)} / +${highestProfitPct.toFixed(2)}%) è rientrata sotto la soglia protetta a $${effectiveTrailingStopPrice.toFixed(2)} (Carico: $${openPrice.toFixed(2)}, Qty: ${qty}, Utile protetto: +${protectedProfitPct.toFixed(2)}% / +$${totalProtectedProfitDollars.toFixed(2)}, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: +${currentProfitPct.toFixed(2)}%). Chiusura a protezione del profitto.`
         };
       }
     }

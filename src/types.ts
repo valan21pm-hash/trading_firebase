@@ -67,12 +67,14 @@ export interface RiskRuleConfig {
     // #3 ATR Volatility Lock
     minAtrPercentThreshold?: number;  // default 1.50 (blocco se ATR(14)% < 1.50% per evitare consolidamenti)
     blockLowAtrPercent?: boolean;     // default true
-    // #4 Dinamica Ibrida a Scaglioni (Tiered Profit Lock)
-    tieredProfitLockEnabled?: boolean; // default true (protezione progressiva: 50% tra 0.50-1€, 70% >= 1€)
-    tier1ProfitThreshold?: number;    // default 0.50$ (primo scaglione)
-    tier1LockRatio?: number;          // default 0.50 (50% locked)
-    tier2ProfitThreshold?: number;    // default 1.00$ (secondo scaglione)
-    tier2LockRatio?: number;          // default 0.70 (70% locked)
+    // #4 Dinamica Ibrida a Scaglioni (Decrescent Tiered Trailing Distance)
+    tieredProfitLockEnabled?: boolean; // default true (Dinamica Ibrida a Distanza Decrescente)
+    tier1ProfitThresholdPct?: number;  // default 0.50% (Scaglione 1: +0.50% - +0.80%)
+    tier1DistancePct?: number;         // default 0.30% (distanza 0.30% dal picco)
+    tier2ProfitThresholdPct?: number;  // default 0.80% (Scaglione 2: +0.80% - +1.00%)
+    tier2DistancePct?: number;         // default 0.20% (distanza 0.20% dal picco)
+    tier3ProfitThresholdPct?: number;  // default 1.00% (Scaglione 3: >= +1.00%)
+    tier3DistancePct?: number;         // default 0.10% (distanza 0.10% dal picco)
   };
 }
 
@@ -106,17 +108,23 @@ export interface Position {
   atr1_5x?: number;
   adx?: number;
   atrTrailingStopPrice?: number;
+  rawAtrTrailingStopPrice?: number;
   minRequiredAtrStopPrice?: number;
   atrActivationPrice?: number;
   minProfitBufferDollars?: number;
   isAtrTrailingActive?: boolean;
-  // Campi Dinamica Ibrida a Scaglioni
+  // Campi Dinamica Ibrida a Scaglioni & Override Manuale
   tieredProfitLockEnabled?: boolean;
-  currentProfitTier?: number;         // 1: Respiro ATR (<0.50$), 2: 50% Locked (0.50-1.00$), 3: 70% Locked (>=1.00$)
+  currentProfitTier?: number;         // 0: Respiro Base ATR, 1: +0.50%-0.80% (Dist 0.30%), 2: +0.80%-1.00% (Dist 0.20%), 3: >=1.00% (Dist 0.10%)
   currentTierLabel?: string;
+  tierDistancePct?: number;
   lockedProfitDollars?: number;
   lockedProfitPct?: number;
   distanceToStopDollars?: number;
+  distanceToStopPct?: number;
+  manualTrailingStopPrice?: number;   // Prezzo Stop manuale impostato dall'utente
+  manualTrailingDistancePct?: number; // Distanza % manuale impostata dall'utente (es. 0.25%)
+  isManualTrailingSet?: boolean;      // True se è attivo un override manuale
   enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR
   enableCatastrophicStop?: boolean; // Se true o undefined (default true), applica il Circuit Breaker Catastrofico (-3%)
 }

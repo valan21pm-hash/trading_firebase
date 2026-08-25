@@ -4,7 +4,7 @@ import {
   Layers, BarChart3, Globe, Cpu, Clock, AlertTriangle, 
   Search, ArrowUpRight, ArrowDownRight,
   Maximize2, PieChart, DollarSign, Eye, X, Play, Square, Settings, BookOpen, Key, Sparkles, Check, AlertCircle, Upload, Download,
-  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive, Plus, ShoppingCart, Calculator
+  Wallet, Percent, ArrowUp, ArrowDown, Briefcase, FileText, Trash2, Filter, Save, FileUp, FolderArchive, Plus, ShoppingCart, Calculator, Sliders
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ReactMarkdown from 'react-markdown';
@@ -15,6 +15,7 @@ import { GeminiSignalsTicker } from './GeminiSignalsTicker';
 import { AlpacaMonitorModule } from './AlpacaMonitorModule';
 import { SentimentBadge } from './SentimentBadge';
 import { ForceBuyModal } from './ForceBuyModal';
+import { ManualTrailingStopModal } from './ManualTrailingStopModal';
 import { StatisticalExpertModule } from './StatisticalExpertModule';
 import { RssNewsWidget } from './RssNewsWidget';
 import { getAccessToken } from '../auth';
@@ -99,10 +100,17 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   const [geminiSignals, setGeminiSignals] = useState<GeminiSignal[]>(botStatus?.geminiSignals || []);
   const [forceBuyModalOpen, setForceBuyModalOpen] = useState(false);
   const [forceBuySymbol, setForceBuySymbol] = useState('');
+  const [trailingStopModalOpen, setTrailingStopModalOpen] = useState(false);
+  const [selectedPositionForTS, setSelectedPositionForTS] = useState<any>(null);
 
   const handleOpenForceBuy = (sym?: string) => {
     setForceBuySymbol(sym || selectedAsset?.symbol || 'AAPL');
     setForceBuyModalOpen(true);
+  };
+
+  const handleOpenTrailingStopModal = (pos: any) => {
+    setSelectedPositionForTS(pos);
+    setTrailingStopModalOpen(true);
   };
 
   useEffect(() => {
@@ -1308,25 +1316,50 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1">
                                   {isReached ? (
                                     <>
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800" title={`Trailing Stop a $${effectiveStop.toFixed(2)} (Utile bloccato: +$${lockedAmt.toFixed(2)})`}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenTrailingStopModal(pos)}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 transition cursor-pointer" 
+                                        title={`Trailing Stop a $${effectiveStop.toFixed(2)} (Utile bloccato: +$${lockedAmt.toFixed(2)}). Clicca per modificare manualmente.`}
+                                      >
                                         <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
                                         TS ${effectiveStop.toFixed(2)}
-                                      </span>
-                                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
-                                        tierNum === 3 
-                                          ? 'bg-purple-950 text-purple-300 border-purple-800' 
-                                          : tierNum === 2 
-                                            ? 'bg-sky-950 text-sky-300 border-sky-800' 
-                                            : 'bg-slate-800 text-slate-300 border-slate-700'
-                                      }`} title={tierLabel}>
-                                        {tierNum === 3 ? '🔒 70% Lock' : tierNum === 2 ? '🛡️ 50% Lock' : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
-                                      </span>
+                                        <Sliders className="w-2 h-2 ml-0.5 text-emerald-400 opacity-80" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenTrailingStopModal(pos)}
+                                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-semibold border cursor-pointer hover:opacity-90 transition ${
+                                          pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                            ? 'bg-amber-950 text-amber-300 border-amber-700'
+                                            : tierNum === 3 
+                                              ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                                              : tierNum === 2 
+                                                ? 'bg-sky-950 text-sky-300 border-sky-800' 
+                                                : 'bg-slate-800 text-slate-300 border-slate-700'
+                                        }`} 
+                                        title={`${tierLabel} (+${lockedAmt.toFixed(2)}). Clicca per personalizzare.`}
+                                      >
+                                        {pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                          ? '⚙️ Override Man.'
+                                          : tierNum === 3 
+                                            ? '🔒 70% Lock' 
+                                            : tierNum === 2 
+                                              ? '🛡️ 50% Lock' 
+                                              : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
+                                      </button>
                                     </>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/60" title={`Attivazione Trailing a $${activationP.toFixed(2)}`}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenTrailingStopModal(pos)}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/60 hover:bg-rose-900/60 transition cursor-pointer" 
+                                      title={`Attivazione Trailing a $${activationP.toFixed(2)}. Clicca per impostare un valore manuale.`}
+                                    >
                                       <span className="w-1 h-1 rounded-full bg-rose-400" />
                                       Attiv. ${activationP.toFixed(2)}
-                                    </span>
+                                      <Sliders className="w-2 h-2 ml-0.5 text-rose-400 opacity-80" />
+                                    </button>
                                   )}
                                 </div>
                               </td>
@@ -1336,6 +1369,23 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               </td>
                               <td className="py-3 px-3 text-center">
                                 <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => handleOpenTrailingStopModal(pos)}
+                                    title={pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct 
+                                      ? `Trailing Stop Manuale ATTIVO ($${pos.manualTrailingStopPrice ? pos.manualTrailingStopPrice.toFixed(2) : pos.manualTrailingDistancePct + '%'}). Clicca per modificare.` 
+                                      : 'Imposta Trailing Stop manuale per questa posizione'}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                      pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                        ? 'bg-amber-950/80 text-amber-300 border-amber-700/80 hover:bg-amber-900'
+                                        : 'bg-indigo-950/60 text-indigo-300 border-indigo-700/60 hover:bg-indigo-900'
+                                    }`}
+                                  >
+                                    <Sliders className="w-2.5 h-2.5" />
+                                    <span>TS</span>
+                                    {(pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct) && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                    )}
+                                  </button>
                                   <button
                                     onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop)}
                                     title={isTechStop ? 'Stop Tecnico Dinamico (ATR) ATTIVO: Clicca per disattivare per questa posizione' : 'Stop Tecnico Dinamico (ATR) DISATTIVATO: Clicca per attivare'}
@@ -1473,19 +1523,34 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                                 <span className={`w-2 h-2 rounded-full ${isReached ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
                                 <span>{isReached ? `TS: $${effectiveStop.toFixed(2)} (&Delta; $${distanceStop.toFixed(2)})` : '🔴 IN ATTESA ATTIVAZIONE'}</span>
                               </div>
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
-                                tierNum === 3 
-                                  ? 'bg-purple-950 text-purple-300 border-purple-800' 
-                                  : tierNum === 2 
-                                    ? 'bg-sky-950 text-sky-300 border-sky-800' 
-                                    : 'bg-slate-800 text-slate-300 border-slate-700'
-                              }`}>
-                                {tierNum === 3 ? '🔒 70% Lock' : tierNum === 2 ? '🛡️ 50% Lock' : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
-                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTrailingStopModal(pos)}
+                                className={`px-1.5 py-0.5 rounded text-[8px] font-semibold border cursor-pointer hover:opacity-90 transition ${
+                                  pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                    ? 'bg-amber-950 text-amber-300 border-amber-700'
+                                    : tierNum === 3 
+                                      ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                                      : tierNum === 2 
+                                        ? 'bg-sky-950 text-sky-300 border-sky-800' 
+                                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                                }`}
+                              >
+                                {pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                  ? '⚙️ TS Manuale'
+                                  : tierNum === 3 ? '🔒 70% Lock' : tierNum === 2 ? '🛡️ 50% Lock' : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
+                              </button>
                             </div>
-                            <div className="text-[10px] text-slate-400 flex justify-between">
+                            <div className="text-[10px] text-slate-400 flex justify-between items-center">
                               <span>Attivazione: ${activationP.toFixed(2)}</span>
-                              <span className="text-emerald-400 font-bold">{tierLabel}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTrailingStopModal(pos)}
+                                className="text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                              >
+                                <Sliders className="w-2.5 h-2.5" />
+                                {tierLabel}
+                              </button>
                             </div>
                           </div>
 
@@ -1493,6 +1558,17 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] font-mono">
                             <span className="text-[10px] text-slate-400">Protezioni:</span>
                             <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleOpenTrailingStopModal(pos)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  pos.isManualTrailingSet || pos.manualTrailingStopPrice || pos.manualTrailingDistancePct
+                                    ? 'bg-amber-950/80 text-amber-300 border-amber-700/80'
+                                    : 'bg-indigo-950/60 text-indigo-300 border-indigo-700/60'
+                                }`}
+                              >
+                                <Sliders className="w-2.5 h-2.5" />
+                                TS
+                              </button>
                               <button
                                 onClick={() => handleTogglePositionStop(pos.symbol, 'technical', pos.enableTechnicalStop)}
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer flex items-center gap-1 ${
@@ -2191,6 +2267,19 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
         onClose={() => setForceBuyModalOpen(false)}
         initialSymbol={forceBuySymbol}
         initialMode={tradingMode}
+        onSuccess={refreshBackendStatus}
+        showToast={(msg, type, title) => setToastMessage(`${title ? title + ': ' : ''}${msg}`)}
+      />
+
+      {/* Modal Override Manuale Trailing Stop per Posizione */}
+      <ManualTrailingStopModal
+        isOpen={trailingStopModalOpen}
+        onClose={() => {
+          setTrailingStopModalOpen(false);
+          setSelectedPositionForTS(null);
+        }}
+        position={selectedPositionForTS}
+        tradingMode={tradingMode}
         onSuccess={refreshBackendStatus}
         showToast={(msg, type, title) => setToastMessage(`${title ? title + ': ' : ''}${msg}`)}
       />

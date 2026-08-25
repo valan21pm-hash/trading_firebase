@@ -147,10 +147,12 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       useAtrTrailingStop: true,
       minProfitBufferDollars: 0.04,
       tieredProfitLockEnabled: true,
-      tier1ProfitThreshold: 0.50,
-      tier1LockRatio: 0.50,
-      tier2ProfitThreshold: 1.00,
-      tier2LockRatio: 0.70
+      tier1ProfitThresholdPct: 0.50,
+      tier1DistancePct: 0.30,
+      tier2ProfitThresholdPct: 0.80,
+      tier2DistancePct: 0.20,
+      tier3ProfitThresholdPct: 1.00,
+      tier3DistancePct: 0.10
     }
   },
   {
@@ -1640,10 +1642,20 @@ let positionStrategies: {
   live: {}
 };
 
-// Override per-posizione per Stop Tecnico e Stop Catastrofico
+// Override per-posizione per Stop Tecnico, Stop Catastrofico e Trailing Stop Manuale
 let positionStopOverrides: {
-  paper: Record<string, { enableTechnicalStop?: boolean; enableCatastrophicStop?: boolean }>;
-  live: Record<string, { enableTechnicalStop?: boolean; enableCatastrophicStop?: boolean }>;
+  paper: Record<string, { 
+    enableTechnicalStop?: boolean; 
+    enableCatastrophicStop?: boolean;
+    manualTrailingStopPrice?: number;
+    manualTrailingDistancePct?: number;
+  }>;
+  live: Record<string, { 
+    enableTechnicalStop?: boolean; 
+    enableCatastrophicStop?: boolean;
+    manualTrailingStopPrice?: number;
+    manualTrailingDistancePct?: number;
+  }>;
 } = {
   paper: {},
   live: {}
@@ -1677,10 +1689,10 @@ const STRATEGY_PARAMS = {
 
 let tradeLogs: string[] = [];
 
-// Endpoint per attivare/disattivare Stop Tecnico e Stop Catastrofico per singola posizione
+// Endpoint per attivare/disattivare Stop Tecnico, Stop Catastrofico o impostare Trailing Stop Manuale per singola posizione
 app.post("/api/trading/position-stops", async (req, res) => {
   try {
-    const { symbol, mode = 'paper', enableTechnicalStop, enableCatastrophicStop } = req.body;
+    const { symbol, mode = 'paper', enableTechnicalStop, enableCatastrophicStop, manualTrailingStopPrice, manualTrailingDistancePct, clearManualTrailing } = req.body;
     if (!symbol) {
       return res.status(400).json({ success: false, error: 'Simbolo non specificato' });
     }
@@ -1697,8 +1709,30 @@ app.post("/api/trading/position-stops", async (req, res) => {
     if (enableCatastrophicStop !== undefined) {
       positionStopOverrides[m][symbol].enableCatastrophicStop = Boolean(enableCatastrophicStop);
     }
+    if (clearManualTrailing) {
+      delete positionStopOverrides[m][symbol].manualTrailingStopPrice;
+      delete positionStopOverrides[m][symbol].manualTrailingDistancePct;
+      addLog(m, `[Trailing Stop Reset] Posizione ${symbol}: rimosso override manuale, ripristinato algoritmo dinamico automatico.`);
+    } else {
+      if (manualTrailingStopPrice !== undefined && manualTrailingStopPrice !== null) {
+        const val = parseFloat(manualTrailingStopPrice);
+        if (!isNaN(val) && val > 0) {
+          positionStopOverrides[m][symbol].manualTrailingStopPrice = val;
+          delete positionStopOverrides[m][symbol].manualTrailingDistancePct;
+          addLog(m, `[Trailing Stop Manuale] Posizione ${symbol}: Stop fissato manualmente a $${val.toFixed(2)}`);
+        }
+      }
+      if (manualTrailingDistancePct !== undefined && manualTrailingDistancePct !== null) {
+        const val = parseFloat(manualTrailingDistancePct);
+        if (!isNaN(val) && val > 0) {
+          positionStopOverrides[m][symbol].manualTrailingDistancePct = val;
+          delete positionStopOverrides[m][symbol].manualTrailingStopPrice;
+          addLog(m, `[Trailing Stop Manuale %] Posizione ${symbol}: Distanza fissata manualmente a ${val.toFixed(2)}% dal picco`);
+        }
+      }
+    }
 
-    addLog(m, `[Stop Loss Personalizzato] Posizione ${symbol}: Stop Tecnico=${positionStopOverrides[m][symbol].enableTechnicalStop ?? 'Globale'}, Stop Catastrofico=${positionStopOverrides[m][symbol].enableCatastrophicStop ?? 'Globale'}`);
+    addLog(m, `[Configurazione Stop Posizione] ${symbol}: Tecnico=${positionStopOverrides[m][symbol].enableTechnicalStop ?? 'Auto'}, Catastrofico=${positionStopOverrides[m][symbol].enableCatastrophicStop ?? 'Auto'}, Manuale=${positionStopOverrides[m][symbol].manualTrailingStopPrice ? '$' + positionStopOverrides[m][symbol].manualTrailingStopPrice : positionStopOverrides[m][symbol].manualTrailingDistancePct ? positionStopOverrides[m][symbol].manualTrailingDistancePct + '%' : 'Nessuno'}`);
     res.json({ success: true, symbol, overrides: positionStopOverrides[m][symbol] });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -3473,6 +3507,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         atr: indResult.atr,
         atr1_5x: indResult.atr1_5x,
         adx: indResult.adx,
+        manualTrailingStopPrice: overrides?.manualTrailingStopPrice,
+        manualTrailingDistancePct: overrides?.manualTrailingDistancePct,
         enableTechnicalStop: overrides?.enableTechnicalStop,
         enableCatastrophicStop: overrides?.enableCatastrophicStop
       }, botStatus.historicalProfits || 0, {
@@ -5011,40 +5047,59 @@ async function getStatusData() {
             const atrMultiplier = atrRule?.parameters?.atrMultiplier || 1.5;
             const minProfitBuffer = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
             const tieredLockEnabled = atrRule?.parameters?.tieredProfitLockEnabled ?? true;
-            const tier1Threshold = atrRule?.parameters?.tier1ProfitThreshold ?? 0.50;
-            const tier1Ratio = atrRule?.parameters?.tier1LockRatio ?? 0.50;
-            const tier2Threshold = atrRule?.parameters?.tier2ProfitThreshold ?? 1.00;
-            const tier2Ratio = atrRule?.parameters?.tier2LockRatio ?? 0.70;
+            const tier1ThresholdPct = atrRule?.parameters?.tier1ProfitThresholdPct ?? 0.50; // +0.50%
+            const tier1DistancePct = atrRule?.parameters?.tier1DistancePct ?? 0.30;          // 0.30%
+            const tier2ThresholdPct = atrRule?.parameters?.tier2ProfitThresholdPct ?? 0.80; // +0.80%
+            const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.20;          // 0.20%
+            const tier3ThresholdPct = atrRule?.parameters?.tier3ProfitThresholdPct ?? 1.00; // +1.00%
+            const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.10;          // 0.10%
 
             const posQty = parseFloat(pos.qty || '1') || 1;
-            const peakProfitDollars = Math.max(0, (peakP - avgEntry) * posQty);
+            let currentProfitTier = 0;
+            let tierDistancePct = 0;
+            let currentTierLabel = `Base (<+${tier1ThresholdPct.toFixed(2)}%): Buffer ATR ${atrMultiplier}x`;
+            let tieredTrailingPrice = 0;
 
-            let currentProfitTier = 1;
-            let lockedProfitDollars = minProfitBuffer;
-            let currentTierLabel = `Scaglione 1 (<$${tier1Threshold.toFixed(2)}): Buffer ATR ${atrMultiplier}x`;
-
-            if (tieredLockEnabled && peakProfitDollars >= tier2Threshold) {
+            if (tieredLockEnabled && highestProfitPct >= tier3ThresholdPct) {
               currentProfitTier = 3;
-              lockedProfitDollars = Math.max(minProfitBuffer, peakProfitDollars * tier2Ratio);
-              currentTierLabel = `Scaglione 3 (≥$${tier2Threshold.toFixed(2)}): ${(tier2Ratio * 100).toFixed(0)}% Bloccato (+$${lockedProfitDollars.toFixed(2)})`;
-            } else if (tieredLockEnabled && peakProfitDollars >= tier1Threshold) {
+              tierDistancePct = tier3DistancePct;
+              tieredTrailingPrice = peakP * (1 - tierDistancePct / 100);
+              currentTierLabel = `Scaglione 3 (≥+${tier3ThresholdPct.toFixed(2)}%): Distanza ${tierDistancePct.toFixed(2)}% dal picco`;
+            } else if (tieredLockEnabled && highestProfitPct >= tier2ThresholdPct) {
               currentProfitTier = 2;
-              lockedProfitDollars = Math.max(minProfitBuffer, peakProfitDollars * tier1Ratio);
-              currentTierLabel = `Scaglione 2 ($${tier1Threshold.toFixed(2)}-$${tier2Threshold.toFixed(2)}): ${(tier1Ratio * 100).toFixed(0)}% Bloccato (+$${lockedProfitDollars.toFixed(2)})`;
+              tierDistancePct = tier2DistancePct;
+              tieredTrailingPrice = peakP * (1 - tierDistancePct / 100);
+              currentTierLabel = `Scaglione 2 (+${tier2ThresholdPct.toFixed(2)}%-+${tier3ThresholdPct.toFixed(2)}%): Distanza ${tierDistancePct.toFixed(2)}% dal picco`;
+            } else if (tieredLockEnabled && highestProfitPct >= tier1ThresholdPct) {
+              currentProfitTier = 1;
+              tierDistancePct = tier1DistancePct;
+              tieredTrailingPrice = peakP * (1 - tierDistancePct / 100);
+              currentTierLabel = `Scaglione 1 (+${tier1ThresholdPct.toFixed(2)}%-+${tier2ThresholdPct.toFixed(2)}%): Distanza ${tierDistancePct.toFixed(2)}% dal picco`;
             }
 
             const rawAtrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
-            const tierRequiredPrice = avgEntry + (lockedProfitDollars / posQty);
-            const effectiveTrailingStopPrice = (currentProfitTier >= 2)
-              ? Math.max(rawAtrTrailingStopPrice, tierRequiredPrice)
+            let effectiveTrailingStopPrice = (currentProfitTier >= 1 && tieredTrailingPrice > 0)
+              ? Math.max(rawAtrTrailingStopPrice, tieredTrailingPrice)
               : rawAtrTrailingStopPrice;
+
+            const overrides = positionStopOverrides[mode]?.[sym];
+            const isManualTrailingSet = Boolean(overrides?.manualTrailingStopPrice || overrides?.manualTrailingDistancePct);
+
+            if (overrides?.manualTrailingStopPrice) {
+              effectiveTrailingStopPrice = overrides.manualTrailingStopPrice;
+              currentTierLabel = `Manuale: Stop fisso a $${overrides.manualTrailingStopPrice.toFixed(2)}`;
+            } else if (overrides?.manualTrailingDistancePct) {
+              effectiveTrailingStopPrice = peakP * (1 - overrides.manualTrailingDistancePct / 100);
+              currentTierLabel = `Manuale: Distanza ${overrides.manualTrailingDistancePct.toFixed(2)}% dal picco`;
+            }
 
             const minRequiredAtrStopPrice = avgEntry + (minProfitBuffer / posQty);
             const atrActivationPrice = minRequiredAtrStopPrice + (atrMultiplier * ind.atr);
-            const isAtrTrailingActive = effectiveTrailingStopPrice >= minRequiredAtrStopPrice;
-            const overrides = positionStopOverrides[mode]?.[sym];
+            const isAtrTrailingActive = isManualTrailingSet || (effectiveTrailingStopPrice >= minRequiredAtrStopPrice);
             const distanceToStopDollars = Math.max(0, currP - effectiveTrailingStopPrice);
-            const lockedProfitPct = peakProfitDollars > 0 ? (lockedProfitDollars / peakProfitDollars) * 100 : 0;
+            const distanceToStopPct = currP > 0 ? ((currP - effectiveTrailingStopPrice) / currP) * 100 : 0;
+            const lockedProfitDollars = Math.max(0, (effectiveTrailingStopPrice - avgEntry) * posQty);
+            const lockedProfitPct = avgEntry > 0 ? ((effectiveTrailingStopPrice - avgEntry) / avgEntry) * 100 : 0;
 
             return {
               ...pos,
@@ -5070,9 +5125,14 @@ async function getStatusData() {
               tieredProfitLockEnabled: tieredLockEnabled,
               currentProfitTier,
               currentTierLabel,
+              tierDistancePct,
               lockedProfitDollars: parseFloat(lockedProfitDollars.toFixed(2)),
-              lockedProfitPct: parseFloat(lockedProfitPct.toFixed(1)),
+              lockedProfitPct: parseFloat(lockedProfitPct.toFixed(2)),
               distanceToStopDollars: parseFloat(distanceToStopDollars.toFixed(2)),
+              distanceToStopPct: parseFloat(distanceToStopPct.toFixed(2)),
+              manualTrailingStopPrice: overrides?.manualTrailingStopPrice,
+              manualTrailingDistancePct: overrides?.manualTrailingDistancePct,
+              isManualTrailingSet,
               enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
               enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true
             };
@@ -6355,6 +6415,8 @@ async function executeAlpacaRealtimeCheck() {
             atr: indResult.atr,
             atr1_5x: indResult.atr1_5x,
             adx: indResult.adx,
+            manualTrailingStopPrice: overrides?.manualTrailingStopPrice,
+            manualTrailingDistancePct: overrides?.manualTrailingDistancePct,
             enableTechnicalStop: overrides?.enableTechnicalStop,
             enableCatastrophicStop: overrides?.enableCatastrophicStop
           };
