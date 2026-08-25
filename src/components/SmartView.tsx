@@ -393,9 +393,15 @@ export const SmartView: React.FC<SmartViewProps> = ({
               const isProfit = plVal >= 0;
               const isClosing = closingSymbols.includes(pos.symbol);
 
-              // Calcolo Stop ATR & Stop Catastrofico
-              const currentAtr = pos.atr_14 ? parseFloat(pos.atr_14) : 1.25;
-              const atrTrailingPrice = pos.atrTrailingStopPrice || (currPrice - (1.5 * currentAtr));
+              // Calcolo soglia di attivazione del Trailing Stop con profitto minimo garantito (identico al principale)
+              const atrMultiplier = 1.5;
+              const posQty = qty > 0 ? qty : 1;
+              const currentAtr = pos.atr ? parseFloat(pos.atr) : (pos.atr_14 ? parseFloat(pos.atr_14) : 1.25);
+              const minRequiredAtrStop = pos.minRequiredAtrStopPrice ? parseFloat(pos.minRequiredAtrStopPrice) : (avgPrice + (0.04 / posQty));
+              const activationPrice = pos.atrActivationPrice ? parseFloat(pos.atrActivationPrice) : (minRequiredAtrStop + (atrMultiplier * currentAtr));
+              const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && parseFloat(pos.atrTrailingStopPrice) >= minRequiredAtrStop) || (currPrice >= activationPrice && activationPrice > 0);
+              const trailingStopVal = pos.atrTrailingStopPrice ? parseFloat(pos.atrTrailingStopPrice) : (currPrice - (atrMultiplier * currentAtr));
+              const lockedProfit = Math.max(0, (trailingStopVal - avgPrice) * posQty);
               const catastrophicStopPrice = avgPrice * 0.97;
 
               return (
@@ -446,9 +452,47 @@ export const SmartView: React.FC<SmartViewProps> = ({
                         ${currPrice.toFixed(2)}
                       </span>
                     </div>
-                    <div className="col-span-2 pt-1 border-t border-slate-800/60 flex items-center justify-between text-[11px]">
-                      <span className="text-slate-400">Target Stop ATR:</span>
-                      <span className="font-bold text-indigo-300">${atrTrailingPrice.toFixed(2)}</span>
+                  </div>
+
+                  {/* BOX PUNTO DI INNESTO TRAILING STOP (Come nel cruscotto principale) */}
+                  <div className={`p-2.5 rounded-xl border flex flex-col gap-1.5 text-xs font-mono transition-all ${
+                    isReached
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                      : 'bg-rose-950/30 border-rose-500/40 text-rose-200'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                      <span className={`inline-flex items-center gap-1.5 font-bold text-[10px] sm:text-[11px] px-2 py-0.5 rounded-md ${
+                        isReached
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-rose-600/90 text-white'
+                      }`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                        {isReached ? 'TRAILING STOP ATTIVO' : 'TRAILING IN ATTESA'}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Catastrofico (-3%): <strong className="text-rose-400 font-bold">${catastrophicStopPrice.toFixed(2)}</strong>
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] leading-snug flex flex-col gap-0.5 pt-0.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Punto di Innesto (Attivazione):</span>
+                        <strong className="text-amber-300 font-bold underline">${activationPrice.toFixed(2)}</strong>
+                      </div>
+
+                      {isReached ? (
+                        <div className="flex items-center justify-between text-emerald-400 font-bold">
+                          <span>Livello Stop Attuale:</span>
+                          <span>${trailingStopVal.toFixed(2)} (+${lockedProfit.toFixed(2)}$ protetti)</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between text-slate-400 text-[10px]">
+                          <span>Distanza all'innesto:</span>
+                          <span className="text-rose-400 font-semibold">
+                            mancano ${(Math.max(0, activationPrice - currPrice)).toFixed(2)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
