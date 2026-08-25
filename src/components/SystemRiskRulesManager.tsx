@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge, Sliders, Clock3, Lock } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Shield, Zap, Clock, TrendingDown, AlertTriangle, Save, RefreshCw, CheckCircle2, Layers, Cpu, ChevronDown, ChevronUp, Activity, Gauge, Sliders, Clock3, Lock } from 'lucide-react';
 import { RiskRuleConfig } from '../types';
 
 interface SystemRiskRulesManagerProps {
@@ -84,7 +84,12 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       atrMultiplier: 1.5,
       atrPeriod: 14,
       useAtrTrailingStop: true,
-      minProfitBufferDollars: 0.04
+      minProfitBufferDollars: 0.04,
+      tieredProfitLockEnabled: true,
+      tier1ProfitThreshold: 0.50,
+      tier1LockRatio: 0.50,
+      tier2ProfitThreshold: 1.00,
+      tier2LockRatio: 0.70
     }
   },
   {
@@ -882,12 +887,12 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
         </div>
 
-        {/* Rule 8: Individual Trailing Stop based on 1.5x ATR (Livello 1: Stop Tecnico/Dinamico) */}
+        {/* Rule 8: Individual Trailing Stop based on 1.5x ATR & Dinamica Ibrida a Scaglioni */}
         <div className={`p-4 rounded-xl border transition-all ${atrRule.enabled ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Gauge className={`w-4 h-4 ${atrRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">8. Stop Tecnico / Dinamico Primario (1.5x ATR &amp; Trailing - Livello 1)</h3>
+              <h3 className="text-xs font-bold text-slate-900">8. Stop Tecnico / Dinamico Primario (1.5x ATR &amp; Dinamica Ibrida a Scaglioni)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -901,13 +906,38 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            <strong>Disattivabile dall'utente</strong>: Governa l'uscita ordinaria adattandosi al respiro della volatilità reale (1.5x ATR) e delle strategie tecniche su timeframe 15m. Se disattivato, il bot non applica chiusure ordinarie su oscillazioni tecniche, lasciando agire esclusivamente il Circuit Breaker catastrofico.
+            <strong>Dinamica Ibrida a Scaglioni</strong>: Garantisce spazio al respiro iniziale del trend (sotto $0.50) evitando uscite premature da rumore di mercato, e blinda progressivamente il <strong>50%</strong> (da $0.50 a $1.00) ed il <strong>70%</strong> dell'utile massimo (sopra $1.00 fino a $2.00/$3.00).
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            {/* Toggle Dinamica Ibrida a Scaglioni */}
+            <div className="flex items-center justify-between p-2 bg-emerald-50/50 rounded-lg border border-emerald-200/60">
+              <div>
+                <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-emerald-600" /> Dinamica Ibrida a Scaglioni (50% / 70% Profit Lock)
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  Scaglione 1: Buffer ATR &bull; Scaglione 2 ($0.50-$1): 50% bloccato &bull; Scaglione 3 (&ge;$1): 70% bloccato
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={atrRule.parameters.tieredProfitLockEnabled ?? true}
+                  onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, tieredProfitLockEnabled: e.target.checked }
+                  }))}
+                  disabled={!atrRule.enabled}
+                  className="sr-only peer"
+                />
+                <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+            </div>
+
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Moltiplicatore ATR di Trailing Stop:</span>
+                <span>Moltiplicatore ATR di Trailing Stop (Scaglione 1):</span>
                 <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.atrMultiplier ?? 1.5).toFixed(1)}x ATR</span>
               </div>
               <input
@@ -925,29 +955,51 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               />
             </div>
 
-            <div>
-              <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Periodi di Calcolo ATR (Barre di Volatilità):</span>
-                <span className="font-mono text-emerald-600 font-bold">{atrRule.parameters.atrPeriod ?? 14} periodi</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Scaglione 2 (50% Locked):</span>
+                  <span className="font-mono text-emerald-600 font-bold">${(atrRule.parameters.tier1ProfitThreshold ?? 0.50).toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.20"
+                  max="1.00"
+                  step="0.05"
+                  value={atrRule.parameters.tier1ProfitThreshold ?? 0.50}
+                  onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, tier1ProfitThreshold: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!atrRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
               </div>
-              <input
-                type="range"
-                min="5"
-                max="30"
-                step="1"
-                value={atrRule.parameters.atrPeriod ?? 14}
-                onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
-                  ...r,
-                  parameters: { ...r.parameters, atrPeriod: parseInt(e.target.value, 10) }
-                }))}
-                disabled={!atrRule.enabled}
-                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-              />
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Scaglione 3 (70% Locked):</span>
+                  <span className="font-mono text-emerald-600 font-bold">${(atrRule.parameters.tier2ProfitThreshold ?? 1.00).toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.80"
+                  max="2.00"
+                  step="0.10"
+                  value={atrRule.parameters.tier2ProfitThreshold ?? 1.00}
+                  onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, tier2ProfitThreshold: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!atrRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
+              </div>
             </div>
 
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Profitto Netto Minimo Garantito in $ per Attivazione Trailing:</span>
+                <span>Profitto Netto Minimo Garantito (Break-Even Buffer):</span>
                 <span className="font-mono text-emerald-600 font-bold">+${(atrRule.parameters.minProfitBufferDollars ?? 0.04).toFixed(2)} totali</span>
               </div>
               <input
@@ -965,8 +1017,8 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               />
             </div>
 
-            <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Protezione dinamica individuale: Il Trailing ATR si attiva SOLO quando la soglia di trailing garantisce un profitto monetario complessivo (P&amp;L) sulla posizione di almeno +${(atrRule.parameters.minProfitBufferDollars ?? 0.04).toFixed(2)} (calcolato in base alle quote possedute).
+            <div className="pt-1 text-[10px] text-slate-500 font-mono bg-slate-50 p-2 rounded border border-slate-200">
+              💡 <strong>Esempio operativo</strong>: Se il profitto tocca +$0.29, si applica il buffer ATR per evitare stop prematuri; a +$0.80 di picco si blocca almeno +$0.40 (50%); a +$1.00 o +$2.00 si blocca il 70% (+0.70$ / +1.40$).
             </div>
           </div>
         </div>

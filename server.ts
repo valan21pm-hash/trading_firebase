@@ -145,7 +145,12 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       atrMultiplier: 1.5,
       atrPeriod: 14,
       useAtrTrailingStop: true,
-      minProfitBufferDollars: 0.04
+      minProfitBufferDollars: 0.04,
+      tieredProfitLockEnabled: true,
+      tier1ProfitThreshold: 0.50,
+      tier1LockRatio: 0.50,
+      tier2ProfitThreshold: 1.00,
+      tier2LockRatio: 0.70
     }
   },
   {
@@ -5005,12 +5010,41 @@ async function getStatusData() {
             const atrRule = botStatus.systemRiskRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
             const atrMultiplier = atrRule?.parameters?.atrMultiplier || 1.5;
             const minProfitBuffer = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
+            const tieredLockEnabled = atrRule?.parameters?.tieredProfitLockEnabled ?? true;
+            const tier1Threshold = atrRule?.parameters?.tier1ProfitThreshold ?? 0.50;
+            const tier1Ratio = atrRule?.parameters?.tier1LockRatio ?? 0.50;
+            const tier2Threshold = atrRule?.parameters?.tier2ProfitThreshold ?? 1.00;
+            const tier2Ratio = atrRule?.parameters?.tier2LockRatio ?? 0.70;
+
             const posQty = parseFloat(pos.qty || '1') || 1;
+            const peakProfitDollars = Math.max(0, (peakP - avgEntry) * posQty);
+
+            let currentProfitTier = 1;
+            let lockedProfitDollars = minProfitBuffer;
+            let currentTierLabel = `Scaglione 1 (<$${tier1Threshold.toFixed(2)}): Buffer ATR ${atrMultiplier}x`;
+
+            if (tieredLockEnabled && peakProfitDollars >= tier2Threshold) {
+              currentProfitTier = 3;
+              lockedProfitDollars = Math.max(minProfitBuffer, peakProfitDollars * tier2Ratio);
+              currentTierLabel = `Scaglione 3 (≥$${tier2Threshold.toFixed(2)}): ${(tier2Ratio * 100).toFixed(0)}% Bloccato (+$${lockedProfitDollars.toFixed(2)})`;
+            } else if (tieredLockEnabled && peakProfitDollars >= tier1Threshold) {
+              currentProfitTier = 2;
+              lockedProfitDollars = Math.max(minProfitBuffer, peakProfitDollars * tier1Ratio);
+              currentTierLabel = `Scaglione 2 ($${tier1Threshold.toFixed(2)}-$${tier2Threshold.toFixed(2)}): ${(tier1Ratio * 100).toFixed(0)}% Bloccato (+$${lockedProfitDollars.toFixed(2)})`;
+            }
+
             const rawAtrTrailingStopPrice = peakP - (atrMultiplier * ind.atr);
+            const tierRequiredPrice = avgEntry + (lockedProfitDollars / posQty);
+            const effectiveTrailingStopPrice = (currentProfitTier >= 2)
+              ? Math.max(rawAtrTrailingStopPrice, tierRequiredPrice)
+              : rawAtrTrailingStopPrice;
+
             const minRequiredAtrStopPrice = avgEntry + (minProfitBuffer / posQty);
             const atrActivationPrice = minRequiredAtrStopPrice + (atrMultiplier * ind.atr);
-            const isAtrTrailingActive = rawAtrTrailingStopPrice >= minRequiredAtrStopPrice;
+            const isAtrTrailingActive = effectiveTrailingStopPrice >= minRequiredAtrStopPrice;
             const overrides = positionStopOverrides[mode]?.[sym];
+            const distanceToStopDollars = Math.max(0, currP - effectiveTrailingStopPrice);
+            const lockedProfitPct = peakProfitDollars > 0 ? (lockedProfitDollars / peakProfitDollars) * 100 : 0;
 
             return {
               ...pos,
@@ -5027,11 +5061,18 @@ async function getStatusData() {
               atr: ind.atr,
               atr1_5x: ind.atr1_5x,
               adx: ind.adx,
-              atrTrailingStopPrice: parseFloat(rawAtrTrailingStopPrice.toFixed(2)),
+              atrTrailingStopPrice: parseFloat(effectiveTrailingStopPrice.toFixed(2)),
+              rawAtrTrailingStopPrice: parseFloat(rawAtrTrailingStopPrice.toFixed(2)),
               minRequiredAtrStopPrice: parseFloat(minRequiredAtrStopPrice.toFixed(2)),
               atrActivationPrice: parseFloat(atrActivationPrice.toFixed(2)),
               minProfitBufferDollars: minProfitBuffer,
               isAtrTrailingActive,
+              tieredProfitLockEnabled: tieredLockEnabled,
+              currentProfitTier,
+              currentTierLabel,
+              lockedProfitDollars: parseFloat(lockedProfitDollars.toFixed(2)),
+              lockedProfitPct: parseFloat(lockedProfitPct.toFixed(1)),
+              distanceToStopDollars: parseFloat(distanceToStopDollars.toFixed(2)),
               enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
               enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true
             };

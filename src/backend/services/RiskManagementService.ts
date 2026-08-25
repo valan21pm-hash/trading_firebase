@@ -77,7 +77,7 @@ export class RiskManagementService {
       };
     }
 
-    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, EMA & STRATEGIE) - DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE ---
+    // --- LIVELLO 1: STOP TECNICO / DINAMICO PRIMARIO (ATR, DINAMICA IBRIDA A SCAGLIONI & STRATEGIE) ---
     const atrRule = systemRules?.find(r => r.type === 'ATR_INDIVIDUAL_TRAILING_STOP');
     const isGlobalTechnicalEnabled = (atrRule ? atrRule.enabled : (config.useAtrTrailingStop ?? true));
     const isTechnicalDynamicStopEnabled = position.enableTechnicalStop !== undefined 
@@ -86,23 +86,59 @@ export class RiskManagementService {
     const atrMultiplier = atrRule?.parameters?.atrMultiplier ?? config.atrMultiplier ?? 1.5;
     const qty = (typeof position.qty === 'number' && position.qty > 0) ? position.qty : 1;
     const minProfitBufferDollars = atrRule?.parameters?.minProfitBufferDollars ?? 0.04;
+    
+    // Parametri Dinamica Ibrida a Scaglioni (Tiered Profit Lock)
+    const tieredLockEnabled = atrRule?.parameters?.tieredProfitLockEnabled ?? true;
+    const tier1Threshold = atrRule?.parameters?.tier1ProfitThreshold ?? 0.50; // default 0.50$
+    const tier1Ratio = atrRule?.parameters?.tier1LockRatio ?? 0.50;           // default 50% locked
+    const tier2Threshold = atrRule?.parameters?.tier2ProfitThreshold ?? 1.00; // default 1.00$
+    const tier2Ratio = atrRule?.parameters?.tier2LockRatio ?? 0.70;           // default 70% locked
 
-    // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita a Trailing SOLO se garantisce almeno +0.04$ di UTILE TOTALE in dollari sulla posizione
+    // Calcolo del profitto di picco (High Water Mark)
+    const peakProfitDollars = Math.max(0, (peakPrice - openPrice) * qty);
+    
+    let activeTier = 1;
+    let requiredTierLockedProfitDollars = minProfitBufferDollars;
+    let tierDescription = '';
+
+    if (tieredLockEnabled && peakProfitDollars >= tier2Threshold) {
+      // Scaglione 3: Picco >= 1.00$ -> Protezione blindata 70%
+      activeTier = 3;
+      requiredTierLockedProfitDollars = Math.max(minProfitBufferDollars, peakProfitDollars * tier2Ratio);
+      tierDescription = `Scaglione 3 (≥$${tier2Threshold.toFixed(2)}: ${(tier2Ratio * 100).toFixed(0)}% bloccato)`;
+    } else if (tieredLockEnabled && peakProfitDollars >= tier1Threshold) {
+      // Scaglione 2: Picco tra 0.50$ e 1.00$ -> Protezione 50%
+      activeTier = 2;
+      requiredTierLockedProfitDollars = Math.max(minProfitBufferDollars, peakProfitDollars * tier1Ratio);
+      tierDescription = `Scaglione 2 ($${tier1Threshold.toFixed(2)}-$${tier2Threshold.toFixed(2)}: ${(tier1Ratio * 100).toFixed(0)}% bloccato)`;
+    } else {
+      // Scaglione 1: Picco < 0.50$ -> Buffer Volatilità ATR (respiro del trend) con soglia minima +0.04$
+      activeTier = 1;
+      requiredTierLockedProfitDollars = minProfitBufferDollars;
+      tierDescription = `Scaglione 1 (<$${tier1Threshold.toFixed(2)}: Buffer Volatilità ATR ${atrMultiplier.toFixed(1)}x)`;
+    }
+
+    // Se lo Stop Tecnico Dinamico è abilitato dall'utente, governa l'uscita a Trailing / Scaglioni
     if (isTechnicalDynamicStopEnabled && atr && atr > 0) {
       const atrDistance = atrMultiplier * atr;
       const rawAtrStopPrice = peakPrice - atrDistance;
+      const tierMinPrice = openPrice + (requiredTierLockedProfitDollars / qty);
+      
+      // La soglia effettiva di stop è il massimo tra l'ATR Stop e la quota minima garantita dallo scaglione
+      const effectiveTrailingStopPrice = (activeTier >= 2) 
+        ? Math.max(rawAtrStopPrice, tierMinPrice) 
+        : rawAtrStopPrice;
+
       const minRequiredTrailingStop = openPrice + (minProfitBufferDollars / qty);
-      const totalProtectedProfitDollars = (rawAtrStopPrice - openPrice) * qty;
+      const isTrailingProfitActive = effectiveTrailingStopPrice >= minRequiredTrailingStop;
+      const totalProtectedProfitDollars = (effectiveTrailingStopPrice - openPrice) * qty;
 
-      // Il trailing stop si aggancia e diventa attivo SOLO quando la soglia di trailing garantisce un guadagno totale di almeno +$0.04
-      const isTrailingProfitActive = rawAtrStopPrice >= minRequiredTrailingStop;
-
-      // Se il trailing è attivo a protezione del profitto e il prezzo arretra sotto la soglia
-      if (isTrailingProfitActive && currentPrice <= rawAtrStopPrice) {
+      // Se il trailing / scaglione è attivo a protezione del profitto e il prezzo arretra sotto la soglia
+      if (isTrailingProfitActive && currentPrice <= effectiveTrailingStopPrice) {
         const atrDistancePct = (atrDistance / peakPrice) * 100;
         return {
           action: 'CLOSE',
-          reason: `[Livello 1 - Trailing Stop Dinamico ATR ${atrMultiplier.toFixed(1)}x] Posizione ${asset} ha toccato il picco di $${peakPrice.toFixed(2)} (+${highestProfitPct.toFixed(2)}%) ed è rientrata sotto la soglia di profitto garantito a $${rawAtrStopPrice.toFixed(2)} (Carico: $${openPrice.toFixed(2)}, Quantità: ${qty}, Utile totale protetto: +$${totalProtectedProfitDollars.toFixed(2)} >= +$${minProfitBufferDollars.toFixed(2)}, ATR(14): $${atr.toFixed(2)}, Distanza: $${atrDistance.toFixed(2)} / -${atrDistancePct.toFixed(2)}%, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: +${currentProfitPct.toFixed(2)}%). Chiusura tecnica a protezione del profitto.`
+          reason: `[Dinamica Ibrida a Scaglioni - ${tierDescription}] Posizione ${asset} (Picco: $${peakPrice.toFixed(2)}, Guadagno max: +$${peakProfitDollars.toFixed(2)}) è rientrata sotto la soglia protetta a $${effectiveTrailingStopPrice.toFixed(2)} (Carico: $${openPrice.toFixed(2)}, Qty: ${qty}, Utile protetto bloccato: +$${totalProtectedProfitDollars.toFixed(2)}, Prezzo attuale: $${currentPrice.toFixed(2)}, P&L: +${currentProfitPct.toFixed(2)}%). Chiusura a protezione del profitto.`
         };
       }
     }

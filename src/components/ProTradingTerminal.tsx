@@ -1279,7 +1279,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           const posQty = qty > 0 ? qty : 1;
                           const minReqAtrStop = pos.minRequiredAtrStopPrice || (avgEntry + (0.04 / posQty));
                           const activationP = pos.atrActivationPrice || (minReqAtrStop + (1.5 * currentAtr));
-                          const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && pos.atrTrailingStopPrice >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
+                          const effectiveStop = pos.atrTrailingStopPrice || 0;
+                          const isReached = pos.isAtrTrailingActive || (effectiveStop >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
+                          const tierNum = pos.currentProfitTier || 1;
+                          const tierLabel = pos.currentTierLabel || (tierNum === 3 ? '70% Bloccato' : tierNum === 2 ? '50% Bloccato' : 'Buffer ATR');
+                          const lockedAmt = pos.lockedProfitDollars !== undefined ? pos.lockedProfitDollars : 0.04;
+                          const distanceStop = pos.distanceToStopDollars !== undefined ? pos.distanceToStopDollars : Math.max(0, currentPrice - effectiveStop);
 
                           return (
                             <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
@@ -1292,13 +1297,31 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               </td>
                               <td className="py-3 px-3 text-slate-300 font-mono">${avgEntry.toFixed(2)}</td>
                               <td className="py-3 px-3">
-                                <div className="font-bold text-white font-mono">${currentPrice.toFixed(2)}</div>
-                                <div className="mt-0.5">
-                                  {isReached ? (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800" title={`Trailing Stop Attivo a $${(pos.atrTrailingStopPrice || 0).toFixed(2)}`}>
-                                      <span className="w-1 h-1 rounded-full bg-emerald-400" />
-                                      TS Attivo (${(pos.atrTrailingStopPrice || 0).toFixed(2)})
+                                <div className="font-bold text-white font-mono flex items-center justify-between gap-1">
+                                  <span>${currentPrice.toFixed(2)}</span>
+                                  {isReached && (
+                                    <span className="text-[9px] font-mono text-slate-400" title={`Distanza dallo stop: $${distanceStop.toFixed(2)}`}>
+                                      &Delta; ${distanceStop.toFixed(2)}
                                     </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  {isReached ? (
+                                    <>
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800" title={`Trailing Stop a $${effectiveStop.toFixed(2)} (Utile bloccato: +$${lockedAmt.toFixed(2)})`}>
+                                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                                        TS ${effectiveStop.toFixed(2)}
+                                      </span>
+                                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
+                                        tierNum === 3 
+                                          ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                                          : tierNum === 2 
+                                            ? 'bg-sky-950 text-sky-300 border-sky-800' 
+                                            : 'bg-slate-800 text-slate-300 border-slate-700'
+                                      }`} title={tierLabel}>
+                                        {tierNum === 3 ? '🔒 70% Lock' : tierNum === 2 ? '🛡️ 50% Lock' : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
+                                      </span>
+                                    </>
                                   ) : (
                                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/60" title={`Attivazione Trailing a $${activationP.toFixed(2)}`}>
                                       <span className="w-1 h-1 rounded-full bg-rose-400" />
@@ -1397,7 +1420,12 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       const posQty = qty > 0 ? qty : 1;
                       const minReqAtrStop = pos.minRequiredAtrStopPrice || (avgEntry + (0.04 / posQty));
                       const activationP = pos.atrActivationPrice || (minReqAtrStop + (1.5 * currentAtr));
-                      const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && pos.atrTrailingStopPrice >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
+                      const effectiveStop = pos.atrTrailingStopPrice || 0;
+                      const isReached = pos.isAtrTrailingActive || (effectiveStop >= minReqAtrStop) || (currentPrice >= activationP && activationP > 0);
+                      const tierNum = pos.currentProfitTier || 1;
+                      const tierLabel = pos.currentTierLabel || (tierNum === 3 ? '70% Bloccato' : tierNum === 2 ? '50% Bloccato' : 'Buffer ATR');
+                      const lockedAmt = pos.lockedProfitDollars !== undefined ? pos.lockedProfitDollars : 0.04;
+                      const distanceStop = pos.distanceToStopDollars !== undefined ? pos.distanceToStopDollars : Math.max(0, currentPrice - effectiveStop);
 
                       return (
                         <div key={pos.symbol} className="bg-[#090D16] border border-slate-800 rounded-xl p-3.5 space-y-3">
@@ -1435,17 +1463,29 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           </div>
 
                           {/* Trailing Stop Activation Status Card */}
-                          <div className={`p-2.5 rounded-lg border text-xs font-mono flex items-center justify-between gap-2 ${
+                          <div className={`p-2.5 rounded-lg border text-xs font-mono flex flex-col gap-1.5 ${
                             isReached 
                               ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300' 
                               : 'bg-rose-950/40 border-rose-800/60 text-rose-300'
                           }`}>
-                            <div className="flex items-center gap-1.5 font-bold">
-                              <span className={`w-2 h-2 rounded-full ${isReached ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-                              <span>{isReached ? '🟢 TRAILING ATTIVO' : '🔴 TRAILING IN ATTESA'}</span>
+                            <div className="flex items-center justify-between font-bold">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`w-2 h-2 rounded-full ${isReached ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                                <span>{isReached ? `TS: $${effectiveStop.toFixed(2)} (&Delta; $${distanceStop.toFixed(2)})` : '🔴 IN ATTESA ATTIVAZIONE'}</span>
+                              </div>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
+                                tierNum === 3 
+                                  ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                                  : tierNum === 2 
+                                    ? 'bg-sky-950 text-sky-300 border-sky-800' 
+                                    : 'bg-slate-800 text-slate-300 border-slate-700'
+                              }`}>
+                                {tierNum === 3 ? '🔒 70% Lock' : tierNum === 2 ? '🛡️ 50% Lock' : '🌊 ATR Buffer'} (+${lockedAmt.toFixed(2)})
+                              </span>
                             </div>
-                            <div className="text-[11px] text-right">
-                              <span>Attivazione: <strong>${activationP.toFixed(2)}</strong></span>
+                            <div className="text-[10px] text-slate-400 flex justify-between">
+                              <span>Attivazione: ${activationP.toFixed(2)}</span>
+                              <span className="text-emerald-400 font-bold">{tierLabel}</span>
                             </div>
                           </div>
 

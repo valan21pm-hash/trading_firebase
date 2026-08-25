@@ -67,6 +67,12 @@ export interface RiskRuleConfig {
     // #3 ATR Volatility Lock
     minAtrPercentThreshold?: number;  // default 1.50 (blocco se ATR(14)% < 1.50% per evitare consolidamenti)
     blockLowAtrPercent?: boolean;     // default true
+    // #4 Dinamica Ibrida a Scaglioni (Tiered Profit Lock)
+    tieredProfitLockEnabled?: boolean; // default true (protezione progressiva: 50% tra 0.50-1€, 70% >= 1€)
+    tier1ProfitThreshold?: number;    // default 0.50$ (primo scaglione)
+    tier1LockRatio?: number;          // default 0.50 (50% locked)
+    tier2ProfitThreshold?: number;    // default 1.00$ (secondo scaglione)
+    tier2LockRatio?: number;          // default 0.70 (70% locked)
   };
 }
 
@@ -104,6 +110,13 @@ export interface Position {
   atrActivationPrice?: number;
   minProfitBufferDollars?: number;
   isAtrTrailingActive?: boolean;
+  // Campi Dinamica Ibrida a Scaglioni
+  tieredProfitLockEnabled?: boolean;
+  currentProfitTier?: number;         // 1: Respiro ATR (<0.50$), 2: 50% Locked (0.50-1.00$), 3: 70% Locked (>=1.00$)
+  currentTierLabel?: string;
+  lockedProfitDollars?: number;
+  lockedProfitPct?: number;
+  distanceToStopDollars?: number;
   enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR
   enableCatastrophicStop?: boolean; // Se true o undefined (default true), applica il Circuit Breaker Catastrofico (-3%)
 }
