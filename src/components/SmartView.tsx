@@ -191,158 +191,151 @@ export const SmartView: React.FC<SmartViewProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col text-slate-100 font-sans overflow-hidden animate-fade-in select-none">
       
-      {/* 1. TOP BAR COMPATTA & SPIE PRINCIPALI DEL CRUSCOTTO */}
-      <header className="bg-slate-900 border-b border-slate-800/90 px-3 sm:px-6 py-2.5 sm:py-3.5 flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-lg">
+      {/* 1. TOP BAR OTTIMIZZATA MOBILE & DESKTOP - SENZA SCROLLING */}
+      <header className="bg-slate-900 border-b border-slate-800/90 px-2.5 sm:px-6 py-2 sm:py-3 shrink-0 shadow-lg flex flex-col gap-1.5 sm:gap-2">
         
-        {/* Identità Smart View & Selettore Conto */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center shadow-md shadow-indigo-500/20">
-              <Zap className="w-4 h-4 text-white fill-white" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">SMART VIEW</span>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Massima Densità
-                </span>
+        {/* RIGA 1: Brand, Mode Switcher & Comandi Rapidi */}
+        <div className="flex items-center justify-between gap-2">
+          
+          {/* Logo + Mode Switch */}
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            <div className="flex items-center gap-1.5">
+              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center shadow-sm">
+                <Zap className="w-3.5 h-3.5 text-white fill-white" />
               </div>
-              <p className="text-[10px] text-slate-400 font-mono hidden sm:block">Solo posizioni aperte & comandi diretti</p>
+              <span className="font-black text-xs sm:text-sm tracking-tight text-white uppercase">SMART VIEW</span>
+            </div>
+
+            {/* Toggle Paper / Live */}
+            <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setTradingMode('paper')}
+                className={`px-2 py-0.5 text-[11px] font-bold rounded transition-all cursor-pointer ${
+                  tradingMode === 'paper' 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Paper
+              </button>
+              <button
+                type="button"
+                onClick={() => setTradingMode('live')}
+                className={`px-2 py-0.5 text-[11px] font-bold rounded transition-all cursor-pointer ${
+                  tradingMode === 'live' 
+                    ? 'bg-emerald-600 text-white shadow-xs' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Live
+              </button>
             </div>
           </div>
 
-          {/* Toggle Paper / Live */}
-          <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 ml-1 sm:ml-3">
+          {/* Action Buttons: Forza Acquisto, Panic, Refresh, Chiudi */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            {/* Forza Acquisto Rapido */}
             <button
-              onClick={() => setTradingMode('paper')}
-              className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                tradingMode === 'paper' 
-                  ? 'bg-indigo-600 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
+              type="button"
+              onClick={() => { setForceBuyPrefill(''); setForceBuyOpen(true); }}
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-lg text-[11px] font-bold transition-all shadow-xs cursor-pointer"
+              title="Apri una nuova posizione manuale a mercato"
             >
-              Paper
+              <ShoppingCart className="w-3 h-3" />
+              <span className="hidden xs:inline sm:inline">Acquisto</span>
             </button>
+
+            {/* Panic Button */}
             <button
-              onClick={() => setTradingMode('live')}
-              className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                tradingMode === 'live' 
-                  ? 'bg-emerald-600 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
+              type="button"
+              onClick={() => setShowPanicModal(true)}
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-red-600 hover:bg-red-500 active:scale-95 text-white rounded-lg text-[11px] font-bold transition-all shadow-xs cursor-pointer"
+              title="Liquidazione totale immediata di emergenza"
             >
-              Live
+              <Flame className="w-3 h-3 animate-pulse" />
+              <span className="hidden xs:inline sm:inline">Panic</span>
+            </button>
+
+            {/* Refresh Manuale */}
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              className="p-1 sm:p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition cursor-pointer"
+              title="Aggiorna dati istantaneamente"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${localRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
+            </button>
+
+            {/* Esci / Chiudi Smart View */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1 px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold transition cursor-pointer"
+              title="Torna al cruscotto completo"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Chiudi</span>
             </button>
           </div>
         </div>
 
-        {/* SPIE ESSENZIALI DEL CRUSCOTTO (Gauges) */}
-        <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto py-1 text-xs">
+        {/* RIGA 2: SPIE ESSENZIALI DEL CRUSCOTTO (Gauges ad alta densità senza scroll) */}
+        <div className="grid grid-cols-4 gap-1 sm:gap-2 text-xs">
           
           {/* Spia 1: Motore Algoritmico */}
-          <div className="flex items-center gap-2 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800/80">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">Motore:</span>
+          <div className="bg-slate-950 px-1.5 sm:px-2.5 py-1 rounded-lg border border-slate-800 flex flex-col justify-center">
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider font-mono leading-none truncate">Motore</span>
             <button
+              type="button"
               onClick={handleToggleBot}
               disabled={togglingBot}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer ${
+              className={`mt-0.5 flex items-center justify-center gap-1 px-1 py-0.5 rounded text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer ${
                 isBotActive 
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30' 
                   : 'bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30'
               }`}
               title="Clicca per mettere in pausa o avviare il motore"
             >
-              <Power className={`w-3 h-3 ${isBotActive ? 'text-emerald-400 animate-pulse' : 'text-rose-400'}`} />
-              <span>{isBotActive ? 'ATTIVO' : 'IN PAUSA'}</span>
+              <Power className={`w-2.5 h-2.5 sm:w-3 sm:h-3 ${isBotActive ? 'text-emerald-400 animate-pulse' : 'text-rose-400'}`} />
+              <span className="truncate">{isBotActive ? 'ON' : 'OFF'}</span>
             </button>
           </div>
 
           {/* Spia 2: Filtro Rischio VIX */}
-          <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800/80">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">VIX:</span>
-            <span className={`font-mono font-bold text-xs flex items-center gap-1 ${
+          <div className="bg-slate-950 px-1.5 sm:px-2.5 py-1 rounded-lg border border-slate-800 flex flex-col justify-center">
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider font-mono leading-none truncate">VIX Max</span>
+            <div className={`mt-0.5 font-mono font-bold text-[10px] sm:text-xs flex items-center gap-1 ${
               isVixActive ? 'text-emerald-400' : 'text-slate-400'
             }`}>
-              <Shield className="w-3 h-3 text-emerald-400" />
-              &lt; {maxVixThreshold.toFixed(0)}%
-            </span>
+              <Shield className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0 text-emerald-400" />
+              <span className="truncate">&lt;{maxVixThreshold.toFixed(0)}</span>
+            </div>
           </div>
 
-          {/* Spia 3: Saldo & Liquidità */}
-          <div className="flex items-center gap-2 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800/80">
-            <div>
-              <span className="text-[9px] text-slate-400 uppercase font-mono block leading-none">Capitale</span>
-              <span className="font-mono font-extrabold text-white text-xs sm:text-sm">
-                ${(account.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-            <div className="h-6 w-px bg-slate-800 mx-1" />
-            <div>
-              <span className="text-[9px] text-slate-400 uppercase font-mono block leading-none">Cassa</span>
-              <span className="font-mono font-bold text-emerald-400 text-xs sm:text-sm">
-                ${(account.cash || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {/* Spia 3: Capitale & Cassa */}
+          <div className="bg-slate-950 px-1.5 sm:px-2.5 py-1 rounded-lg border border-slate-800 flex flex-col justify-center">
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider font-mono leading-none truncate">Saldo</span>
+            <div className="mt-0.5 font-mono font-extrabold text-white text-[10px] sm:text-xs truncate">
+              ${(account.balance || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              <span className="text-[9px] text-emerald-400 ml-1 font-semibold hidden xs:inline sm:inline">
+                (${Math.round(account.cash || 0)})
               </span>
             </div>
           </div>
 
           {/* Spia 4: P&L Aperto Totale */}
-          <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border ${
+          <div className={`px-1.5 sm:px-2.5 py-1 rounded-lg border flex flex-col justify-center ${
             totalOpenPnL >= 0 
               ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' 
               : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
           }`}>
-            <div>
-              <span className="text-[9px] uppercase font-mono block leading-none opacity-80">P&L Aperto</span>
-              <div className="flex items-center gap-1 font-mono font-extrabold text-xs sm:text-sm">
-                {totalOpenPnL >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)}</span>
-                <span className="text-[10px] opacity-80">({totalOpenPnLPct >= 0 ? '+' : ''}{totalOpenPnLPct.toFixed(2)}%)</span>
-              </div>
+            <span className="text-[8px] sm:text-[9px] uppercase font-mono leading-none opacity-80 truncate">P&L Aperto</span>
+            <div className="mt-0.5 flex items-center gap-0.5 font-mono font-extrabold text-[10px] sm:text-xs truncate">
+              {totalOpenPnL >= 0 ? <TrendingUp className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" /> : <TrendingDown className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />}
+              <span className="truncate">{totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)}</span>
             </div>
           </div>
-        </div>
-
-        {/* COMANDI RAPIDI OPERATIVI */}
-        <div className="flex items-center gap-2">
-          
-          {/* Forza Acquisto Rapido */}
-          <button
-            onClick={() => { setForceBuyPrefill(''); setForceBuyOpen(true); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
-            title="Apri una nuova posizione manuale a mercato"
-          >
-            <ShoppingCart className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Forza Acquisto</span>
-          </button>
-
-          {/* Panic Button */}
-          <button
-            onClick={() => setShowPanicModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
-            title="Liquidazione totale immediata di emergenza"
-          >
-            <Flame className="w-3.5 h-3.5 animate-pulse" />
-            <span className="hidden sm:inline">Panic</span>
-          </button>
-
-          {/* Refresh Manuale */}
-          <button
-            onClick={handleManualRefresh}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition cursor-pointer"
-            title="Aggiorna dati istantaneamente"
-          >
-            <RefreshCw className={`w-4 h-4 ${localRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
-          </button>
-
-          {/* Esci / Chiudi Smart View */}
-          <button
-            onClick={onClose}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition cursor-pointer"
-            title="Torna al cruscotto completo"
-          >
-            <X className="w-4 h-4" />
-            <span className="hidden md:inline">Chiudi</span>
-          </button>
         </div>
       </header>
 
