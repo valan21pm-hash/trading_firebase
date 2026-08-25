@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
@@ -56,6 +56,17 @@ export interface RiskRuleConfig {
     middayPrimeEnd?: string;          // default '14:30'
     minMiddayAdxThreshold?: number;   // default 14.0 (ADX(14) > 14.0 nel blocco Midday)
     strictMiddayOnly?: boolean;       // default false (se true vincola ingressi esclusivamente al blocco 12:00-14:30)
+    // --- TOP 3 CORREZIONI STRATEGICHE (Consenso Multi-IA) ---
+    // #1 Time-Based Volatility Threshold
+    vix1hChangeThresholdPct?: number; // default 0.50 (inibizione long se VIX 1h > +0.50%)
+    vix1hWindowStart?: string;        // default '09:30'
+    vix1hWindowEnd?: string;          // default '10:30'
+    // #2 Adaptive EMA Filter
+    suspendOnHighCorrelation?: boolean; // default true (sospende filtro EMA 20/50 se Corr SPY-QQQ > 0.95)
+    highCorrelationThreshold?: number;  // default 0.95
+    // #3 ATR Volatility Lock
+    minAtrPercentThreshold?: number;  // default 1.50 (blocco se ATR(14)% < 1.50% per evitare consolidamenti)
+    blockLowAtrPercent?: boolean;     // default true
   };
 }
 

@@ -356,6 +356,8 @@ export class RiskManagementService {
 
   /**
    * Valuta il filtro di conferma tecnica del trend su timeframe 15m (Prezzo >= EMA 20 e EMA 20 >= EMA 50)
+   * CORREZIONE STRATEGICA #2 [Adaptive EMA Filter]:
+   * Sospensione automatica del filtro EMA 20/50 quando la correlazione SPY-QQQ supera 0.95 (trend corale broad market, cattura impulso senza lag).
    */
   public static evaluateEmaTrendFilter(
     symbol: string,
@@ -363,12 +365,25 @@ export class RiskManagementService {
     ema20: number,
     ema50: number,
     isBullishEmaTrend: boolean,
-    systemRules?: RiskRuleConfig[]
-  ): { allowed: boolean; reason?: string } {
-    const emaRule = systemRules?.find(r => r.type === 'EMA_TREND_CONFIRMATION');
+    systemRules?: RiskRuleConfig[],
+    spyQqqCorrelation?: number
+  ): { allowed: boolean; isSuspendedDueToCorrelation?: boolean; reason?: string } {
+    const emaRule = systemRules?.find(r => r.type === 'EMA_TREND_CONFIRMATION' || r.type === 'ADAPTIVE_EMA_FILTER');
     const isEnabled = emaRule?.enabled ?? true;
     if (!isEnabled) {
       return { allowed: true };
+    }
+
+    // Regola Adattiva: Sospensione del filtro EMA 20/50 se SPY-QQQ Correlation >= 0.95
+    const suspendOnHighCorr = emaRule?.parameters?.suspendOnHighCorrelation ?? true;
+    const highCorrThreshold = emaRule?.parameters?.highCorrelationThreshold ?? 0.95;
+
+    if (suspendOnHighCorr && spyQqqCorrelation !== undefined && spyQqqCorrelation >= highCorrThreshold) {
+      return {
+        allowed: true,
+        isSuspendedDueToCorrelation: true,
+        reason: `[Adaptive EMA Filter] Correlazione SPY-QQQ a +${spyQqqCorrelation.toFixed(2)} >= ${highCorrThreshold.toFixed(2)}. Mercato in forte trend corale (broad market rally): filtro EMA 20/50 temporaneamente sospeso per consentire ingresso reattivo su ${symbol.toUpperCase()} senza subire il lag delle medie mobili.`
+      };
     }
 
     if (!isBullishEmaTrend) {
@@ -481,18 +496,31 @@ export class RiskManagementService {
 
   /**
    * 1. Filtro di Volatilità Operativa (ATR):
-   * Inibisce l'apertura di nuovi trade se l'ATR(14) a 5 minuti è inferiore alla media mobile semplice a 20 periodi (SMA 20) dell'ATR stesso.
+   * Inibisce l'apertura di nuovi trade se:
+   * - L'ATR(14) normalizzato in % è < 1.5% (CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: evita mercati piatti / consolidamenti)
+   * - L'ATR(14) a 5 minuti è inferiore alla media mobile semplice a 20 periodi (SMA 20) dell'ATR stesso.
    */
   public static evaluateAtrVolatilityFilter(
     symbol: string,
     atr5m: number,
     atr5mSma20: number,
-    systemRules?: RiskRuleConfig[]
+    systemRules?: RiskRuleConfig[],
+    atrPercent?: number
   ): { allowed: boolean; reason?: string } {
-    const atrRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_FILTER');
+    const atrRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_FILTER' || r.type === 'ATR_VOLATILITY_LOCK');
     const isEnabled = atrRule?.enabled ?? true;
     if (!isEnabled) {
       return { allowed: true };
+    }
+
+    // CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: Blocco se ATR(14) normalizzato < 1.5%
+    const blockLowAtrPct = atrRule?.parameters?.blockLowAtrPercent ?? true;
+    const minAtrPct = atrRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+    if (blockLowAtrPct && atrPercent !== undefined && atrPercent < minAtrPct) {
+      return {
+        allowed: false,
+        reason: `[Filtro Volatilità ATR - Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%. Volatilità compressa / fase di consolidamento orizzontale priva di direzionalità. Ingressi bloccati per evitare chop.`
+      };
     }
 
     // Se l'ATR(14) a 5m è inferiore alla SMA(20) dell'ATR stesso (tolleranza 2% per stabilità)
@@ -500,6 +528,36 @@ export class RiskManagementService {
       return {
         allowed: false,
         reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione/rumore.`
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * CORREZIONE STRATEGICA #3: Metodo dedicato [ATR Volatility Lock]
+   * Inibisce l'apertura se l'oscillazione ATR(14)% è inferiore alla soglia di sicurezza dell'1.5%
+   */
+  public static evaluateAtrVolatilityLock(
+    symbol: string,
+    atrPercent: number | undefined,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    if (atrPercent === undefined || isNaN(atrPercent)) {
+      return { allowed: true };
+    }
+
+    const atrLockRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_LOCK' || r.type === 'ATR_VOLATILITY_FILTER');
+    const isEnabled = atrLockRule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const minAtrPct = atrLockRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+    if (atrPercent < minAtrPct) {
+      return {
+        allowed: false,
+        reason: `[ATR Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%. Volatilità compressa / mercato in consolidamento privo di direzionalità. Apertura bloccata per evitare falsi segnali in laterale.`
       };
     }
 
@@ -682,6 +740,39 @@ export class RiskManagementService {
       return {
         allowed: false,
         reason: `[Regola Sistema: MACRO_VOLATILITY_VIX_FILTER] Indice di Volatilità VIX / IV di mercato = ${vixValue.toFixed(2)}% (>= ${maxVix.toFixed(1)}%). Regime di rischio sistemico e volatilità estrema. Nuovi ordini BUY inibiti a salvaguardia del capitale.`
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * CORREZIONE STRATEGICA #1 [Time-Based Volatility Threshold]:
+   * Inibisce l'operatività Long nella fascia di apertura di mercato (09:30-10:30 EST)
+   * se la variazione percentuale del VIX a 1 ora (ΔVIX 1h) è > +0.50%.
+   * Razionale: WR 0% nelle prime fasi di mercato con volatilità crescente. Riduce il drawdown iniziale evitando il rumore di apertura.
+   */
+  public static evaluateTimeBasedVolatilityThreshold(
+    estInfo: { totalMinutes: number; timeFormatted: string; hours?: number; minutes?: number },
+    vix1hChangePct: number | undefined,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; reason?: string } {
+    const vixTimeRule = systemRules?.find(r => r.type === 'TIME_BASED_VOLATILITY_THRESHOLD');
+    const isEnabled = vixTimeRule?.enabled ?? true;
+    if (!isEnabled || vix1hChangePct === undefined || isNaN(vix1hChangePct)) {
+      return { allowed: true };
+    }
+
+    const { totalMinutes, timeFormatted } = estInfo;
+    const thresholdPct = vixTimeRule?.parameters?.vix1hChangeThresholdPct ?? 0.5;
+
+    // Default: Fascia apertura 09:30 - 10:30 EST (570 - 630 minuti)
+    const isOpeningWindow = totalMinutes >= 570 && totalMinutes < 630;
+
+    if (isOpeningWindow && vix1hChangePct > thresholdPct) {
+      return {
+        allowed: false,
+        reason: `[Time-Based Volatility Threshold] Variazione VIX 1h a +${vix1hChangePct.toFixed(2)}% (> +${thresholdPct.toFixed(2)}%) tra le 09:30 e le 10:30 EST (${timeFormatted}). Operatività Long inibita per evitare rumore operativo e drawdown iniziale (Win Rate storico 0% in apertura volatile).`
       };
     }
 

@@ -165,7 +165,18 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'ATR_VOLATILITY_FILTER',
     parameters: {
       atrFilterPeriod: 14,
-      atrSmaPeriod: 20
+      atrSmaPeriod: 20,
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
+    }
+  },
+  {
+    id: 'atr_volatility_lock',
+    enabled: true,
+    type: 'ATR_VOLATILITY_LOCK',
+    parameters: {
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
     }
   },
   {
@@ -185,7 +196,29 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'EMA_TREND_CONFIRMATION',
     parameters: {
-      requireEmaBullishTrend: true
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'adaptive_ema_filter',
+    enabled: true,
+    type: 'ADAPTIVE_EMA_FILTER',
+    parameters: {
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'time_based_volatility_threshold',
+    enabled: true,
+    type: 'TIME_BASED_VOLATILITY_THRESHOLD',
+    parameters: {
+      vix1hChangeThresholdPct: 0.50,
+      vix1hWindowStart: '09:30',
+      vix1hWindowEnd: '10:30'
     }
   },
   {
@@ -294,6 +327,9 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const catastrophicRule = getRule('CATASTROPHIC_CIRCUIT_BREAKER_SL');
   const holdingRule = getRule('TIME_BASED_HOLDING');
   const vixRule = getRule('MACRO_VOLATILITY_VIX_FILTER');
+  const vixTimeRule = getRule('TIME_BASED_VOLATILITY_THRESHOLD');
+  const adaptiveEmaRule = getRule('ADAPTIVE_EMA_FILTER');
+  const atrLockRule = getRule('ATR_VOLATILITY_LOCK');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -1439,6 +1475,180 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               </div>
               <span className="text-xs font-mono font-bold text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">
                 VIX &lt; 30.0%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 18: Time-Based Volatility Threshold (09:30-10:30 EST & VIX 1h > +0.50%) */}
+        <div className={`p-4 rounded-xl border transition-all ${vixTimeRule.enabled ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock className={`w-4 h-4 ${vixTimeRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">18. Time-Based Volatility Threshold (09:30 - 10:30 EST &amp; &Delta;VIX 1h &gt; +0.5%)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vixTimeRule.enabled}
+                onChange={(e) => updateRule('TIME_BASED_VOLATILITY_THRESHOLD', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Protezione Drawdown Iniziale:</strong> Inibisce tassativamente l&apos;apertura di nuove posizioni LONG nella prima ora di mercato (<strong>09:30 - 10:30 EST</strong>) se la variazione percentuale del VIX a 1 ora è <strong>&gt; +0.50%</strong>. Azzeramento del rischio di whipsaw in apertura volatile (Win Rate storico 0% in apertura rumorosa).
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia &Delta;VIX 1h di Inibizione Long:</span>
+                <span className="font-mono text-amber-600 font-bold">+{(vixTimeRule.parameters.vix1hChangeThresholdPct ?? 0.50).toFixed(2)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.10"
+                max="2.00"
+                step="0.05"
+                value={vixTimeRule.parameters.vix1hChangeThresholdPct ?? 0.50}
+                onChange={(e) => updateRule('TIME_BASED_VOLATILITY_THRESHOLD', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, vix1hChangeThresholdPct: parseFloat(e.target.value) }
+                }))}
+                disabled={!vixTimeRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Antirumore Apertura Sessione</span>
+                  <p className="text-[10px] text-slate-500">Finestra 09:30-10:30 EST monitorata automaticamente con spike &Delta;VIX 1h</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                &Delta;VIX 1h &gt; 0.5%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 19: Adaptive EMA Filter (Sospensione EMA 20/50 se Correlazione SPY-QQQ > 0.95) */}
+        <div className={`p-4 rounded-xl border transition-all ${adaptiveEmaRule.enabled ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${adaptiveEmaRule.enabled ? 'text-indigo-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">19. Filtro EMA Dinamico / Adattivo (Bypass su Correlazione SPY-QQQ &gt; 0.95)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={adaptiveEmaRule.enabled}
+                onChange={(e) => updateRule('ADAPTIVE_EMA_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Adattamento Sistemico di Regime:</strong> Quando la correlazione SPY-QQQ supera <strong>0.95</strong>, il mercato si trova in un regime di forte spinta direzionale unanime. Il filtro rigido EMA 20/50 viene automaticamente <strong>sospeso</strong> per evitare il ritardo intrinseco delle medie mobili ed entrare con tempestività sui breakout di forza.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Correlazione SPY-QQQ per Bypass EMA:</span>
+                <span className="font-mono text-indigo-600 font-bold">{(adaptiveEmaRule.parameters.highCorrelationThreshold ?? 0.95).toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.80"
+                max="0.99"
+                step="0.01"
+                value={adaptiveEmaRule.parameters.highCorrelationThreshold ?? 0.95}
+                onChange={(e) => updateRule('ADAPTIVE_EMA_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, highCorrelationThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!adaptiveEmaRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-indigo-50/50 border border-indigo-100">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Sospensione Dinamica Lag Medie Mobili</span>
+                  <p className="text-[10px] text-slate-500">Se Corr &gt; 0.95 consente ingressi rapidi senza attendere l&apos;incrocio ritardato 15m</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                Corr &gt; 0.95
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 20: ATR Volatility Lock (Inibizione Operativa se ATR% < 1.5%) */}
+        <div className={`p-4 rounded-xl border transition-all ${atrLockRule.enabled ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className={`w-4 h-4 ${atrLockRule.enabled ? 'text-purple-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">20. Blocco Volatilità ATR (Inibizione con ATR% &lt; 1.5%)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={atrLockRule.enabled}
+                onChange={(e) => updateRule('ATR_VOLATILITY_LOCK', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Protezione Anti-Consolidamento:</strong> Sospensione automatica dell&apos;operatività su asset o benchmark che presentano un <strong>ATR(14) normalizzato sul prezzo &lt; 1.50%</strong>. Previene l&apos;incastro del capitale in fasi di lateralità asfittica e bassissimo movimento operativo.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Minima ATR Percentuale (ATR / Prezzo * 100):</span>
+                <span className="font-mono text-purple-600 font-bold">{(atrLockRule.parameters.minAtrPercentThreshold ?? 1.50).toFixed(2)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.50"
+                max="3.00"
+                step="0.10"
+                value={atrLockRule.parameters.minAtrPercentThreshold ?? 1.50}
+                onChange={(e) => updateRule('ATR_VOLATILITY_LOCK', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minAtrPercentThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!atrLockRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-purple-50/50 border border-purple-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Consolidamento &amp; Chop</span>
+                  <p className="text-[10px] text-slate-500">Esclude titoli senza range sufficiente a coprire i costi di spread e commissione</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded">
+                ATR &ge; 1.5%
               </span>
             </div>
           </div>

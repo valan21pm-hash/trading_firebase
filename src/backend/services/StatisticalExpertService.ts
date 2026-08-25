@@ -4,6 +4,8 @@ export interface StatisticalMetrics {
   timestamp: string;
   indexPrices: Record<string, number>;
   indexChanges24h: Record<string, number>;
+  indexChanges1h?: Record<string, number>;
+  vix1hChangePct?: number; // Variazione % del VIX nell'ultima ora (es. +0.65 per +0.65%)
   correlations: {
     spy_qqq: number; // Correlazione SPY vs QQQ
     spy_vix: number; // Correlazione SPY vs VIX
@@ -22,6 +24,8 @@ class StatisticalExpertService {
     timestamp: new Date().toISOString(),
     indexPrices: { SPY: 520, QQQ: 450, DIA: 390, IWM: 200, VIX: 15 },
     indexChanges24h: { SPY: 0.1, QQQ: 0.2, DIA: -0.1, IWM: 0.0, VIX: -1.2 },
+    indexChanges1h: { SPY: 0.05, QQQ: 0.08, DIA: 0.02, IWM: 0.01, VIX: 0.20 },
+    vix1hChangePct: 0.20,
     correlations: {
       spy_qqq: 0.92,
       spy_vix: -0.85,
@@ -41,6 +45,8 @@ class StatisticalExpertService {
     IWM: [198, 199, 200, 199, 200, 200],
     VIX: [16.5, 16.2, 15.8, 16.0, 15.5, 15.0]
   };
+
+  private timestampHistory: Record<string, { timestamp: number; price: number }[]> = {};
 
   private constructor() {}
 
@@ -81,14 +87,41 @@ class StatisticalExpertService {
   }
 
   /**
-   * Aggiorna lo storico e ricalcola le metriche di correlazione probabilistiche
+   * Aggiorna lo storico e ricalcola le metriche di correlazione probabilistiche e le variazioni a 1h/24h
    */
-  public updateIndexPrices(prices: Record<string, number>, changes24h: Record<string, number>): StatisticalMetrics {
+  public updateIndexPrices(
+    prices: Record<string, number>, 
+    changes24h: Record<string, number>,
+    changes1h?: Record<string, number>
+  ): StatisticalMetrics {
+    const now = Date.now();
+    const computed1hChanges: Record<string, number> = { ...(changes1h || {}) };
+
     for (const [sym, price] of Object.entries(prices)) {
       if (!this.priceHistory[sym]) this.priceHistory[sym] = [];
       this.priceHistory[sym].push(price);
       if (this.priceHistory[sym].length > 30) {
         this.priceHistory[sym].shift();
+      }
+
+      if (!this.timestampHistory[sym]) this.timestampHistory[sym] = [];
+      this.timestampHistory[sym].push({ timestamp: now, price });
+
+      // Mantieni storico per max 4 ore
+      const fourHoursAgo = now - 4 * 60 * 60 * 1000;
+      this.timestampHistory[sym] = this.timestampHistory[sym].filter(p => p.timestamp >= fourHoursAgo);
+
+      // Calcolo variazione 1h se non fornita esplicitamente
+      if (computed1hChanges[sym] === undefined && this.timestampHistory[sym].length >= 2) {
+        const oneHourAgo = now - 60 * 60 * 1000;
+        // Trova la lettura più vicina a 1h fa
+        const pastPoint = this.timestampHistory[sym].find(p => p.timestamp <= oneHourAgo) || this.timestampHistory[sym][0];
+        if (pastPoint && pastPoint.price > 0 && pastPoint.timestamp < now - 5 * 60 * 1000) {
+          computed1hChanges[sym] = parseFloat((((price - pastPoint.price) / pastPoint.price) * 100).toFixed(2));
+        } else {
+          // Fallback approssimato dalla frazione 24h
+          computed1hChanges[sym] = parseFloat(((changes24h[sym] ?? 0) / 6.5).toFixed(2));
+        }
       }
     }
 
@@ -99,6 +132,7 @@ class StatisticalExpertService {
     const spyChg = changes24h.SPY ?? 0;
     const qqqChg = changes24h.QQQ ?? 0;
     const vixChg = changes24h.VIX ?? 0;
+    const vix1hChg = computed1hChanges.VIX ?? (changes1h?.VIX !== undefined ? changes1h.VIX : parseFloat((vixChg / 6.5).toFixed(2)));
     const iwmChg = changes24h.IWM ?? 0;
 
     // Coerenza di mercato: quanto la direzione degli indici principali concorda
@@ -138,6 +172,8 @@ class StatisticalExpertService {
       timestamp: new Date().toISOString(),
       indexPrices: { ...prices },
       indexChanges24h: { ...changes24h },
+      indexChanges1h: computed1hChanges,
+      vix1hChangePct: vix1hChg,
       correlations: {
         spy_qqq: parseFloat(spyQqqCorr.toFixed(3)),
         spy_vix: parseFloat(spyVixCorr.toFixed(3)),
@@ -152,7 +188,7 @@ class StatisticalExpertService {
 
     // Registra log del modulo statistico
     try {
-      addLog('paper', `[Modulo Statistico] Stato: ${state} | SPY-QQQ Corr: ${spyQqqCorr.toFixed(2)} | VIX 24h: ${vixChg.toFixed(1)}% | ${advice}`);
+      addLog('paper', `[Modulo Statistico] Stato: ${state} | SPY-QQQ Corr: ${spyQqqCorr.toFixed(2)} | VIX 24h: ${vixChg.toFixed(1)}% | VIX 1h: ${vix1hChg >= 0 ? '+' : ''}${vix1hChg.toFixed(2)}% | ${advice}`);
     } catch {
       // Ignore log if not initialized yet
     }

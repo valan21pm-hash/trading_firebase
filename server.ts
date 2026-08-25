@@ -226,7 +226,18 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'ATR_VOLATILITY_FILTER',
     parameters: {
       atrFilterPeriod: 14,
-      atrSmaPeriod: 20
+      atrSmaPeriod: 20,
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
+    }
+  },
+  {
+    id: 'atr_volatility_lock',
+    enabled: true,
+    type: 'ATR_VOLATILITY_LOCK',
+    parameters: {
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
     }
   },
   {
@@ -246,7 +257,29 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'EMA_TREND_CONFIRMATION',
     parameters: {
-      requireEmaBullishTrend: true
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'adaptive_ema_filter',
+    enabled: true,
+    type: 'ADAPTIVE_EMA_FILTER',
+    parameters: {
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'time_based_volatility_threshold',
+    enabled: true,
+    type: 'TIME_BASED_VOLATILITY_THRESHOLD',
+    parameters: {
+      vix1hChangeThresholdPct: 0.50,
+      vix1hWindowStart: '09:30',
+      vix1hWindowEnd: '10:30'
     }
   },
   {
@@ -388,7 +421,8 @@ function isPurchaseAllowedBySystemRules(
   marketAdx?: number,
   currentOpenPositionsCount?: number,
   spyQqqCorrelation?: number,
-  vixLevel?: number
+  vixLevel?: number,
+  vix1hChange?: number
 ): { allowed: boolean; reason?: string } {
   // 1. Valutazione Prioritaria Trading Window Lockdown (09:30-10:30 & 15:30-16:00 EST / Midday ADX > 14)
   const estInfo = getEstMarketTime();
@@ -397,7 +431,14 @@ function isPurchaseAllowedBySystemRules(
     return windowLockdownEval;
   }
 
-  // 2. Valutazione Filtro Macro-Sentiment VIX (VIX/IV < 30.0%)
+  // 2. CORREZIONE STRATEGICA #1: Valutazione Time-Based Volatility Threshold (09:30-10:30 EST & VIX 1h > +0.50%)
+  const effectiveVix1hChange = vix1hChange ?? StatisticalExpertService.getInstance().getMetrics().vix1hChangePct ?? 0.0;
+  const vixTimeThresholdEval = RiskManagementService.evaluateTimeBasedVolatilityThreshold(estInfo, effectiveVix1hChange, systemRules);
+  if (!vixTimeThresholdEval.allowed) {
+    return vixTimeThresholdEval;
+  }
+
+  // 3. Valutazione Filtro Macro-Sentiment VIX (VIX/IV < 30.0%)
   const effectiveVix = vixLevel ?? StatisticalExpertService.getInstance().getMetrics().indexPrices?.VIX ?? 15.0;
   const vixFilterEval = RiskManagementService.evaluateMacroSentimentVixFilter(effectiveVix, systemRules);
   if (!vixFilterEval.allowed) {
@@ -2648,6 +2689,81 @@ async function getVix24hChange(conf?: any): Promise<number | undefined> {
   return undefined;
 }
 
+// Storico e calcolo VIX 1h (Time-Based Volatility Threshold #1)
+let cachedVix1hChange: { timestamp: number; value: number } | null = null;
+
+async function getVix1hChange(conf?: any): Promise<number | undefined> {
+  const now = Date.now();
+  if (cachedVix1hChange && (now - cachedVix1hChange.timestamp < 2 * 60 * 1000)) {
+    return cachedVix1hChange.value;
+  }
+
+  // 1. Prova snapshot / query Yahoo Finance VIX (intervallo 5m, range 1d per delta 1h preciso)
+  try {
+    const res = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=5m&range=1d');
+    if (res.ok) {
+      const data: any = await res.json();
+      const result = data?.chart?.result?.[0];
+      const quotes = result?.indicators?.quote?.[0]?.close || [];
+      const validQuotes = quotes.filter((q: any) => typeof q === 'number' && q > 0);
+      
+      if (validQuotes.length >= 2) {
+        const lastIdx = validQuotes.length - 1;
+        const currentPrice = validQuotes[lastIdx];
+        // 1h fa corrisponde a circa 12 barre da 5 min
+        const targetIdx = Math.max(0, lastIdx - 12);
+        const pastPrice = validQuotes[targetIdx];
+        
+        if (currentPrice && pastPrice && pastPrice > 0) {
+          const changePct = parseFloat((((currentPrice - pastPrice) / pastPrice) * 100).toFixed(2));
+          cachedVix1hChange = { timestamp: now, value: changePct };
+          return changePct;
+        }
+      }
+    }
+  } catch (e) {
+    // Continua al fallback
+  }
+
+  // 2. Prova snapshot Alpaca per VXX o VIXY se configurato
+  if (conf && conf.isConfigured && conf.apiKey && conf.secretKey) {
+    for (const vixSym of ['VXX', 'VIXY']) {
+      try {
+        const startIso = new Date(now - 75 * 60 * 1000).toISOString();
+        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${vixSym}/bars?timeframe=5Min&start=${startIso}&limit=20`, {
+          headers: {
+            'APCA-API-KEY-ID': conf.apiKey,
+            'APCA-API-SECRET-KEY': conf.secretKey
+          }
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const bars = data.bars || [];
+          if (bars.length >= 2) {
+            const pastPrice = bars[0].c;
+            const currPrice = bars[bars.length - 1].c;
+            if (pastPrice > 0 && currPrice > 0) {
+              const changePct = parseFloat((((currPrice - pastPrice) / pastPrice) * 100).toFixed(2));
+              cachedVix1hChange = { timestamp: now, value: changePct };
+              return changePct;
+            }
+          }
+        }
+      } catch (e) {
+        // Silenzioso
+      }
+    }
+  }
+
+  // 3. Fallback da StatisticalExpertService
+  const statMetrics = StatisticalExpertService.getInstance().getMetrics();
+  if (statMetrics.vix1hChangePct !== undefined) {
+    return statMetrics.vix1hChangePct;
+  }
+
+  return undefined;
+}
+
 // Storico del sentiment aggregato di mercato per tracciare il trend (Regola 3)
 const aggregateSentimentHistory: { timestamp: number; score: number }[] = [];
 
@@ -3232,10 +3348,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const bulkSentiment = await getBulkMarketSentiment(symbolsToAnalyze);
     recordAggregateMarketSentiment(bulkSentiment);
     const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
+    const vix1hChangePct = await getVix1hChange(getAlpacaConfig(mode));
 
     // Aggiornamento dati e matrice dell'Esperto Statistico di Sfondo
     const indexPrices: Record<string, number> = {};
     const indexChanges: Record<string, number> = {};
+    const indexChanges1h: Record<string, number> = {};
     const mockBasePrices: Record<string, number> = { SPY: 520, QQQ: 450, DIA: 390, IWM: 200, VIX: 15 };
 
     for (const idxSym of ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX']) {
@@ -3243,13 +3361,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       const base = mockBasePrices[idxSym] || 100;
       const score = scoreData ? scoreData.score : 0;
       const chgPct = idxSym === 'VIX' ? (vix24hChangePct ?? (score * -5)) : (score * 1.5);
+      const chg1hPct = idxSym === 'VIX' ? (vix1hChangePct ?? parseFloat((chgPct / 6.5).toFixed(2))) : parseFloat((chgPct / 6.5).toFixed(2));
       indexPrices[idxSym] = parseFloat((base * (1 + chgPct / 100)).toFixed(2));
       indexChanges[idxSym] = parseFloat(chgPct.toFixed(2));
+      indexChanges1h[idxSym] = parseFloat(chg1hPct.toFixed(2));
     }
 
-    StatisticalExpertService.getInstance().updateIndexPrices(indexPrices, indexChanges);
+    StatisticalExpertService.getInstance().updateIndexPrices(indexPrices, indexChanges, indexChanges1h);
     const statMetrics = StatisticalExpertService.getInstance().getMetrics();
-    addLog(mode as 'paper' | 'live', `[Modulo Statistico] Stato Mercato: ${statMetrics.marketState} | Coerenza: ${statMetrics.correlations.market_coherence.toFixed(2)} | Moltiplicatore Taglia: ${statMetrics.recommendedPositionSizeMultiplier.toFixed(2)}x`);
+    addLog(mode as 'paper' | 'live', `[Modulo Statistico] Stato Mercato: ${statMetrics.marketState} | Coerenza: ${statMetrics.correlations.market_coherence.toFixed(2)} | SPY-QQQ Corr: ${statMetrics.correlations.spy_qqq.toFixed(2)} | VIX 1h: ${statMetrics.vix1hChangePct !== undefined ? (statMetrics.vix1hChangePct >= 0 ? '+' : '') + statMetrics.vix1hChangePct.toFixed(2) + '%' : 'N/D'} | Moltiplicatore: ${statMetrics.recommendedPositionSizeMultiplier.toFixed(2)}x`);
 
     addLog(mode as 'paper' | 'live', `[Valutazione IA] Riepilogo sentiment per ciascun asset analizzato:`);
     for (const sym of symbolsToAnalyze) {
@@ -3472,6 +3592,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const marketAdxRes = await TechnicalIndicatorService.getInstance().getMarketAdx(getAlpacaConfig(mode));
     const currentSpyQqqCorr = StatisticalExpertService.getInstance().getMetrics().correlations.spy_qqq;
     const currentVixLevel = StatisticalExpertService.getInstance().getMetrics().indexPrices?.VIX ?? 15.0;
+    const currentVix1hChange = StatisticalExpertService.getInstance().getMetrics().vix1hChangePct ?? vix1hChangePct ?? 0.0;
     const purchasePermission = isPurchaseAllowedBySystemRules(
       minutesToClose,
       isDecreasingSentiment,
@@ -3479,7 +3600,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       marketAdxRes.marketAdx,
       openPositions.length,
       currentSpyQqqCorr,
-      currentVixLevel
+      currentVixLevel,
+      currentVix1hChange
     );
 
     // Valutazione Hard-Risk Management (Limite di perdita giornaliera -1.00% e Cooldown 30m dopo 2 Stop-Loss consecutivi)
@@ -3772,16 +3894,19 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
-              // --- CONFERMA TECNICA EMA 20/50 (Timeframe 15m) ---
+              // --- CONFERMA TECNICA EMA 20/50 & ADAPTIVE EMA FILTER (Sospeso se SPY-QQQ Corr >= 0.95) ---
               const emaFilterRes = RiskManagementService.evaluateEmaTrendFilter(
                 item.symbol,
                 symIndicators.currentPrice,
                 symIndicators.ema20,
                 symIndicators.ema50,
                 symIndicators.isBullishEmaTrend,
-                activeRules
+                activeRules,
+                spyQqqCorr
               );
-              if (!emaFilterRes.allowed) {
+              if (emaFilterRes.isSuspendedDueToCorrelation && emaFilterRes.reason) {
+                addLog(mode as 'paper' | 'live', emaFilterRes.reason);
+              } else if (!emaFilterRes.allowed) {
                 const vetoReason = emaFilterRes.reason || `Trend tecnico ribassista su timeframe 15m (Prezzo < EMA20 o EMA20 < EMA50)`;
                 addLog(mode as 'paper' | 'live', vetoReason);
                 addLogicLog(mode, {
@@ -3793,15 +3918,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
-              // --- FILTRO VOLATILITÀ OPERATIVA ATR 5m [ATR(14) 5m >= SMA(20) ATR] ---
+              // --- FILTRO VOLATILITÀ OPERATIVA ATR 5m & ATR VOLATILITY LOCK (ATR% >= 1.5%) ---
               const atrFilterRes = RiskManagementService.evaluateAtrVolatilityFilter(
                 item.symbol,
                 symIndicators.atr5m,
                 symIndicators.atr5mSma20,
-                activeRules
+                activeRules,
+                symIndicators.atrPercent
               );
               if (!atrFilterRes.allowed) {
-                const vetoReason = atrFilterRes.reason || `Volatilità insufficiente: ATR(14) 5m < SMA(20) ATR`;
+                const vetoReason = atrFilterRes.reason || `Volatilità insufficiente: ATR(14) 5m < SMA(20) ATR o ATR% < 1.50%`;
                 addLog(mode as 'paper' | 'live', vetoReason);
                 addLogicLog(mode, {
                   timestamp: new Date().toISOString(),
