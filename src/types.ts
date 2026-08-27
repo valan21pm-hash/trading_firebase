@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK' | 'CORRELATION_MOMENTUM_FILTER' | 'DYNAMIC_RISK_MANAGEMENT' | 'AFTERNOON_SESSION_SUSPENSION';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
@@ -75,6 +75,19 @@ export interface RiskRuleConfig {
     tier2DistancePct?: number;         // default 0.20% (distanza 0.20% dal picco)
     tier3ProfitThresholdPct?: number;  // default 1.00% (Scaglione 3: >= +1.00%)
     tier3DistancePct?: number;         // default 0.10% (distanza 0.10% dal picco)
+    // --- CONSENSO MULTI-IA: FILTRO CORRELAZIONE-MOMENTUM & RISK MANAGEMENT DINAMICO & SOSPENSIONE POMERIDIANA ---
+    minSpyQqqCorrelation?: number;    // default 0.95 (SPY-QQQ Corr >= 0.95)
+    rsiLowerThreshold?: number;       // default 30.0 (RSI < 30 per rimbalzo ipervenduto)
+    rsiUpperThreshold?: number;       // default 70.0 (RSI > 70 per momentum breakout)
+    maxVixMomentumThreshold?: number; // default 18.0 (VIX < 18.0 per ingresso consentito)
+    requireMomentumExtremeRsi?: boolean; // default true (RSI < 30 o RSI > 70)
+    dynamicSlPct?: number;            // default -1.50% (Consenso #2: Stop Loss al 1.5%)
+    dynamicTpUnits?: number;          // default 2.50 (Consenso #2: Target Profit a 2.5 unità)
+    dynamicTsPct?: number;            // default 1.00% (Consenso #2: Trailing Stop al 1%)
+    afternoonSuspensionStart?: string;// default '14:00' (Consenso #3: Sospensione 14:00-15:30 EST)
+    afternoonSuspensionEnd?: string;  // default '15:30'
+    extremeTrendAdxOverride?: number; // default 30.0 (Override se ADX > 30)
+    extremeTrendCorrOverride?: number;// default 0.98 (Override se Corr >= 0.98)
   };
 }
 
@@ -107,6 +120,7 @@ export interface Position {
   atr?: number;
   atr1_5x?: number;
   adx?: number;
+  rsi?: number;
   atrTrailingStopPrice?: number;
   rawAtrTrailingStopPrice?: number;
   minRequiredAtrStopPrice?: number;

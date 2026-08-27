@@ -328,19 +328,19 @@ export const ManualTrailingStopModal: React.FC<ManualTrailingStopModalProps> = (
                     </button>
                     <button
                       type="button"
+                      onClick={() => setPriceInput((highestPrice * 0.9975).toFixed(2))}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono border border-slate-700 transition"
+                      title="Distanza 0.25% dal picco"
+                    >
+                      -0.25% Picco (${(highestPrice * 0.9975).toFixed(2)})
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setPriceInput((highestPrice * 0.998).toFixed(2))}
                       className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono border border-slate-700 transition"
                       title="Distanza 0.20% dal picco"
                     >
                       -0.20% Picco (${(highestPrice * 0.998).toFixed(2)})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPriceInput((highestPrice * 0.999).toFixed(2))}
-                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono border border-slate-700 transition"
-                      title="Distanza 0.10% dal picco"
-                    >
-                      -0.10% Picco (${(highestPrice * 0.999).toFixed(2)})
                     </button>
                   </>
                 )}
@@ -362,7 +362,7 @@ export const ManualTrailingStopModal: React.FC<ManualTrailingStopModalProps> = (
                   max="10.0"
                   value={distancePctInput}
                   onChange={(e) => setDistancePctInput(e.target.value)}
-                  placeholder="Es. 0.20"
+                  placeholder="Es. 0.25"
                   className="w-full bg-[#080c16] border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-indigo-500"
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500 font-mono">
@@ -385,6 +385,17 @@ export const ManualTrailingStopModal: React.FC<ManualTrailingStopModalProps> = (
                 </button>
                 <button
                   type="button"
+                  onClick={() => setDistancePctInput('0.25')}
+                  className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold border transition ${
+                    distancePctInput === '0.25' 
+                      ? 'bg-indigo-950 text-indigo-300 border-indigo-600' 
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  0.25% (Scaglione 2: +0.80%-+1.00%)
+                </button>
+                <button
+                  type="button"
                   onClick={() => setDistancePctInput('0.20')}
                   className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold border transition ${
                     distancePctInput === '0.20' 
@@ -392,18 +403,7 @@ export const ManualTrailingStopModal: React.FC<ManualTrailingStopModalProps> = (
                       : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
                   }`}
                 >
-                  0.20% (Scaglione 2: +0.80%-+1.00%)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDistancePctInput('0.10')}
-                  className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold border transition ${
-                    distancePctInput === '0.10' 
-                      ? 'bg-indigo-950 text-indigo-300 border-indigo-600' 
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                  }`}
-                >
-                  0.10% (Scaglione 3: ≥+1.00%)
+                  0.20% (Scaglione 3: ≥+1.00%)
                 </button>
               </div>
             </div>

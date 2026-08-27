@@ -235,6 +235,39 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     parameters: {
       catastrophicMaxLossPct: -3.00
     }
+  },
+  {
+    id: 'correlation_momentum_filter',
+    enabled: true,
+    type: 'CORRELATION_MOMENTUM_FILTER',
+    parameters: {
+      minSpyQqqCorrelation: 0.95,
+      rsiLowerThreshold: 30.0,
+      rsiUpperThreshold: 70.0,
+      maxVixMomentumThreshold: 18.0,
+      requireMomentumExtremeRsi: true
+    }
+  },
+  {
+    id: 'dynamic_risk_management',
+    enabled: true,
+    type: 'DYNAMIC_RISK_MANAGEMENT',
+    parameters: {
+      dynamicSlPct: -1.50,
+      dynamicTpUnits: 2.50,
+      dynamicTsPct: 1.00
+    }
+  },
+  {
+    id: 'afternoon_session_suspension',
+    enabled: true,
+    type: 'AFTERNOON_SESSION_SUSPENSION',
+    parameters: {
+      afternoonSuspensionStart: '14:00',
+      afternoonSuspensionEnd: '15:30',
+      extremeTrendAdxOverride: 30.0,
+      extremeTrendCorrOverride: 0.98
+    }
   }
 ];
 
@@ -337,6 +370,9 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const vixTimeRule = getRule('TIME_BASED_VOLATILITY_THRESHOLD');
   const adaptiveEmaRule = getRule('ADAPTIVE_EMA_FILTER');
   const atrLockRule = getRule('ATR_VOLATILITY_LOCK');
+  const corrMomRule = getRule('CORRELATION_MOMENTUM_FILTER');
+  const dynamicRiskRule = getRule('DYNAMIC_RISK_MANAGEMENT');
+  const afternoonSuspensionRule = getRule('AFTERNOON_SESSION_SUSPENSION');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -908,7 +944,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            <strong>Dinamica Ibrida a Scaglioni (Distanza Decrescente)</strong>: Segue il trend stringendo la distanza dallo stop all&apos;aumentare del profitto. Sotto +0.50% lascia respiro con buffer ATR; tra +0.50% e +0.80% segue a distanza <strong>0.30%</strong>; tra +0.80% e +1.00% segue a distanza <strong>0.20%</strong>; sopra +1.00% blinda a distanza stretta <strong>0.10%</strong>.
+            <strong>Dinamica Ibrida a Scaglioni (Distanza Decrescente)</strong>: Segue il trend stringendo la distanza dallo stop all&apos;aumentare del profitto. Sotto +0.50% lascia respiro con buffer ATR; tra +0.50% e +0.80% segue a distanza <strong>0.30%</strong>; tra +0.80% e +1.00% segue a distanza <strong>0.25%</strong>; sopra +1.00% blinda a distanza <strong>0.20%</strong>.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
@@ -919,7 +955,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                   <Shield className="w-3.5 h-3.5 text-emerald-600" /> Dinamica Ibrida a Scaglioni (Distanza Decrescente)
                 </span>
                 <span className="text-[10px] text-slate-500 block">
-                  Scaglione 1 (+0.50% - +0.80%): Dist. 0.30% &bull; Scaglione 2 (+0.80% - +1%): Dist. 0.20% &bull; Scaglione 3 (&ge;+1%): Dist. 0.10%
+                  Scaglione 1 (+0.50% - +0.80%): Dist. 0.30% &bull; Scaglione 2 (+0.80% - +1%): Dist. 0.25% &bull; Scaglione 3 (&ge;+1%): Dist. 0.20%
                 </span>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -981,14 +1017,14 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <div>
                 <div className="flex justify-between text-slate-700 font-medium mb-1">
                   <span>Scaglione 2 (+0.80%-+1.00%):</span>
-                  <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.tier2DistancePct ?? 0.20).toFixed(2)}% dist.</span>
+                  <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.tier2DistancePct ?? 0.25).toFixed(2)}% dist.</span>
                 </div>
                 <input
                   type="range"
                   min="0.05"
-                  max="0.40"
+                  max="0.50"
                   step="0.05"
-                  value={atrRule.parameters.tier2DistancePct ?? 0.20}
+                  value={atrRule.parameters.tier2DistancePct ?? 0.25}
                   onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
                     ...r,
                     parameters: { ...r.parameters, tier2DistancePct: parseFloat(e.target.value) }
@@ -1001,14 +1037,14 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <div>
                 <div className="flex justify-between text-slate-700 font-medium mb-1">
                   <span>Scaglione 3 (&ge;+1.00%):</span>
-                  <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.tier3DistancePct ?? 0.10).toFixed(2)}% dist.</span>
+                  <span className="font-mono text-emerald-600 font-bold">{(atrRule.parameters.tier3DistancePct ?? 0.20).toFixed(2)}% dist.</span>
                 </div>
                 <input
                   type="range"
-                  min="0.02"
-                  max="0.30"
+                  min="0.05"
+                  max="0.40"
                   step="0.01"
-                  value={atrRule.parameters.tier3DistancePct ?? 0.10}
+                  value={atrRule.parameters.tier3DistancePct ?? 0.20}
                   onChange={(e) => updateRule('ATR_INDIVIDUAL_TRAILING_STOP', r => ({
                     ...r,
                     parameters: { ...r.parameters, tier3DistancePct: parseFloat(e.target.value) }
@@ -1723,6 +1759,306 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               </div>
               <span className="text-xs font-mono font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded">
                 ATR &ge; 1.5%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 21: Filtro di Correlazione e Momentum (SPY-QQQ Corr >= 0.95, RSI(14) > 70 o < 30, VIX < 18) */}
+        <div className={`p-4 rounded-xl border transition-all ${corrMomRule.enabled ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${corrMomRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">21. Filtro di Correlazione e Momentum (Regola 1 Consenso)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={corrMomRule.enabled}
+                onChange={(e) => updateRule('CORRELATION_MOMENTUM_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Disciplina Statistica Post-Seduta 2026-08-27:</strong> Operare solo se <strong>SPY-QQQ Corr &ge; 0.95</strong>, <strong>RSI(14) &gt; 70</strong> (momentum breakout) o <strong>&lt; 30</strong> (rimbalzo ipervenduto), e <strong>VIX &lt; 18.0</strong>. In caso contrario, imposta posizione in <strong>HOLD</strong> per abbattere l&apos;overtrading in mercati laterali.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Correlazione Minima SPY-QQQ:</span>
+                <span className="font-mono text-amber-600 font-bold">&ge; {(corrMomRule.parameters.minSpyQqqCorrelation ?? 0.95).toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.80"
+                max="0.99"
+                step="0.01"
+                value={corrMomRule.parameters.minSpyQqqCorrelation ?? 0.95}
+                onChange={(e) => updateRule('CORRELATION_MOMENTUM_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, minSpyQqqCorrelation: parseFloat(e.target.value) }
+                }))}
+                disabled={!corrMomRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>RSI Ipervenduto:</span>
+                  <span className="font-mono text-emerald-600 font-bold">&lt; {corrMomRule.parameters.rsiLowerThreshold ?? 30}</span>
+                </div>
+                <input
+                  type="range"
+                  min="20"
+                  max="40"
+                  step="1"
+                  value={corrMomRule.parameters.rsiLowerThreshold ?? 30}
+                  onChange={(e) => updateRule('CORRELATION_MOMENTUM_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, rsiLowerThreshold: parseInt(e.target.value, 10) }
+                  }))}
+                  disabled={!corrMomRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>RSI Breakout:</span>
+                  <span className="font-mono text-rose-600 font-bold">&gt; {corrMomRule.parameters.rsiUpperThreshold ?? 70}</span>
+                </div>
+                <input
+                  type="range"
+                  min="60"
+                  max="80"
+                  step="1"
+                  value={corrMomRule.parameters.rsiUpperThreshold ?? 70}
+                  onChange={(e) => updateRule('CORRELATION_MOMENTUM_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, rsiUpperThreshold: parseInt(e.target.value, 10) }
+                  }))}
+                  disabled={!corrMomRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>VIX Massimo Consentito:</span>
+                <span className="font-mono text-amber-600 font-bold">&lt; {(corrMomRule.parameters.maxVixMomentumThreshold ?? 18.0).toFixed(1)}</span>
+              </div>
+              <input
+                type="range"
+                min="12.0"
+                max="25.0"
+                step="0.5"
+                value={corrMomRule.parameters.maxVixMomentumThreshold ?? 18.0}
+                onChange={(e) => updateRule('CORRELATION_MOMENTUM_FILTER', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, maxVixMomentumThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!corrMomRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-amber-50/50 border border-amber-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Statistico di Correlazione e Momentum</span>
+                  <p className="text-[10px] text-slate-500">Garantisce solo setup direzionali con macro-condizioni favorevoli; HOLD su laterale</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                Corr &ge; 0.95 | RSI 30/70 | VIX &lt; 18
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 22: Risk-Management Dinamico (Stop-Loss 1.5%, Target Profit 2.5 unità, Trailing Stop 1%) */}
+        <div className={`p-4 rounded-xl border transition-all ${dynamicRiskRule.enabled ? 'bg-emerald-50/50 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sliders className={`w-4 h-4 ${dynamicRiskRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">22. Risk-Management Dinamico (Regola 2 Consenso)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dynamicRiskRule.enabled}
+                onChange={(e) => updateRule('DYNAMIC_RISK_MANAGEMENT', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Parametri di Uscita Ottimizzati:</strong> Stop-loss al <strong>1.50%</strong>, target profit a <strong>2.50 unit&agrave; (&euro;/$)</strong> e trailing stop al <strong>1.00%</strong> per proteggere i profitti maturati.
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Stop-Loss:</span>
+                  <span className="font-mono text-rose-600 font-bold">{(dynamicRiskRule.parameters.dynamicSlPct ?? -1.50).toFixed(2)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="-3.00"
+                  max="-0.50"
+                  step="0.25"
+                  value={dynamicRiskRule.parameters.dynamicSlPct ?? -1.50}
+                  onChange={(e) => updateRule('DYNAMIC_RISK_MANAGEMENT', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, dynamicSlPct: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!dynamicRiskRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Target Profit:</span>
+                  <span className="font-mono text-emerald-600 font-bold">{(dynamicRiskRule.parameters.dynamicTpUnits ?? 2.50).toFixed(2)} &euro;</span>
+                </div>
+                <input
+                  type="range"
+                  min="1.00"
+                  max="5.00"
+                  step="0.25"
+                  value={dynamicRiskRule.parameters.dynamicTpUnits ?? 2.50}
+                  onChange={(e) => updateRule('DYNAMIC_RISK_MANAGEMENT', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, dynamicTpUnits: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!dynamicRiskRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Trailing Stop:</span>
+                  <span className="font-mono text-indigo-600 font-bold">{(dynamicRiskRule.parameters.dynamicTsPct ?? 1.00).toFixed(2)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.20"
+                  max="2.00"
+                  step="0.10"
+                  value={dynamicRiskRule.parameters.dynamicTsPct ?? 1.00}
+                  onChange={(e) => updateRule('DYNAMIC_RISK_MANAGEMENT', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, dynamicTsPct: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!dynamicRiskRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-emerald-50/50 border border-emerald-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Risk Management Calibrato</span>
+                  <p className="text-[10px] text-slate-500">Stop 1.5%, Target Profit 2.5 unità, Trailing Stop 1%</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                SL 1.5% | TP 2.5€ | TS 1%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 23: Filtro Orario Sessione Pomeridiana (Sospensione 14:00-15:30 EST salvo trend estremo) */}
+        <div className={`p-4 rounded-xl border transition-all ${afternoonSuspensionRule.enabled ? 'bg-orange-50/50 border-orange-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock3 className={`w-4 h-4 ${afternoonSuspensionRule.enabled ? 'text-orange-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">23. Filtro Orario Pomeridiano (Sospensione 14:00-15:30 EST)</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={afternoonSuspensionRule.enabled}
+                onChange={(e) => updateRule('AFTERNOON_SESSION_SUSPENSION', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-orange-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Sospensione Operativa 14:00 - 15:30 EST:</strong> Inibisce nuovi acquisti nella fascia pomeridiana di debolezza statistica e bassi volumi di trend, <strong>salvo condizioni di trend estremo</strong> (ADX &gt; 30 o Corr SPY-QQQ &ge; 0.98).
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Override ADX Trend Estremo:</span>
+                  <span className="font-mono text-orange-600 font-bold">&gt; {(afternoonSuspensionRule.parameters.extremeTrendAdxOverride ?? 30.0).toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="25.0"
+                  max="45.0"
+                  step="1.0"
+                  value={afternoonSuspensionRule.parameters.extremeTrendAdxOverride ?? 30.0}
+                  onChange={(e) => updateRule('AFTERNOON_SESSION_SUSPENSION', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, extremeTrendAdxOverride: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!afternoonSuspensionRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Override Correlazione Estrema:</span>
+                  <span className="font-mono text-orange-600 font-bold">&ge; {(afternoonSuspensionRule.parameters.extremeTrendCorrOverride ?? 0.98).toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.90"
+                  max="0.99"
+                  step="0.01"
+                  value={afternoonSuspensionRule.parameters.extremeTrendCorrOverride ?? 0.98}
+                  onChange={(e) => updateRule('AFTERNOON_SESSION_SUSPENSION', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, extremeTrendCorrOverride: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!afternoonSuspensionRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-2 rounded bg-orange-50/50 border border-orange-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-orange-600" />
+                <div>
+                  <span className="font-semibold text-slate-800">Filtro Orario Consenso Multi-IA</span>
+                  <p className="text-[10px] text-slate-500">Sospende BUY tra 14:00 e 15:30 EST; autorizza solo breakout con trend forte</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded">
+                Sospensione 14:00-15:30 EST
               </span>
             </div>
           </div>

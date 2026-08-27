@@ -150,9 +150,9 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       tier1ProfitThresholdPct: 0.50,
       tier1DistancePct: 0.30,
       tier2ProfitThresholdPct: 0.80,
-      tier2DistancePct: 0.20,
+      tier2DistancePct: 0.25,
       tier3ProfitThresholdPct: 1.00,
-      tier3DistancePct: 0.10
+      tier3DistancePct: 0.20
     }
   },
   {
@@ -295,6 +295,39 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'CATASTROPHIC_CIRCUIT_BREAKER_SL',
     parameters: {
       catastrophicMaxLossPct: -3.00
+    }
+  },
+  {
+    id: 'correlation_momentum_filter',
+    enabled: true,
+    type: 'CORRELATION_MOMENTUM_FILTER',
+    parameters: {
+      minSpyQqqCorrelation: 0.95,
+      rsiLowerThreshold: 30.0,
+      rsiUpperThreshold: 70.0,
+      maxVixMomentumThreshold: 18.0,
+      requireMomentumExtremeRsi: true
+    }
+  },
+  {
+    id: 'dynamic_risk_management',
+    enabled: true,
+    type: 'DYNAMIC_RISK_MANAGEMENT',
+    parameters: {
+      dynamicSlPct: -1.50,
+      dynamicTpUnits: 2.50,
+      dynamicTsPct: 1.00
+    }
+  },
+  {
+    id: 'afternoon_session_suspension',
+    enabled: true,
+    type: 'AFTERNOON_SESSION_SUSPENSION',
+    parameters: {
+      afternoonSuspensionStart: '14:00',
+      afternoonSuspensionEnd: '15:30',
+      extremeTrendAdxOverride: 30.0,
+      extremeTrendCorrOverride: 0.98
     }
   }
 ];
@@ -3979,6 +4012,50 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
+              // --- REGOLA 1 CONSENSO MULTI-IA: FILTRO DI CORRELAZIONE E MOMENTUM (SPY-QQQ Corr >= 0.95, RSI(14) > 70 o < 30, VIX < 18) ---
+              const currentVix = StatisticalExpertService.getInstance().getMetrics().indexPrices?.VIX ?? currentVixLevel ?? 15.0;
+              const corrMomFilterRes = RiskManagementService.evaluateCorrelationMomentumFilter(
+                item.symbol,
+                spyQqqCorr,
+                symIndicators.rsi,
+                currentVix,
+                activeRules
+              );
+              if (!corrMomFilterRes.allowed) {
+                const vetoReason = corrMomFilterRes.reason || `[Filtro Correlazione/Momentum] Setup non conforme per ${item.symbol} (Corr < 0.95, RSI tra 30 e 70, o VIX >= 18). Posizione in HOLD per disciplina statistica.`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'HOLD',
+                  reasoning: vetoReason
+                });
+                continue;
+              }
+
+              // --- REGOLA 3 CONSENSO MULTI-IA: FILTRO ORARIO SESSIONE POMERIDIANA (Sospensione 14:00-15:30 EST salvo trend estremo) ---
+              const estInfo = getEstMarketTime();
+              const afternoonSuspensionRes = RiskManagementService.evaluateAfternoonSessionSuspension(
+                estInfo,
+                symIndicators.adx,
+                spyQqqCorr,
+                symIndicators.rsi,
+                activeRules
+              );
+              if (afternoonSuspensionRes.isExtremeTrendExemption && afternoonSuspensionRes.reason) {
+                addLog(mode as 'paper' | 'live', afternoonSuspensionRes.reason);
+              } else if (!afternoonSuspensionRes.allowed) {
+                const vetoReason = afternoonSuspensionRes.reason || `[Filtro Orario] Sospensione operativa 14:00-15:30 EST in assenza di trend estremo. Posizione in HOLD.`;
+                addLog(mode as 'paper' | 'live', vetoReason);
+                addLogicLog(mode, {
+                  timestamp: new Date().toISOString(),
+                  symbol: item.symbol,
+                  action: 'HOLD',
+                  reasoning: vetoReason
+                });
+                continue;
+              }
+
               ordersToSubmit.push({
                 symbol: item.symbol,
                 sentimentScore: item.score,
@@ -5050,9 +5127,9 @@ async function getStatusData() {
             const tier1ThresholdPct = atrRule?.parameters?.tier1ProfitThresholdPct ?? 0.50; // +0.50%
             const tier1DistancePct = atrRule?.parameters?.tier1DistancePct ?? 0.30;          // 0.30%
             const tier2ThresholdPct = atrRule?.parameters?.tier2ProfitThresholdPct ?? 0.80; // +0.80%
-            const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.20;          // 0.20%
+            const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.25;          // 0.25%
             const tier3ThresholdPct = atrRule?.parameters?.tier3ProfitThresholdPct ?? 1.00; // +1.00%
-            const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.10;          // 0.10%
+            const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.20;          // 0.20%
 
             const posQty = parseFloat(pos.qty || '1') || 1;
             let currentProfitTier = 0;

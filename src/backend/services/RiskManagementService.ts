@@ -113,9 +113,9 @@ export class RiskManagementService {
     const tier1ThresholdPct = atrRule?.parameters?.tier1ProfitThresholdPct ?? 0.50; // default +0.50%
     const tier1DistancePct = atrRule?.parameters?.tier1DistancePct ?? 0.30;          // default distanza 0.30%
     const tier2ThresholdPct = atrRule?.parameters?.tier2ProfitThresholdPct ?? 0.80; // default +0.80%
-    const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.20;          // default distanza 0.20%
+    const tier2DistancePct = atrRule?.parameters?.tier2DistancePct ?? 0.25;          // default distanza 0.25%
     const tier3ThresholdPct = atrRule?.parameters?.tier3ProfitThresholdPct ?? 1.00; // default +1.00%
-    const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.10;          // default distanza 0.10%
+    const tier3DistancePct = atrRule?.parameters?.tier3DistancePct ?? 0.20;          // default distanza 0.20%
 
     let activeTier = 0;
     let tierDistancePct = 0;
@@ -840,6 +840,112 @@ export class RiskManagementService {
     }
 
     return { allowed: true };
+  }
+
+  /**
+   * REGOLA DI CONSENSO #1 [Filtro di Correlazione e Momentum]:
+   * Operare solo se SPY-QQQ Corr >= 0.95, RSI(14) > 70 o < 30, e VIX < 18.
+   * In caso contrario, imposta posizione/segnale in HOLD.
+   * 
+   * Dettagli e Razionale di Analisi:
+   * "La seduta del 2026-08-27 ha mostrato un Win Rate dello 0% a causa dell'assenza di filtri statistici.
+   * Questa regola impone disciplina, riducendo l'overtrading in mercati laterali e filtrando i setup a bassa probabilità."
+   */
+  public static evaluateCorrelationMomentumFilter(
+    symbol: string,
+    spyQqqCorrelation: number | undefined,
+    rsi14: number | undefined,
+    vixValue: number | undefined,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; action: 'BUY' | 'HOLD'; reason?: string; metrics: { corr: number; rsi: number; vix: number } } {
+    const rule = systemRules?.find(r => r.type === 'CORRELATION_MOMENTUM_FILTER');
+    const isEnabled = rule?.enabled ?? true;
+
+    const corr = spyQqqCorrelation !== undefined && !isNaN(spyQqqCorrelation) ? spyQqqCorrelation : 0.92;
+    const rsi = rsi14 !== undefined && !isNaN(rsi14) ? rsi14 : 50.0;
+    const vix = vixValue !== undefined && !isNaN(vixValue) ? vixValue : 15.0;
+
+    const metrics = { corr, rsi, vix };
+
+    if (!isEnabled) {
+      return { allowed: true, action: 'BUY', metrics };
+    }
+
+    const minCorr = rule?.parameters?.minSpyQqqCorrelation ?? 0.95;
+    const rsiLower = rule?.parameters?.rsiLowerThreshold ?? 30.0;
+    const rsiUpper = rule?.parameters?.rsiUpperThreshold ?? 70.0;
+    const maxVix = rule?.parameters?.maxVixMomentumThreshold ?? 18.0;
+
+    const isCorrValid = corr >= minCorr;
+    const isRsiExtreme = rsi > rsiUpper || rsi < rsiLower;
+    const isVixSafe = vix < maxVix;
+
+    if (!isCorrValid || !isRsiExtreme || !isVixSafe) {
+      const failures: string[] = [];
+      if (!isCorrValid) failures.push(`Corr SPY-QQQ ${corr.toFixed(2)} < ${minCorr.toFixed(2)}`);
+      if (!isRsiExtreme) failures.push(`RSI(14) ${rsi.toFixed(1)} compreso tra ${rsiLower.toFixed(0)} e ${rsiUpper.toFixed(0)} (assenza di momentum breakout o rimbalzo ipervenduto)`);
+      if (!isVixSafe) failures.push(`VIX ${vix.toFixed(1)} >= ${maxVix.toFixed(1)} (volatilità macro elevata)`);
+
+      return {
+        allowed: false,
+        action: 'HOLD',
+        reason: `[Regola 1: Filtro Correlazione e Momentum] Setup non conforme per ${symbol.toUpperCase()}: ${failures.join(' | ')}. Posizione impostata in HOLD per disciplina statistica (evita overtrading in mercati laterali e setup a bassa probabilità).`,
+        metrics
+      };
+    }
+
+    return {
+      allowed: true,
+      action: 'BUY',
+      reason: `[Regola 1: Filtro Correlazione e Momentum Soddisfatto] ${symbol.toUpperCase()}: Corr SPY-QQQ ${corr.toFixed(2)} >= ${minCorr.toFixed(2)}, RSI(14) ${rsi.toFixed(1)} (Breakout/Reversal confermato), VIX ${vix.toFixed(1)} < ${maxVix.toFixed(1)}. Ingresso autorizzato.`,
+      metrics
+    };
+  }
+
+  /**
+   * REGOLA DI CONSENSO #3 [Filtro Orario Sessione Pomeridiana]:
+   * Sospensione operativa nella fascia 14:00-15:30 EST salvo condizioni di trend estremo (ADX > 30, SPY-QQQ Corr >= 0.98 o RSI estremo < 20 / > 80).
+   */
+  public static evaluateAfternoonSessionSuspension(
+    estInfo: { totalMinutes: number; timeFormatted: string; hours?: number; minutes?: number },
+    adxValue?: number,
+    spyQqqCorrelation?: number,
+    rsi14?: number,
+    systemRules?: RiskRuleConfig[]
+  ): { allowed: boolean; isExtremeTrendExemption?: boolean; reason?: string } {
+    const rule = systemRules?.find(r => r.type === 'AFTERNOON_SESSION_SUSPENSION');
+    const isEnabled = rule?.enabled ?? true;
+    if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    const { totalMinutes, timeFormatted } = estInfo;
+    // Fascia 14:00 - 15:30 EST (840 a 930 minuti)
+    const isAfternoonSuspension = totalMinutes >= 840 && totalMinutes < 930;
+    if (!isAfternoonSuspension) {
+      return { allowed: true };
+    }
+
+    const extremeAdxThreshold = rule?.parameters?.extremeTrendAdxOverride ?? 30.0;
+    const extremeCorrThreshold = rule?.parameters?.extremeTrendCorrOverride ?? 0.98;
+
+    const hasExtremeTrend = (adxValue !== undefined && adxValue >= extremeAdxThreshold) ||
+                           (spyQqqCorrelation !== undefined && spyQqqCorrelation >= extremeCorrThreshold) ||
+                           (rsi14 !== undefined && (rsi14 >= 80 || rsi14 <= 20));
+
+    if (hasExtremeTrend) {
+      return {
+        allowed: true,
+        isExtremeTrendExemption: true,
+        reason: `[Filtro Orario Pomeridiano: Esenzione Trend Estremo] Finestra 14:00-15:30 EST (${timeFormatted}) superata per condizione di trend estremo (ADX: ${adxValue?.toFixed(1) || 'N/D'}, Corr: ${spyQqqCorrelation?.toFixed(2) || 'N/D'}, RSI: ${rsi14?.toFixed(1) || 'N/D'}). Ingresso autorizzato.`
+      };
+    }
+
+    return {
+      allowed: false,
+      isExtremeTrendExemption: false,
+      reason: `[Filtro Orario Pomeridiano: Sospensione 14:00-15:30 EST] Orario attuale ${timeFormatted} nella fascia di consolidamento pomeridiano. Nuovi ingressi BUY sospesi (HOLD) salvo condizioni di trend estremo (ADX >= ${extremeAdxThreshold}, Corr >= ${extremeCorrThreshold}).`
+    };
   }
 }
 

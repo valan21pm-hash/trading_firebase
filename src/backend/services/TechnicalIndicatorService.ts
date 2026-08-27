@@ -29,6 +29,8 @@ export interface IndicatorResult {
   plusDI: number; // +DI(14)
   minusDI: number; // -DI(14)
   isTrendStrong: boolean; // ADX >= 25
+  rsi: number; // RSI(14) (da 0 a 100)
+  isRsiExtreme: boolean; // RSI > 70 o RSI < 30 (Momentum Breakout / Oversold Reversal)
   ema20: number; // EMA 20 periodi (su timeframe 15m)
   ema50: number; // EMA 50 periodi (su timeframe 15m)
   isBullishEmaTrend: boolean; // Prezzo > EMA20 e EMA20 >= EMA50
@@ -209,6 +211,51 @@ export class TechnicalIndicatorService {
   }
 
   /**
+   * Calcolo standard dell'RSI (Relative Strength Index, Wilder 14 periodi)
+   */
+  public static calculateRSI(bars: PriceBar[], period = 14): number {
+    if (bars.length < 2) {
+      return 50.0; // Valore neutrale di default se storico insufficiente
+    }
+
+    const gains: number[] = [];
+    const losses: number[] = [];
+
+    for (let i = 1; i < bars.length; i++) {
+      const change = bars[i].close - bars[i - 1].close;
+      gains.push(change > 0 ? change : 0);
+      losses.push(change < 0 ? Math.abs(change) : 0);
+    }
+
+    if (gains.length === 0) return 50.0;
+
+    const actualPeriod = Math.min(period, gains.length);
+    // Primo average gain e average loss (Media Semplice sui primi elementi)
+    let avgGain = gains.slice(0, actualPeriod).reduce((a, b) => a + b, 0) / actualPeriod;
+    let avgLoss = losses.slice(0, actualPeriod).reduce((a, b) => a + b, 0) / actualPeriod;
+
+    // Smoothing di Wilder per le barre successive
+    for (let i = actualPeriod; i < gains.length; i++) {
+      avgGain = (avgGain * (period - 1) + gains[i]) / period;
+      avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    }
+
+    if (avgLoss === 0 && avgGain === 0) {
+      return 50.0;
+    }
+    if (avgLoss === 0) {
+      return 100.0;
+    }
+    if (avgGain === 0) {
+      return 0.0;
+    }
+
+    const rs = avgGain / avgLoss;
+    const rsi = 100 - (100 / (1 + rs));
+    return parseFloat(Math.max(0, Math.min(100, rsi)).toFixed(2));
+  }
+
+  /**
    * Genera barre storiche sintetiche coerenti se non sono disponibili barre API in tempo reale
    */
   public generateSyntheticBars(symbol: string, currentPrice: number): PriceBar[] {
@@ -342,9 +389,11 @@ export class TechnicalIndicatorService {
       this.priceHistory.set(sym, bars);
     }
 
-    // 4. Calcolo matematico deterministico di ATR, ADX e Medie Mobili Esponenziali (EMA 20 & 50)
+    // 4. Calcolo matematico deterministico di ATR, ADX, RSI e Medie Mobili Esponenziali (EMA 20 & 50)
     const atr = TechnicalIndicatorService.calculateATR(bars, 14);
     const { adx, plusDI, minusDI } = TechnicalIndicatorService.calculateADX(bars, 14);
+    const rsi = TechnicalIndicatorService.calculateRSI(bars, 14);
+    const isRsiExtreme = rsi > 70.0 || rsi < 30.0;
     const ema20 = TechnicalIndicatorService.calculateEMA(bars, 20);
     const ema50 = TechnicalIndicatorService.calculateEMA(bars, 50);
 
@@ -398,6 +447,8 @@ export class TechnicalIndicatorService {
       plusDI: parseFloat(plusDI.toFixed(1)),
       minusDI: parseFloat(minusDI.toFixed(1)),
       isTrendStrong: adx >= 25.0,
+      rsi: parseFloat(rsi.toFixed(1)),
+      isRsiExtreme,
       ema20: parseFloat(ema20.toFixed(2)),
       ema50: parseFloat(ema50.toFixed(2)),
       isBullishEmaTrend,
