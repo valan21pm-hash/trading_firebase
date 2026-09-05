@@ -337,6 +337,7 @@ export interface EstTimeInfo {
   minutes: number;
   totalMinutes: number;
   timeFormatted: string;
+  isOperatingWindow: boolean; // Finestra operativa 09:15 - 16:15 EST (15m prima apertura, 15m dopo chiusura)
   isMorningVolatileLock: boolean;
   isOpeningLockdown: boolean;
   isMiddayPrimeWindow: boolean;
@@ -345,6 +346,17 @@ export interface EstTimeInfo {
   isAfternoonVolatileLock: boolean;
   isMarketTimeLocked: boolean;
   lockReason?: string;
+}
+
+export function isMarketOperatingHours(dateInput?: Date | string | number): boolean {
+  const date = dateInput ? new Date(dateInput) : new Date();
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(date);
+  if (day === 'Sat' || day === 'Sun') {
+    return false; // Weekend mercato chiuso
+  }
+  const est = getEstMarketTime(date);
+  // 09:15 EST = 555 minuti, 16:15 EST = 975 minuti
+  return est.totalMinutes >= 555 && est.totalMinutes <= 975;
 }
 
 export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInfo {
@@ -371,6 +383,9 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
   const totalMinutes = hours * 60 + minutes;
   const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} EST`;
   
+  // Finestra Operativa: 09:15 - 16:15 EST (555 - 975 minuti)
+  const isOperatingWindow = totalMinutes >= 555 && totalMinutes <= 975;
+
   // 09:30 - 10:30 EST => 570 - 630 minuti (Trading Window Lockdown: Inefficienze prima ora)
   // 12:00 - 14:30 EST => 720 - 870 minuti (Fascia Midday privilegiata ad alta efficienza)
   // >= 15:30 EST => >= 930 minuti (Pre-chiusura 15:30-16:00 e sessione serale/after-hours)
@@ -394,6 +409,7 @@ export function getEstMarketTime(dateInput?: Date | string | number): EstTimeInf
     minutes,
     totalMinutes,
     timeFormatted,
+    isOperatingWindow,
     isMorningVolatileLock,
     isOpeningLockdown,
     isMiddayPrimeWindow,
@@ -1825,6 +1841,9 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     side: p.side
   }));
 
+  const isOperating = isMarketOperatingHours();
+  const estTime = getEstMarketTime();
+
   const status = {
     active: mode === 'live' ? botStatus.liveActive : botStatus.paperActive,
     equity: botData[mode].balance,
@@ -1832,6 +1851,8 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     logicLogs: botData[mode].dailyLogicLogs,
     dailyPnL: botData[mode].dailyPnL,
     tradingMode: botStatus.tradingMode,
+    isOperatingHours: isOperating,
+    estTime: estTime.timeFormatted,
     defaultTP: botStatus.defaultTP ?? 2.00,
     defaultSL: botStatus.defaultSL ?? -0.50,
     trailingStop: botStatus.trailingStop ?? 1.0,
@@ -1848,6 +1869,15 @@ app.post("/api/trading/alpaca-trigger", async (req, res) => {
   try {
     await executeTradingCycle(true);
     res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/trading/alpaca-healthcheck", async (req, res) => {
+  try {
+    const result = await verifyAlpacaConnectionAndResume();
+    res.json({ success: true, result });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -4155,6 +4185,108 @@ let isTradingRunning = false;
 let isFastCheckRunning = false;
 
 let lastAlpacaRunTime = 0;
+let lastConnectionCheckTime = 0;
+let isConnectionCheckRunning = false;
+
+// Funzione dedicata alla verifica periodica della connessione API Alpaca (ogni 30 min) con autoripristino e avvio del bot
+async function verifyAlpacaConnectionAndResume(): Promise<{ paperConnected: boolean; liveConnected: boolean; reconnected: boolean }> {
+  if (isConnectionCheckRunning) {
+    return { paperConnected: false, liveConnected: false, reconnected: false };
+  }
+  isConnectionCheckRunning = true;
+  let reconnected = false;
+  let paperConnected = false;
+  let liveConnected = false;
+
+  try {
+    const activeMode = botStatus.tradingMode || 'paper';
+    console.log(`[HealthCheck 30m] Avvio verifica periodica stato connessione Alpaca API (Modalità: ${activeMode})...`);
+
+    // 1. Esegui autoDetectCredentials per rinfrescare chiavi e stato probe
+    await autoDetectCredentials().catch(err => {
+      console.warn('[HealthCheck 30m] Avviso durante autoDetectCredentials:', err?.message || err);
+    });
+
+    // 2. Verifica connessione Paper
+    const paperConf = getAlpacaConfig('paper');
+    if (paperConf.isConfigured) {
+      try {
+        const res = await fetch(`${paperConf.baseUrl}/account`, {
+          headers: {
+            'APCA-API-KEY-ID': paperConf.apiKey,
+            'APCA-API-SECRET-KEY': paperConf.secretKey
+          }
+        });
+        if (res.ok) {
+          paperConnected = true;
+          const acc = await res.json();
+          botData.paper.balance = parseFloat(acc.equity || acc.portfolio_value || '0');
+          botData.paper.accountNumber = acc.account_number;
+        } else if (res.status === 401) {
+          console.warn('[HealthCheck 30m] Chiavi Paper non valide o revocate (401).');
+        }
+      } catch (e: any) {
+        console.warn('[HealthCheck 30m] Errore connessione Paper:', e?.message || e);
+      }
+    }
+
+    // 3. Verifica connessione Live
+    const liveConf = getAlpacaConfig('live');
+    if (liveConf.isConfigured) {
+      try {
+        const res = await fetch(`${liveConf.baseUrl}/account`, {
+          headers: {
+            'APCA-API-KEY-ID': liveConf.apiKey,
+            'APCA-API-SECRET-KEY': liveConf.secretKey
+          }
+        });
+        if (res.ok) {
+          liveConnected = true;
+          const acc = await res.json();
+          botData.live.balance = parseFloat(acc.equity || acc.portfolio_value || '0');
+          botData.live.accountNumber = acc.account_number;
+        } else if (res.status === 401) {
+          console.warn('[HealthCheck 30m] Chiavi Live non valide o revocate (401).');
+        }
+      } catch (e: any) {
+        console.warn('[HealthCheck 30m] Errore connessione Live:', e?.message || e);
+      }
+    }
+
+    // 4. Se la connessione è stata ristabilita con successo per il conto configurato, riattiva il bot
+    const wasInactive = !botStatus.active && !botStatus.paperActive && !botStatus.liveActive;
+    const isNowConnected = (activeMode === 'live' && liveConnected) || (activeMode === 'paper' && paperConnected) || paperConnected || liveConnected;
+
+    if (isNowConnected) {
+      if (paperConnected && !botStatus.paperActive && activeMode === 'paper') {
+        botStatus.paperActive = true;
+        reconnected = true;
+      }
+      if (liveConnected && !botStatus.liveActive && activeMode === 'live') {
+        botStatus.liveActive = true;
+        reconnected = true;
+      }
+      botStatus.active = botStatus.paperActive || botStatus.liveActive;
+
+      if (reconnected || wasInactive) {
+        addLog('system', `[🔗 HealthCheck 30m] Collegamento Alpaca API verificato e ristabilito con successo! Bot riavviato e pronto ad operare.`);
+        await saveBotStatus().catch(() => {});
+      } else {
+        addLog('system', `[🔗 HealthCheck 30m] Verifica periodica completata: connessione Alpaca API solida e attiva.`);
+      }
+    } else {
+      addLog('system', `[⚠️ HealthCheck 30m] Collegamento Alpaca non disponibile o disconnesso. Il sistema riproverà la sincronizzazione al prossimo ciclo.`);
+    }
+
+    lastConnectionCheckTime = Date.now();
+  } catch (err: any) {
+    console.error('[HealthCheck 30m] Errore durante il controllo connessione:', err);
+  } finally {
+    isConnectionCheckRunning = false;
+  }
+
+  return { paperConnected, liveConnected, reconnected };
+}
 
 async function executeTradingCycle(force: boolean = false) {
   if (isTradingRunning) {
@@ -4166,6 +4298,16 @@ async function executeTradingCycle(force: boolean = false) {
     const anyActive = botStatus.active || botStatus.paperActive || botStatus.liveActive;
     if (!anyActive && !force) {
       addLog('system', `[System] Ciclo di trading ignorato: nessun bot attivo.`);
+      return;
+    }
+    
+    // Controllo Ciclo di Vita / Ibernazione Bot (Finestra Operativa 09:15 - 16:15 EST)
+    const isOperating = isMarketOperatingHours();
+    const estTime = getEstMarketTime();
+
+    if (!isOperating && !force) {
+      // Fuori orario (prima delle 09:15 EST o dopo le 16:15 EST, o nei weekend): Bot ibernato per non sprecare risorse
+      addLog('system', `[💤 Ibernazione Bot] Mercato chiuso (Orario: ${estTime.timeFormatted}). Bot in ibernazione a consumo zero risorse. Si riattiverà automaticamente 15 minuti prima dell'apertura (09:15 EST).`);
       return;
     }
     
@@ -6368,6 +6510,11 @@ async function executeAlpacaRealtimeCheck() {
   }
   isFastCheckRunning = true;
   try {
+    // Controllo a costo zero risorse: se il mercato è fuori dalla finestra operativa (09:15 - 16:15 EST o weekend), iberna il loop veloce
+    if (!isMarketOperatingHours()) {
+      return;
+    }
+
     const modesToCheck: ('paper' | 'live')[] = [];
     if (botStatus.paperActive || botStatus.tradingMode === 'paper') modesToCheck.push('paper');
     if (botStatus.liveActive || botStatus.tradingMode === 'live') modesToCheck.push('live');
@@ -6598,6 +6745,13 @@ async function startServer() {
       console.error('[Background Fast Check Alpaca Error]', err);
     });
   }, 5000); // Ogni 5 secondi
+
+  // Loop di verifica periodica connessione API Alpaca ogni 30 minuti con riconnessione e riavvio automatico
+  setInterval(() => {
+    verifyAlpacaConnectionAndResume().catch(err => {
+      console.error('[Background 30m HealthCheck Error]', err);
+    });
+  }, 30 * 60 * 1000); // Ogni 30 minuti
 
 
 
