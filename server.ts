@@ -5527,10 +5527,19 @@ Regola Proposta: "Ottimizza il timing di entrata nella finestra ${rangeHourlyRep
 
     if (checkQuotaExceeded()) {
       addLog('system', '[Debriefing Periodico AI] Cooldown attivo: Uso immediato del fallback locale.');
+      let fallbackParamMods: ParameterModificationDetail[] = [];
+      if (fallbackRangeDebrief.suggestedRule) {
+        try {
+          const fbRes = applySuggestedRuleToSystemRules(fallbackRangeDebrief.suggestedRule);
+          fallbackParamMods = fbRes.parameterModifications || [];
+        } catch (e) {}
+      }
       return res.json({ 
         success: true, 
         analysis: fallbackRangeDebrief.analysis, 
-        suggestedRule: fallbackRangeDebrief.suggestedRule 
+        suggestedRule: fallbackRangeDebrief.suggestedRule,
+        parameterModifications: fallbackParamMods,
+        systemRiskRules: botStatus.systemRiskRules
       });
     }
 
@@ -5582,10 +5591,31 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       `${startDate} -> ${endDate}`,
       mode
     );
+
+    // Applicazione automatica immediata della regola proposta alle regole di rischio del sistema
+    let autoParamModifications: ParameterModificationDetail[] = [];
+    if (ensembleResult.suggestedRule) {
+      try {
+        const applyRes = applySuggestedRuleToSystemRules(ensembleResult.suggestedRule);
+        autoParamModifications = applyRes.parameterModifications || [];
+        if (applyRes.updated && applyRes.appliedModifications.length > 0) {
+          addLog('system', `[Debriefing Periodico AI] Regola applicata automaticamente ai parametri di rischio: ${applyRes.appliedModifications.join(', ')}`);
+        }
+      } catch (applyErr: any) {
+        console.warn('[Debriefing Periodico AI] Errore applicazione automatica regola di rischio:', applyErr.message);
+      }
+    }
     
     sendToGoogleSheets({
       eventType: 'range_debrief',
-      data: { startDate, endDate, mode, analysis: ensembleResult.analysis, suggestedRule: ensembleResult.suggestedRule }
+      data: { 
+        startDate, 
+        endDate, 
+        mode, 
+        analysis: ensembleResult.analysis, 
+        suggestedRule: ensembleResult.suggestedRule,
+        parameterModifications: autoParamModifications
+      }
     }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
 
     const providersNote = ensembleResult.participatingProviders?.length > 0 
@@ -5597,7 +5627,9 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       analysis: ensembleResult.analysis, 
       suggestedRule: ensembleResult.suggestedRule,
       top3Corrections: ensembleResult.top3Corrections,
-      participatingProviders: ensembleResult.participatingProviders
+      participatingProviders: ensembleResult.participatingProviders,
+      parameterModifications: autoParamModifications,
+      systemRiskRules: botStatus.systemRiskRules
     });
   } catch (error: any) {
     const message = error.message || String(error);
@@ -5624,14 +5656,31 @@ ${fallbackRangeReport.markdownTable}
         suggestedRule: `Privilegia entrate nelle finestre a maggior costanza (${fallbackRangeReport.bestHourlyWindow?.slotKey || '09:30-10:30 EST'}).`
       };
 
+      let fallbackParamMods: ParameterModificationDetail[] = [];
+      if (fallbackRange.suggestedRule) {
+        try {
+          const fbRes = applySuggestedRuleToSystemRules(fallbackRange.suggestedRule);
+          fallbackParamMods = fbRes.parameterModifications || [];
+        } catch (e) {}
+      }
+
       sendToGoogleSheets({
         eventType: 'range_debrief_fallback',
-        data: { startDate, endDate, mode, analysis: fallbackRange.analysis, suggestedRule: fallbackRange.suggestedRule }
+        data: { 
+          startDate, 
+          endDate, 
+          mode, 
+          analysis: fallbackRange.analysis, 
+          suggestedRule: fallbackRange.suggestedRule,
+          parameterModifications: fallbackParamMods
+        }
       }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
       return res.json({ 
         success: true, 
         analysis: fallbackRange.analysis, 
-        suggestedRule: fallbackRange.suggestedRule 
+        suggestedRule: fallbackRange.suggestedRule,
+        parameterModifications: fallbackParamMods,
+        systemRiskRules: botStatus.systemRiskRules
       });
     }
 

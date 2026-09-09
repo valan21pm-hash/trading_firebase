@@ -1548,7 +1548,22 @@ export default function App() {
   const [rangeEndDate, setRangeEndDate] = useState(() => {
     return new Date().toISOString().split('T')[0];
   });
-  const [rangeDebrief, setRangeDebrief] = useState<{ analysis: string, suggestedRule: string } | null>(null);
+  const [rangeDebrief, setRangeDebrief] = useState<{
+    analysis: string;
+    suggestedRule: string;
+    participatingProviders?: string[];
+    top3Corrections?: string[];
+    parameterModifications?: {
+      ruleId: string;
+      ruleName: string;
+      parameterKey: string;
+      parameterLabel: string;
+      previousValue: any;
+      newValue: any;
+      unit?: string;
+      actionDescription: string;
+    }[];
+  } | null>(null);
   const [rangeLoading, setRangeLoading] = useState(false);
   const [copiedRangeRule, setCopiedRangeRule] = useState(false);
 
@@ -1934,12 +1949,16 @@ export default function App() {
         if (data.success) {
           setRangeDebrief({
             analysis: data.analysis,
-            suggestedRule: data.suggestedRule
+            suggestedRule: data.suggestedRule,
+            participatingProviders: data.participatingProviders,
+            top3Corrections: data.top3Corrections,
+            parameterModifications: data.parameterModifications
           });
           const successMsg = 'Valutazione di periodo generata con successo!';
           setSuccessMessage(successMsg);
           showToast(successMsg, 'success', 'Analisi Periodo');
           setTimeout(() => setSuccessMessage(null), 5000);
+          fetchStatus();
         } else {
           const errMsg = `Impossibile generare la valutazione di periodo: ${data.error || 'Errore sconosciuto'}`;
           setErrorMessage(errMsg);
@@ -3122,44 +3141,138 @@ export default function App() {
 
                 {rangeDebrief ? (
                   <div className="space-y-4">
+                    {rangeDebrief.participatingProviders && rangeDebrief.participatingProviders.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 p-2.5 rounded-lg bg-indigo-50/60 border border-indigo-100 text-xs">
+                        <span className="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          Consenso Multi-IA di Periodo Attivo ({rangeDebrief.participatingProviders.length} Fornitori):
+                        </span>
+                        {rangeDebrief.participatingProviders.map((p, pIdx) => (
+                          <span
+                            key={pIdx}
+                            className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white text-indigo-700 border border-indigo-200 shadow-2xs capitalize font-mono"
+                          >
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-mono flex items-center gap-1.5">
-                        <Activity className="w-3.5 h-3.5 text-slate-400" />
-                        Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
-                      </h4>
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-2 mb-3">
+                        <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                          <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                          Rapporto Valutazione Periodica ({rangeStartDate} / {rangeEndDate})
+                        </h4>
+                        <button
+                          onClick={() => {
+                            const fills = operationsData?.activities?.filter((act: any) => act.activity_type === 'FILL' || act.type === 'fill') || [];
+                            const logicLogs = operationsData?.dailyLogicLogs || [];
+                            const positions = status?.[selectedTab]?.positions || [];
+                            downloadPDFWithOperations(
+                              `Valutazione di Periodo (${selectedTab === 'live' ? 'Reale' : 'Simulazione'})`,
+                              `Periodo dal ${rangeStartDate} al ${rangeEndDate}`,
+                              rangeDebrief.analysis,
+                              rangeDebrief.suggestedRule,
+                              positions,
+                              fills,
+                              logicLogs
+                            );
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-[11px] font-bold border border-slate-300 transition cursor-pointer shadow-2xs"
+                          title="Esporta valutazione di periodo in PDF"
+                        >
+                          <Download className="w-3 h-3 text-indigo-600" />
+                          Esporta PDF
+                        </button>
+                      </div>
                       <div className="markdown-body text-sm text-slate-700 leading-relaxed space-y-2">
                         <ReactMarkdown>{rangeDebrief.analysis}</ReactMarkdown>
                       </div>
                     </div>
 
-                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
-                          <TrendingUp className="w-4 h-4 text-indigo-600" />
-                          Regola di Trading Suggerita per il Periodo
+                    {/* Top 3 Correzioni di Periodo */}
+                    {rangeDebrief.top3Corrections && rangeDebrief.top3Corrections.length > 0 && (
+                      <div className="bg-amber-50/70 border border-amber-200 p-4 rounded-xl space-y-2">
+                        <h4 className="text-xs font-bold text-amber-900 flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                          Top 3 Correzioni Operative di Periodo
                         </h4>
-                        <button
-                          onClick={() => {
-                            if (rangeDebrief) {
-                              navigator.clipboard.writeText(rangeDebrief.suggestedRule);
-                              setCopiedRangeRule(true);
-                              setTimeout(() => setCopiedRangeRule(false), 2000);
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
-                        >
-                          {copiedRangeRule ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-green-600" />
-                              <span className="text-green-700">Copiata!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>Copia Regola</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="space-y-1.5 pt-1">
+                          {rangeDebrief.top3Corrections.map((corr, cIdx) => (
+                            <div key={cIdx} className="flex items-start gap-2 text-xs text-amber-950 font-medium">
+                              <span className="flex items-center justify-center w-4 h-4 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold shrink-0 mt-0.5">
+                                {cIdx + 1}
+                              </span>
+                              <span>{corr}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
+                      <div className="flex justify-between items-center flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4 text-indigo-600" />
+                            Regola di Trading Suggerita per il Periodo
+                          </h4>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <Check className="w-3 h-3" />
+                            Applicata Automaticamente
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (rangeDebrief?.suggestedRule) {
+                                try {
+                                  const res = await fetch('/api/apply-debrief-rules', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ruleText: rangeDebrief.suggestedRule })
+                                  });
+                                  if (res.ok) {
+                                    const resData = await res.json();
+                                    showToast('Regola di periodo ricalibrata e salvata nei parametri di rischio!', 'success', 'Regole Rischio');
+                                    if (resData.parameterModifications) {
+                                      setRangeDebrief(prev => prev ? { ...prev, parameterModifications: resData.parameterModifications } : null);
+                                    }
+                                    fetchStatus();
+                                  }
+                                } catch (e) {}
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition shadow-sm cursor-pointer"
+                            title="Riapplica e sincronizza parametri"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                            <span>Riapplica ai Parametri</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (rangeDebrief) {
+                                navigator.clipboard.writeText(rangeDebrief.suggestedRule);
+                                setCopiedRangeRule(true);
+                                setTimeout(() => setCopiedRangeRule(false), 2000);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                          >
+                            {copiedRangeRule ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-green-600" />
+                                <span className="text-green-700">Copiata!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copia Regola</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div className="relative">
@@ -3170,6 +3283,62 @@ export default function App() {
                           className="w-full bg-white border border-indigo-200 rounded-lg p-2.5 text-xs font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
                         />
                       </div>
+
+                      {/* Modifiche Dettagliate ai Parametri di Rischio per il Debriefing di Periodo */}
+                      {rangeDebrief.parameterModifications && rangeDebrief.parameterModifications.length > 0 && (
+                        <div className="mt-1 bg-white/95 border border-indigo-200/80 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[11px] font-bold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5 font-mono">
+                              <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                              Modifiche Apportate ai Parametri di Rischio (Periodo)
+                            </h5>
+                            <span className="text-[10px] font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                              {rangeDebrief.parameterModifications.length} parametri aggiornati
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {rangeDebrief.parameterModifications.map((mod, mIdx) => (
+                              <div
+                                key={mIdx}
+                                className="bg-slate-50/90 border border-slate-200/80 rounded-lg p-2.5 flex flex-col justify-between text-xs space-y-1.5 hover:border-indigo-300 transition"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <span className="font-bold text-slate-800 text-[11px] block">{mod.parameterLabel || mod.parameterKey}</span>
+                                    <span className="text-[10px] font-mono text-slate-500">{mod.ruleName}</span>
+                                  </div>
+                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-[9px] font-mono shrink-0">
+                                    {mod.parameterKey}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60 text-[11px]">
+                                  <div className="flex items-center gap-1 text-slate-500 font-mono">
+                                    <span className="text-[10px] uppercase text-slate-400">Prima:</span>
+                                    <span className="line-through bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded border border-rose-100">
+                                      {String(mod.previousValue !== undefined ? mod.previousValue : 'N/A')}{mod.unit ? ` ${mod.unit}` : ''}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-400 font-bold">→</span>
+                                  <div className="flex items-center gap-1 text-emerald-700 font-mono font-bold">
+                                    <span className="text-[10px] uppercase text-slate-400 font-normal">Nuovo:</span>
+                                    <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                                      {String(mod.newValue !== undefined ? mod.newValue : 'Attivo')}{mod.unit ? ` ${mod.unit}` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {mod.actionDescription && (
+                                  <p className="text-[10px] text-slate-600 leading-snug italic pt-0.5">
+                                    💡 {mod.actionDescription}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
