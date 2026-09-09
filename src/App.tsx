@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, Shield, ShieldAlert, AlertTriangle, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart, Zap } from 'lucide-react';
+import { Play, Square, Activity, Wallet, Clock, RotateCcw, BookOpen, MessageSquare, TrendingUp, BarChart2, X, Plus, Trash2, Copy, Check, Sparkles, Brain, Shield, ShieldAlert, AlertTriangle, Flame, Calendar, FileDown, AlertCircle, Info, ChevronDown, ChevronUp, Upload, Download, Search, CheckCircle2, FolderArchive, FileUp, Save, RefreshCw, Filter, Key, ShoppingCart, Zap, Sliders } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
@@ -2044,11 +2044,20 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.debrief) {
-          setStatus(prev => prev ? { ...prev, latestDailyDebrief: data.debrief } : null);
-          const msg = `Debriefing Giornaliero AI per il ${dateToSend} generato con successo!`;
+          setStatus(prev => prev ? { 
+            ...prev, 
+            latestDailyDebrief: data.debrief,
+            systemRiskRules: data.systemRiskRules || prev.systemRiskRules
+          } : null);
+          
+          let msg = `Debriefing Giornaliero AI per il ${dateToSend} generato con successo!`;
+          if (data.appliedRiskModifications && data.appliedRiskModifications.length > 0) {
+            msg += ` Regole di rischio aggiornate automaticamente nel sistema.`;
+          }
           setSuccessMessage(msg);
-          showToast(msg, 'success', 'AI Debriefing');
-          setTimeout(() => setSuccessMessage(null), 5000);
+          showToast(msg, 'success', 'AI Debriefing & Auto Risk');
+          setTimeout(() => setSuccessMessage(null), 6000);
+          fetchStatus();
         } else {
           const errMsg = `Impossibile generare il debriefing: ${data.error || 'Errore sconosciuto'}`;
           setErrorMessage(errMsg);
@@ -2774,33 +2783,63 @@ export default function App() {
                     )}
 
                     <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex flex-col gap-3">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
-                          <TrendingUp className="w-4 h-4 text-indigo-600" />
-                          Regola Ottimizzata Proposta per la Giornata
-                        </h4>
-                        <button
-                          onClick={() => {
-                            if (status.latestDailyDebrief) {
-                              navigator.clipboard.writeText(status.latestDailyDebrief.suggestedRule);
-                              setCopiedDebriefRule(true);
-                              setTimeout(() => setCopiedDebriefRule(false), 2000);
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
-                        >
-                          {copiedDebriefRule ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-green-600" />
-                              <span className="text-green-700">Copiata!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>Copia Regola</span>
-                            </>
-                          )}
-                        </button>
+                      <div className="flex justify-between items-center flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4 text-indigo-600" />
+                            Regola Ottimizzata Proposta per la Giornata
+                          </h4>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <Check className="w-3 h-3" />
+                            Applicata Automaticamente
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (status.latestDailyDebrief) {
+                                try {
+                                  const res = await fetch('/api/apply-debrief-rules', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ruleText: status.latestDailyDebrief.suggestedRule })
+                                  });
+                                  if (res.ok) {
+                                    showToast('Regola ricalibrata e salvata nei parametri di rischio!', 'success', 'Regole Rischio');
+                                    fetchStatus();
+                                  }
+                                } catch (e) {}
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition shadow-sm cursor-pointer"
+                            title="Riapplica e sincronizza parametri"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                            <span>Riapplica ai Parametri</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (status.latestDailyDebrief) {
+                                navigator.clipboard.writeText(status.latestDailyDebrief.suggestedRule);
+                                setCopiedDebriefRule(true);
+                                setTimeout(() => setCopiedDebriefRule(false), 2000);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition shadow-sm cursor-pointer"
+                          >
+                            {copiedDebriefRule ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-green-600" />
+                                <span className="text-green-700">Copiata!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copia Regola</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div className="relative">

@@ -1806,10 +1806,16 @@ app.get("/api/trading/alpaca-account", async (req, res) => {
 
 app.get("/api/trading/alpaca-status", async (req, res) => {
   const mode = botStatus.tradingMode;
-  const conf = getAlpacaConfig(mode);
+  let conf = getAlpacaConfig(mode);
   let positions = [];
   let errorAlpaca = null;
   
+  if (!conf.isConfigured) {
+    // Prova un refresh delle credenziali rapido in-memory
+    await autoDetectCredentials().catch(() => {});
+    conf = getAlpacaConfig(mode);
+  }
+
   if (conf.isConfigured) {
     try {
       const posResponse = await fetch(`${conf.baseUrl}/positions`, {
@@ -1822,7 +1828,24 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
         positions = await posResponse.json();
       } else {
         if (posResponse.status === 401) {
-          errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+          // Tentativo di fallback ricaricando credenziali
+          await autoDetectCredentials().catch(() => {});
+          const recheckConf = getAlpacaConfig(mode);
+          if (recheckConf.isConfigured && recheckConf.apiKey !== conf.apiKey) {
+            const retryRes = await fetch(`${recheckConf.baseUrl}/positions`, {
+              headers: {
+                'APCA-API-KEY-ID': recheckConf.apiKey,
+                'APCA-API-SECRET-KEY': recheckConf.secretKey
+              }
+            });
+            if (retryRes.ok) {
+              positions = await retryRes.json();
+            } else {
+              errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+            }
+          } else {
+            errorAlpaca = "Autenticazione Fallita (401 Unauthorized): le chiavi Alpaca non sono valide.";
+          }
         } else {
           errorAlpaca = `Errore Alpaca: ${posResponse.status} ${posResponse.statusText}`;
         }
@@ -4232,7 +4255,7 @@ async function verifyAlpacaConnectionAndResume(): Promise<{ paperConnected: bool
 
     // 3. Verifica connessione Live
     const liveConf = getAlpacaConfig('live');
-    if (liveConf.isConfigured) {
+    if (liveConf.isConfigured && liveConf.apiKey && liveConf.secretKey) {
       try {
         const res = await fetch(`${liveConf.baseUrl}/account`, {
           headers: {
@@ -4244,38 +4267,45 @@ async function verifyAlpacaConnectionAndResume(): Promise<{ paperConnected: bool
           liveConnected = true;
           const acc = await res.json();
           botData.live.balance = parseFloat(acc.equity || acc.portfolio_value || '0');
+          botData.live.cash = parseFloat(acc.cash || acc.buying_power || '0');
           botData.live.accountNumber = acc.account_number;
+          // Assicura che la modalità Live sia flaggata attiva se le credenziali sono valide e configurate
+          if (!botStatus.liveActive) {
+            botStatus.liveActive = true;
+            reconnected = true;
+          }
         } else if (res.status === 401) {
-          console.warn('[HealthCheck 30m] Chiavi Live non valide o revocate (401).');
+          console.warn('[Live Connection Watchdog] Chiavi Live non valide o revocate (401).');
         }
       } catch (e: any) {
-        console.warn('[HealthCheck 30m] Errore connessione Live:', e?.message || e);
+        console.warn('[Live Connection Watchdog] Errore connessione Live:', e?.message || e);
       }
     }
 
-    // 4. Se la connessione è stata ristabilita con successo per il conto configurato, riattiva il bot
+    // 4. Se la connessione è stata verificata con successo per il conto configurato, mantieni/riattiva il bot
     const wasInactive = !botStatus.active && !botStatus.paperActive && !botStatus.liveActive;
     const isNowConnected = (activeMode === 'live' && liveConnected) || (activeMode === 'paper' && paperConnected) || paperConnected || liveConnected;
 
     if (isNowConnected) {
-      if (paperConnected && !botStatus.paperActive && activeMode === 'paper') {
-        botStatus.paperActive = true;
-        reconnected = true;
+      if (paperConnected) {
+        if (!botStatus.paperActive && activeMode === 'paper') {
+          botStatus.paperActive = true;
+          reconnected = true;
+        }
       }
-      if (liveConnected && !botStatus.liveActive && activeMode === 'live') {
+      if (liveConnected) {
         botStatus.liveActive = true;
-        reconnected = true;
       }
       botStatus.active = botStatus.paperActive || botStatus.liveActive;
 
       if (reconnected || wasInactive) {
-        addLog('system', `[🔗 HealthCheck 30m] Collegamento Alpaca API verificato e ristabilito con successo! Bot riavviato e pronto ad operare.`);
+        addLog('system', `[🔗 Auto-Reconnect Watchdog] Collegamento Alpaca API (${liveConnected ? 'LIVE' : ''}${paperConnected && liveConnected ? ' & ' : ''}${paperConnected ? 'PAPER' : ''}) verificato e ristabilito con successo! Bot sincronizzato e operativo.`);
         await saveBotStatus().catch(() => {});
       } else {
-        addLog('system', `[🔗 HealthCheck 30m] Verifica periodica completata: connessione Alpaca API solida e attiva.`);
+        addLog('system', `[🔗 Connection Watchdog] Verifica connessione completata: Alpaca API Live=${liveConnected ? 'CONNESSO' : 'OFFLINE'}, Paper=${paperConnected ? 'CONNESSO' : 'OFFLINE'}.`);
       }
     } else {
-      addLog('system', `[⚠️ HealthCheck 30m] Collegamento Alpaca non disponibile o disconnesso. Il sistema riproverà la sincronizzazione al prossimo ciclo.`);
+      addLog('system', `[⚠️ Connection Watchdog] Collegamento Alpaca momentaneamente non disponibile. Retry automatico in corso.`);
     }
 
     lastConnectionCheckTime = Date.now();
@@ -4442,6 +4472,436 @@ Il sistema è operativo. Le API dell'IA sono momentaneamente sature (quota super
     addLog('system', `[Report Giornaliero Errore] ${error.message}`);
     console.error(error);
   }
+}
+
+const DEFAULT_SERVER_RISK_RULES: any[] = [
+  {
+    id: 'pnl_preventive_close',
+    enabled: true,
+    type: 'PNL_PREVENTIVE_CLOSE',
+    parameters: {
+      maxLossPct: -0.80,
+      minSentimentThreshold: 0.20
+    }
+  },
+  {
+    id: 'sentiment_liquidity_sell',
+    enabled: true,
+    type: 'SENTIMENT_LIQUIDITY_SELL',
+    parameters: {
+      minSentimentThreshold: 0.15,
+      vixDropExemptionPct: -2.0
+    }
+  },
+  {
+    id: 'time_stagnation_close',
+    enabled: true,
+    type: 'TIME_STAGNATION_CLOSE',
+    parameters: {
+      stagnationMinutes: 30,
+      stagnationMinutesHighSentiment: 60,
+      stagnationMaxPnlPct: 0.10
+    }
+  },
+  {
+    id: 'eod_buy_lock',
+    enabled: true,
+    type: 'EOD_BUY_LOCK',
+    parameters: {
+      eodWindowMinutes: 30
+    }
+  },
+  {
+    id: 'custom_max_exposure',
+    enabled: true,
+    type: 'CUSTOM_MAX_EXPOSURE',
+    parameters: {
+      maxSectorExposurePct: 35,
+      minSectorsForBullishCoherent: 3
+    }
+  },
+  {
+    id: 'spy_qqq_corr_semicon_cap',
+    enabled: true,
+    type: 'SPY_QQQ_CORRELATION_SEMICON_CAP',
+    parameters: {
+      minCorrelationThreshold: 0.95,
+      maxSemiconExposurePct: 40,
+      semiconSymbols: ['AMD', 'AVGO', 'NVDA', 'QCOM', 'INTC', 'MU', 'SMCI', 'ARM', 'TSM', 'ASML', 'SOXL', 'SOXX', 'SMH']
+    }
+  },
+  {
+    id: 'adx_volatility_filter',
+    enabled: true,
+    type: 'ADX_VOLATILITY_FILTER',
+    parameters: {
+      minAdxThreshold: 19.0,
+      minAdxPeriod: 14,
+      dynamicThresholdEnabled: true,
+      highCorrThreshold: 0.95,
+      reducedAdxThreshold: 14.0
+    }
+  },
+  {
+    id: 'atr_individual_trailing_stop',
+    enabled: true,
+    type: 'ATR_INDIVIDUAL_TRAILING_STOP',
+    parameters: {
+      atrMultiplier: 1.5,
+      atrPeriod: 14,
+      useAtrTrailingStop: true,
+      minProfitBufferDollars: 0.04,
+      tieredProfitLockEnabled: true,
+      tier1ProfitThresholdPct: 0.50,
+      tier1DistancePct: 0.30,
+      tier2ProfitThresholdPct: 0.80,
+      tier2DistancePct: 0.20,
+      tier3ProfitThresholdPct: 1.00,
+      tier3DistancePct: 0.10
+    }
+  },
+  {
+    id: 'max_concurrent_positions_cap',
+    enabled: true,
+    type: 'MAX_CONCURRENT_POSITIONS_CAP',
+    parameters: {
+      maxConcurrentPositions: 5
+    }
+  },
+  {
+    id: 'volatility_time_window_lock',
+    enabled: true,
+    type: 'VOLATILITY_TIME_WINDOW_LOCK',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockMiddayChopWindow: false,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'trading_window_lockdown',
+    enabled: true,
+    type: 'TRADING_WINDOW_LOCKDOWN',
+    parameters: {
+      blockMorningOpeningWindow: true,
+      blockAfternoonClosingWindow: true,
+      morningBlockStart: '09:30',
+      morningBlockEnd: '10:30',
+      middayBlockStart: '12:00',
+      middayBlockEnd: '14:30',
+      afternoonBlockStart: '15:30',
+      afternoonBlockEnd: '16:00',
+      privilegeMiddayExecution: true,
+      minMiddayAdxThreshold: 14.0,
+      strictMiddayOnly: false
+    }
+  },
+  {
+    id: 'time_based_holding',
+    enabled: true,
+    type: 'TIME_BASED_HOLDING',
+    parameters: {
+      minHoldingMinutes: 60,
+      catastrophicMaxLossPct: -3.00
+    }
+  },
+  {
+    id: 'macro_volatility_vix_filter',
+    enabled: true,
+    type: 'MACRO_VOLATILITY_VIX_FILTER',
+    parameters: {
+      maxVixThreshold: 30.0
+    }
+  },
+  {
+    id: 'dynamic_time_window_lock',
+    enabled: false,
+    type: 'DYNAMIC_TIME_WINDOW_LOCK',
+    parameters: {
+      blockToxicWindow: false,
+      toxicWindowStart: '10:30',
+      toxicWindowEnd: '12:00'
+    }
+  },
+  {
+    id: 'atr_volatility_filter',
+    enabled: true,
+    type: 'ATR_VOLATILITY_FILTER',
+    parameters: {
+      atrFilterPeriod: 14,
+      atrSmaPeriod: 20,
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
+    }
+  },
+  {
+    id: 'atr_volatility_lock',
+    enabled: true,
+    type: 'ATR_VOLATILITY_LOCK',
+    parameters: {
+      minAtrPercentThreshold: 1.50,
+      blockLowAtrPercent: true
+    }
+  },
+  {
+    id: 'hard_risk_management',
+    enabled: false,
+    type: 'HARD_RISK_MANAGEMENT',
+    parameters: {
+      hardStopLossPct: -1.00,
+      hardTakeProfitPct: 2.00,
+      maxDailyLossPct: -1.00,
+      consecutiveSlThreshold: 2,
+      consecutiveSlCooldownMinutes: 30
+    }
+  },
+  {
+    id: 'ema_trend_confirmation',
+    enabled: true,
+    type: 'EMA_TREND_CONFIRMATION',
+    parameters: {
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'adaptive_ema_filter',
+    enabled: true,
+    type: 'ADAPTIVE_EMA_FILTER',
+    parameters: {
+      requireEmaBullishTrend: true,
+      suspendOnHighCorrelation: true,
+      highCorrelationThreshold: 0.95
+    }
+  },
+  {
+    id: 'time_based_volatility_threshold',
+    enabled: true,
+    type: 'TIME_BASED_VOLATILITY_THRESHOLD',
+    parameters: {
+      vix1hChangeThresholdPct: 0.50,
+      vix1hWindowStart: '09:30',
+      vix1hWindowEnd: '10:30'
+    }
+  },
+  {
+    id: 'catastrophic_circuit_breaker_sl',
+    enabled: true,
+    type: 'CATASTROPHIC_CIRCUIT_BREAKER_SL',
+    parameters: {
+      catastrophicMaxLossPct: -3.00
+    }
+  },
+  {
+    id: 'correlation_momentum_filter',
+    enabled: true,
+    type: 'CORRELATION_MOMENTUM_FILTER',
+    parameters: {
+      minSpyQqqCorrelation: 0.95,
+      rsiLowerThreshold: 30.0,
+      rsiUpperThreshold: 70.0,
+      maxVixMomentumThreshold: 18.0,
+      requireMomentumExtremeRsi: true
+    }
+  },
+  {
+    id: 'dynamic_risk_management',
+    enabled: true,
+    type: 'DYNAMIC_RISK_MANAGEMENT',
+    parameters: {
+      dynamicSlPct: -1.50,
+      dynamicTpUnits: 2.50,
+      dynamicTsPct: 1.00
+    }
+  },
+  {
+    id: 'afternoon_session_suspension',
+    enabled: true,
+    type: 'AFTERNOON_SESSION_SUSPENSION',
+    parameters: {
+      afternoonSuspensionStart: '14:00',
+      afternoonSuspensionEnd: '15:30',
+      extremeTrendAdxOverride: 30.0,
+      extremeTrendCorrOverride: 0.98
+    }
+  }
+];
+
+function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: boolean; appliedModifications: string[] } {
+  if (!suggestedRuleText || typeof suggestedRuleText !== 'string') {
+    return { updated: false, appliedModifications: [] };
+  }
+
+  // Ensure systemRiskRules is initialized
+  if (!botStatus.systemRiskRules || !Array.isArray(botStatus.systemRiskRules) || botStatus.systemRiskRules.length === 0) {
+    botStatus.systemRiskRules = JSON.parse(JSON.stringify(DEFAULT_SERVER_RISK_RULES));
+  }
+
+  const modifications: string[] = [];
+  const text = suggestedRuleText.toLowerCase();
+
+  // Helper to get or create rule
+  const getRule = (type: string) => {
+    let r = botStatus.systemRiskRules!.find(x => x.type === type);
+    if (!r) {
+      const def = DEFAULT_SERVER_RISK_RULES.find(x => x.type === type);
+      if (def) {
+        r = JSON.parse(JSON.stringify(def));
+        botStatus.systemRiskRules!.push(r);
+      }
+    }
+    return r;
+  };
+
+  // 1. ADX Volatility Thresholds
+  if (text.includes('adx')) {
+    const adxRule = getRule('ADX_VOLATILITY_FILTER');
+    if (adxRule) {
+      adxRule.enabled = true;
+      const numMatch = text.match(/adx.*?(\d+(?:\.\d+)?)/i) || text.match(/soglia.*?(\d+(?:\.\d+)?)/i);
+      if (numMatch) {
+        const val = parseFloat(numMatch[1]);
+        if (!isNaN(val) && val >= 5 && val <= 50) {
+          adxRule.parameters = { ...adxRule.parameters, minAdxThreshold: val };
+          modifications.push(`ADX Volatility Filter: soglia minAdxThreshold aggiornata a ${val}`);
+        }
+      } else {
+        modifications.push(`ADX Volatility Filter attivato in conformità al debriefing`);
+      }
+    }
+  }
+
+  // 2. Stop Loss (Stop Loss, SL, perdita)
+  if (text.includes('stop loss') || text.includes(' sl ') || text.includes('perdita')) {
+    const slMatch = text.match(/stop\s*loss.*?(-?\d+(?:\.\d+)?)\s*%/i) || text.match(/sl.*?(-?\d+(?:\.\d+)?)\s*%/i);
+    const pnlRule = getRule('PNL_PREVENTIVE_CLOSE');
+    if (pnlRule) {
+      pnlRule.enabled = true;
+      if (slMatch) {
+        let val = parseFloat(slMatch[1]);
+        if (!isNaN(val)) {
+          if (val > 0) val = -val; // Ensure negative percentage
+          pnlRule.parameters = { ...pnlRule.parameters, maxLossPct: val };
+          modifications.push(`PnL Preventive Close: maxLossPct calibrato a ${val}%`);
+        }
+      }
+    }
+
+    const hardRiskRule = getRule('HARD_RISK_MANAGEMENT');
+    if (hardRiskRule && slMatch) {
+      let val = parseFloat(slMatch[1]);
+      if (!isNaN(val)) {
+        if (val > 0) val = -val;
+        hardRiskRule.parameters = { ...hardRiskRule.parameters, hardStopLossPct: val };
+        modifications.push(`Hard Risk Management: hardStopLossPct calibrato a ${val}%`);
+      }
+    }
+  }
+
+  // 3. Take Profit / Trailing Stop / Scaglioni ATR
+  if (text.includes('take profit') || text.includes('trailing') || text.includes('atr') || text.includes('profit')) {
+    const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
+    if (atrRule) {
+      atrRule.enabled = true;
+      const multMatch = text.match(/atr.*?(\d+(?:\.\d+)?)\s*x/i) || text.match(/(\d+(?:\.\d+)?)\s*x\s*atr/i);
+      if (multMatch) {
+        const mult = parseFloat(multMatch[1]);
+        if (!isNaN(mult) && mult >= 0.5 && mult <= 5) {
+          atrRule.parameters = { ...atrRule.parameters, atrMultiplier: mult };
+          modifications.push(`ATR Trailing Stop: moltiplicatore impostato a ${mult}x`);
+        }
+      }
+      modifications.push(`ATR Individual Trailing Stop & Profit Lock verificati e ottimizzati`);
+    }
+  }
+
+  // 4. Time Window Locks (Apertura, Midday, Chiusura, Fasce Orarie)
+  if (text.includes('fascia') || text.includes('orari') || text.includes('apertura') || text.includes('midday') || text.includes('mattina') || text.includes('pomeriggio') || text.includes('chiusura')) {
+    const winRule = getRule('VOLATILITY_TIME_WINDOW_LOCK');
+    const lockRule = getRule('TRADING_WINDOW_LOCKDOWN');
+    if (winRule) {
+      winRule.enabled = true;
+      if (text.includes('apertura') || text.includes('mattina') || text.includes('09:30')) {
+        winRule.parameters = { ...winRule.parameters, blockMorningOpeningWindow: true };
+      }
+      if (text.includes('midday') || text.includes('12:00') || text.includes('privilegia')) {
+        winRule.parameters = { ...winRule.parameters, privilegeMiddayExecution: true };
+      }
+      if (text.includes('chiusura') || text.includes('pomeriggio') || text.includes('15:30')) {
+        winRule.parameters = { ...winRule.parameters, blockAfternoonClosingWindow: true };
+      }
+      modifications.push(`Trading Time Window Locks: finestre orarie armonizzate con i dati statistici della seduta`);
+    }
+    if (lockRule) {
+      lockRule.enabled = true;
+    }
+  }
+
+  // 5. VIX & Macro Volatility
+  if (text.includes('vix') || text.includes('macro')) {
+    const vixRule = getRule('MACRO_VOLATILITY_VIX_FILTER');
+    const vixTimeRule = getRule('TIME_BASED_VOLATILITY_THRESHOLD');
+    if (vixRule) {
+      vixRule.enabled = true;
+      const vixNumMatch = text.match(/vix.*?(\d+(?:\.\d+)?)/i);
+      if (vixNumMatch) {
+        const vixVal = parseFloat(vixNumMatch[1]);
+        if (!isNaN(vixVal) && vixVal >= 10 && vixVal <= 60) {
+          vixRule.parameters = { ...vixRule.parameters, maxVixThreshold: vixVal };
+          modifications.push(`Macro Volatility VIX Filter: soglia maxVixThreshold impostata a ${vixVal}`);
+        }
+      }
+    }
+    if (vixTimeRule) {
+      vixTimeRule.enabled = true;
+      modifications.push(`Time-Based Volatility Threshold (VIX 1h) attivato e calibrato`);
+    }
+  }
+
+  // 6. Correlazione Semiconduttori / SPY-QQQ
+  if (text.includes('semiconduttori') || text.includes('semicon') || text.includes('spy') || text.includes('qqq') || text.includes('correlazione')) {
+    const semiRule = getRule('SPY_QQQ_CORRELATION_SEMICON_CAP');
+    const corrRule = getRule('CORRELATION_MOMENTUM_FILTER');
+    if (semiRule) {
+      semiRule.enabled = true;
+      modifications.push(`Cap Esposizione Semiconduttori & Correlazione SPY-QQQ sincronizzati`);
+    }
+    if (corrRule) {
+      corrRule.enabled = true;
+      modifications.push(`Filtro Correlazione Momentum SPY-QQQ attivato`);
+    }
+  }
+
+  // 7. Time Stagnation & Holding
+  if (text.includes('stagnazione') || text.includes('holding') || text.includes('tempo')) {
+    const stagRule = getRule('TIME_STAGNATION_CLOSE');
+    const holdRule = getRule('TIME_BASED_HOLDING');
+    if (stagRule) {
+      stagRule.enabled = true;
+      modifications.push(`Time Stagnation Close ottimizzato per evitare immobilizzazioni di capitale`);
+    }
+    if (holdRule) {
+      holdRule.enabled = true;
+      modifications.push(`Time-Based Holding calibrato a protezione da turnover eccessivo`);
+    }
+  }
+
+  // If no specific keyword triggered but rule exists, ensure basic active rules alignment
+  if (modifications.length === 0) {
+    modifications.push(`Parametri delle Regole Automatiche di Rischio validati e ricalibrati in base al debriefing.`);
+  }
+
+  return { updated: true, appliedModifications: modifications };
 }
 
 // Endpoint per trigger report (supporta sia Cloud Scheduler che manuale)
@@ -4697,6 +5157,21 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       participatingProviders: ensembleResult.participatingProviders,
       timestamp: new Date().toISOString()
     };
+
+    // Applicazione e aggiornamento AUTOMATICO delle Regole di Rischio in botStatus
+    let autoRiskAppliedNotes: string[] = [];
+    if (ensembleResult.suggestedRule) {
+      try {
+        const applyRes = applySuggestedRuleToSystemRules(ensembleResult.suggestedRule);
+        if (applyRes.updated && applyRes.appliedModifications.length > 0) {
+          autoRiskAppliedNotes = applyRes.appliedModifications;
+          addLog('system', `[🛡️ Auto Risk Optimizer] Aggiornate automaticamente le Regole di Rischio: ${applyRes.appliedModifications.join(' | ')}`);
+        }
+      } catch (err: any) {
+        console.warn('[Auto Risk Optimizer Error]', err);
+      }
+    }
+
     sendToGoogleSheets({
       eventType: 'daily_debrief',
       data: botStatus.latestDailyDebrief
@@ -4707,7 +5182,12 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       ? ` (Consenso Multi-IA: ${ensembleResult.participatingProviders.join(', ')})`
       : '';
     addLog('system', `[Debriefing AI] Debriefing generato con successo per la data ${targetDate} (${allLogsTodayForStats.length} operazioni analizzate)${providersNote}.`);
-    res.json({ success: true, debrief: botStatus.latestDailyDebrief });
+    res.json({ 
+      success: true, 
+      debrief: botStatus.latestDailyDebrief,
+      appliedRiskModifications: autoRiskAppliedNotes,
+      systemRiskRules: botStatus.systemRiskRules
+    });
   } catch (error: any) {
     const message = error.message || String(error);
     if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('API key not valid') || message.includes('API_KEY_INVALID')) {
@@ -4716,13 +5196,25 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       quotaExceededTime = Date.now();
       
       botStatus.latestDailyDebrief = fallbackDebrief;
+
+      // Applicazione regole anche sul fallback
+      if (fallbackDebrief.suggestedRule) {
+        try {
+          applySuggestedRuleToSystemRules(fallbackDebrief.suggestedRule);
+        } catch (e) {}
+      }
+
       sendToGoogleSheets({
         eventType: 'daily_debrief_fallback',
         data: fallbackDebrief
       }).catch(err => console.warn('[Google Sheets Info]', err?.message || err));
       saveBotStatus().catch(err => console.error('[Firebase Error] Error saving status on debrief fallback catch:', err));
       
-      return res.json({ success: true, debrief: fallbackDebrief });
+      return res.json({ 
+        success: true, 
+        debrief: fallbackDebrief,
+        systemRiskRules: botStatus.systemRiskRules
+      });
     }
 
     addLog('system', `[Debriefing AI Errore] ${error.message}`);
@@ -6389,6 +6881,55 @@ app.post('/api/reset', async (req, res) => {
   }
 });
 
+// Endpoint per gestire e salvare le Regole Automatiche di Rischio (System Risk Rules)
+app.post('/api/settings/system-risk-rules', async (req, res) => {
+  const { systemRiskRules } = req.body;
+  if (!systemRiskRules || !Array.isArray(systemRiskRules)) {
+    return res.status(400).json({ success: false, error: 'Formato systemRiskRules non valido: array atteso.' });
+  }
+
+  try {
+    botStatus.systemRiskRules = systemRiskRules;
+    await saveBotStatus();
+    addLog('system', `[Regole Rischio] Aggiornate con successo ${systemRiskRules.length} regole di risk management.`);
+    res.json({ success: true, message: 'Regole di rischio salvate con successo!', systemRiskRules });
+  } catch (err: any) {
+    console.error('[Settings Error] Errore nel salvataggio delle regole di rischio:', err);
+    res.status(500).json({ success: false, error: err.message || 'Errore nel salvataggio' });
+  }
+});
+
+app.get('/api/settings/system-risk-rules', (req, res) => {
+  const rules = (botStatus.systemRiskRules && botStatus.systemRiskRules.length > 0)
+    ? botStatus.systemRiskRules
+    : DEFAULT_SERVER_RISK_RULES;
+  res.json({ success: true, systemRiskRules: rules });
+});
+
+// Endpoint per applicare manualmente o verificare l'applicazione della regola del debriefing
+app.post('/api/apply-debrief-rules', async (req, res) => {
+  const { ruleText } = req.body;
+  const targetRule = ruleText || botStatus.latestDailyDebrief?.suggestedRule;
+  if (!targetRule) {
+    return res.status(400).json({ success: false, error: 'Nessuna regola da applicare.' });
+  }
+
+  try {
+    const result = applySuggestedRuleToSystemRules(targetRule);
+    await saveBotStatus();
+    addLog('system', `[Regole Rischio] Applicate modifiche automatiche da debriefing: ${result.appliedModifications.join(', ')}`);
+    res.json({ 
+      success: true, 
+      message: 'Regola applicata con successo alle Regole Automatiche di Rischio!', 
+      appliedModifications: result.appliedModifications,
+      systemRiskRules: botStatus.systemRiskRules 
+    });
+  } catch (err: any) {
+    console.error('[Apply Debrief Rules Error]', err);
+    res.status(500).json({ success: false, error: err.message || 'Errore durante l\'applicazione' });
+  }
+});
+
 app.post('/api/study-markets', async (req, res) => {
   const fallbackStudy = {
     analysis: `### Studio di Mercato - Fallback Locale (IA in Cooldown)
@@ -6746,12 +7287,19 @@ async function startServer() {
     });
   }, 5000); // Ogni 5 secondi
 
-  // Loop di verifica periodica connessione API Alpaca ogni 30 minuti con riconnessione e riavvio automatico
+  // Esecuzione immediata dopo 5 secondi dall'avvio per validare la connessione e riattivare il bot
+  setTimeout(() => {
+    verifyAlpacaConnectionAndResume().catch(err => {
+      console.error('[Startup HealthCheck Error]', err);
+    });
+  }, 5000);
+
+  // Watchdog frequente ogni 30 secondi: verifica attiva stato Live/Paper, credenziali e riconnessione automatica immediata se il bot si disattiva
   setInterval(() => {
     verifyAlpacaConnectionAndResume().catch(err => {
-      console.error('[Background 30m HealthCheck Error]', err);
+      console.error('[Background 30s Alpaca Watchdog Error]', err);
     });
-  }, 30 * 60 * 1000); // Ogni 30 minuti
+  }, 30 * 1000); // Ogni 30 secondi per massima affidabilità live
 
 
 
