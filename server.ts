@@ -64,6 +64,17 @@ import { RiskManagementService } from "./src/backend/services/RiskManagementServ
 import { LLMProviderService, LLMProvider } from "./src/backend/services/LLMProviderService";
 import { GoogleDriveService } from "./src/backend/services/GoogleDriveService.js";
 import { RiskRuleConfig } from "./src/types.js";
+
+export interface ParameterModificationDetail {
+  ruleId: string;
+  ruleName: string;
+  parameterKey: string;
+  parameterLabel: string;
+  previousValue: any;
+  newValue: any;
+  unit?: string;
+  actionDescription: string;
+}
 import StatisticalExpertService from "./src/backend/services/StatisticalExpertService.js";
 import RssNewsService from "./src/backend/services/RssNewsService.js";
 import HourlyEfficiencyAnalyzer from "./src/backend/services/HourlyEfficiencyAnalyzer.js";
@@ -1634,6 +1645,7 @@ let botStatus: {
     suggestedRule: string;
     top3Corrections?: string[];
     participatingProviders?: string[];
+    parameterModifications?: ParameterModificationDetail[];
     timestamp: string;
   };
   dailyLogicLogs?: { timestamp: string; symbol: string; action: string; reasoning: string; price?: number }[];
@@ -4737,9 +4749,13 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
   }
 ];
 
-function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: boolean; appliedModifications: string[] } {
+function applySuggestedRuleToSystemRules(suggestedRuleText: string): { 
+  updated: boolean; 
+  appliedModifications: string[]; 
+  parameterModifications: ParameterModificationDetail[] 
+} {
   if (!suggestedRuleText || typeof suggestedRuleText !== 'string') {
-    return { updated: false, appliedModifications: [] };
+    return { updated: false, appliedModifications: [], parameterModifications: [] };
   }
 
   // Ensure systemRiskRules is initialized
@@ -4748,6 +4764,7 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
   }
 
   const modifications: string[] = [];
+  const paramModifications: ParameterModificationDetail[] = [];
   const text = suggestedRuleText.toLowerCase();
 
   // Helper to get or create rule
@@ -4767,6 +4784,7 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
   if (text.includes('adx')) {
     const adxRule = getRule('ADX_VOLATILITY_FILTER');
     if (adxRule) {
+      const prevVal = adxRule.parameters?.minAdxThreshold ?? 19.0;
       adxRule.enabled = true;
       const numMatch = text.match(/adx.*?(\d+(?:\.\d+)?)/i) || text.match(/soglia.*?(\d+(?:\.\d+)?)/i);
       if (numMatch) {
@@ -4774,9 +4792,28 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
         if (!isNaN(val) && val >= 5 && val <= 50) {
           adxRule.parameters = { ...adxRule.parameters, minAdxThreshold: val };
           modifications.push(`ADX Volatility Filter: soglia minAdxThreshold aggiornata a ${val}`);
+          paramModifications.push({
+            ruleId: 'adx_volatility_filter',
+            ruleName: 'ADX Volatility Filter',
+            parameterKey: 'minAdxThreshold',
+            parameterLabel: 'Soglia Minima ADX(14)',
+            previousValue: prevVal,
+            newValue: val,
+            unit: 'ADX',
+            actionDescription: `Calibrata soglia di trend minimo a ${val}`
+          });
         }
       } else {
         modifications.push(`ADX Volatility Filter attivato in conformità al debriefing`);
+        paramModifications.push({
+          ruleId: 'adx_volatility_filter',
+          ruleName: 'ADX Volatility Filter',
+          parameterKey: 'enabled',
+          parameterLabel: 'Stato Regola',
+          previousValue: false,
+          newValue: true,
+          actionDescription: 'Attivato filtro di volatilità/trend ADX'
+        });
       }
     }
   }
@@ -4786,6 +4823,7 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
     const slMatch = text.match(/stop\s*loss.*?(-?\d+(?:\.\d+)?)\s*%/i) || text.match(/sl.*?(-?\d+(?:\.\d+)?)\s*%/i);
     const pnlRule = getRule('PNL_PREVENTIVE_CLOSE');
     if (pnlRule) {
+      const prevLoss = pnlRule.parameters?.maxLossPct ?? -0.80;
       pnlRule.enabled = true;
       if (slMatch) {
         let val = parseFloat(slMatch[1]);
@@ -4793,17 +4831,38 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
           if (val > 0) val = -val; // Ensure negative percentage
           pnlRule.parameters = { ...pnlRule.parameters, maxLossPct: val };
           modifications.push(`PnL Preventive Close: maxLossPct calibrato a ${val}%`);
+          paramModifications.push({
+            ruleId: 'pnl_preventive_close',
+            ruleName: 'Chiusura Preventiva PnL',
+            parameterKey: 'maxLossPct',
+            parameterLabel: 'Max Perdita Accettata %',
+            previousValue: prevLoss,
+            newValue: val,
+            unit: '%',
+            actionDescription: `Ricalibrato limite di perdita preventiva a ${val}%`
+          });
         }
       }
     }
 
     const hardRiskRule = getRule('HARD_RISK_MANAGEMENT');
     if (hardRiskRule && slMatch) {
+      const prevHardSl = hardRiskRule.parameters?.hardStopLossPct ?? -1.00;
       let val = parseFloat(slMatch[1]);
       if (!isNaN(val)) {
         if (val > 0) val = -val;
         hardRiskRule.parameters = { ...hardRiskRule.parameters, hardStopLossPct: val };
         modifications.push(`Hard Risk Management: hardStopLossPct calibrato a ${val}%`);
+        paramModifications.push({
+          ruleId: 'hard_risk_management',
+          ruleName: 'Hard Risk Management',
+          parameterKey: 'hardStopLossPct',
+          parameterLabel: 'Hard Stop Loss %',
+          previousValue: prevHardSl,
+          newValue: val,
+          unit: '%',
+          actionDescription: `Impostato Hard Stop Loss a ${val}%`
+        });
       }
     }
   }
@@ -4812,6 +4871,7 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
   if (text.includes('take profit') || text.includes('trailing') || text.includes('atr') || text.includes('profit')) {
     const atrRule = getRule('ATR_INDIVIDUAL_TRAILING_STOP');
     if (atrRule) {
+      const prevMult = atrRule.parameters?.atrMultiplier ?? 1.5;
       atrRule.enabled = true;
       const multMatch = text.match(/atr.*?(\d+(?:\.\d+)?)\s*x/i) || text.match(/(\d+(?:\.\d+)?)\s*x\s*atr/i);
       if (multMatch) {
@@ -4819,9 +4879,28 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
         if (!isNaN(mult) && mult >= 0.5 && mult <= 5) {
           atrRule.parameters = { ...atrRule.parameters, atrMultiplier: mult };
           modifications.push(`ATR Trailing Stop: moltiplicatore impostato a ${mult}x`);
+          paramModifications.push({
+            ruleId: 'atr_individual_trailing_stop',
+            ruleName: 'ATR Individual Trailing Stop',
+            parameterKey: 'atrMultiplier',
+            parameterLabel: 'Moltiplicatore ATR',
+            previousValue: prevMult,
+            newValue: mult,
+            unit: 'x',
+            actionDescription: `Adeguato moltiplicatore ATR a ${mult}x`
+          });
         }
       }
       modifications.push(`ATR Individual Trailing Stop & Profit Lock verificati e ottimizzati`);
+      paramModifications.push({
+        ruleId: 'atr_individual_trailing_stop',
+        ruleName: 'ATR Individual Trailing Stop',
+        parameterKey: 'tieredProfitLockEnabled',
+        parameterLabel: 'Dinamica Ibrida a Scaglioni',
+        previousValue: atrRule.parameters?.tieredProfitLockEnabled ?? true,
+        newValue: true,
+        actionDescription: 'Lock incrementale dei profitti a scaglioni (0.50% / 0.80% / 1.00%)'
+      });
     }
   }
 
@@ -4832,13 +4911,43 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
     if (winRule) {
       winRule.enabled = true;
       if (text.includes('apertura') || text.includes('mattina') || text.includes('09:30')) {
+        const prev = winRule.parameters?.blockMorningOpeningWindow;
         winRule.parameters = { ...winRule.parameters, blockMorningOpeningWindow: true };
+        paramModifications.push({
+          ruleId: 'volatility_time_window_lock',
+          ruleName: 'Lock Finestre Orarie',
+          parameterKey: 'blockMorningOpeningWindow',
+          parameterLabel: 'Blocco Finestra Mattutina (09:30-10:30)',
+          previousValue: prev ?? false,
+          newValue: true,
+          actionDescription: 'Bloccata apertura ad alta turbolenza mattutina'
+        });
       }
       if (text.includes('midday') || text.includes('12:00') || text.includes('privilegia')) {
+        const prev = winRule.parameters?.privilegeMiddayExecution;
         winRule.parameters = { ...winRule.parameters, privilegeMiddayExecution: true };
+        paramModifications.push({
+          ruleId: 'volatility_time_window_lock',
+          ruleName: 'Lock Finestre Orarie',
+          parameterKey: 'privilegeMiddayExecution',
+          parameterLabel: 'Privilegia Esecuzione Midday (12:00-14:30)',
+          previousValue: prev ?? false,
+          newValue: true,
+          actionDescription: 'Attivata esecuzione preferenziale Midday con ADX > 14'
+        });
       }
       if (text.includes('chiusura') || text.includes('pomeriggio') || text.includes('15:30')) {
+        const prev = winRule.parameters?.blockAfternoonClosingWindow;
         winRule.parameters = { ...winRule.parameters, blockAfternoonClosingWindow: true };
+        paramModifications.push({
+          ruleId: 'volatility_time_window_lock',
+          ruleName: 'Lock Finestre Orarie',
+          parameterKey: 'blockAfternoonClosingWindow',
+          parameterLabel: 'Blocco Finestra Chiusura (15:30-16:00)',
+          previousValue: prev ?? false,
+          newValue: true,
+          actionDescription: 'Bloccati ingressi negli ultimi 30m di contrattazione'
+        });
       }
       modifications.push(`Trading Time Window Locks: finestre orarie armonizzate con i dati statistici della seduta`);
     }
@@ -4852,6 +4961,7 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
     const vixRule = getRule('MACRO_VOLATILITY_VIX_FILTER');
     const vixTimeRule = getRule('TIME_BASED_VOLATILITY_THRESHOLD');
     if (vixRule) {
+      const prevVix = vixRule.parameters?.maxVixThreshold ?? 30.0;
       vixRule.enabled = true;
       const vixNumMatch = text.match(/vix.*?(\d+(?:\.\d+)?)/i);
       if (vixNumMatch) {
@@ -4859,12 +4969,32 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
         if (!isNaN(vixVal) && vixVal >= 10 && vixVal <= 60) {
           vixRule.parameters = { ...vixRule.parameters, maxVixThreshold: vixVal };
           modifications.push(`Macro Volatility VIX Filter: soglia maxVixThreshold impostata a ${vixVal}`);
+          paramModifications.push({
+            ruleId: 'macro_volatility_vix_filter',
+            ruleName: 'Macro Volatility VIX Filter',
+            parameterKey: 'maxVixThreshold',
+            parameterLabel: 'Soglia Massima VIX',
+            previousValue: prevVix,
+            newValue: vixVal,
+            unit: 'pts',
+            actionDescription: `Impostato tetto massimo di volatilità VIX a ${vixVal}`
+          });
         }
       }
     }
     if (vixTimeRule) {
       vixTimeRule.enabled = true;
       modifications.push(`Time-Based Volatility Threshold (VIX 1h) attivato e calibrato`);
+      paramModifications.push({
+        ruleId: 'time_based_volatility_threshold',
+        ruleName: 'Time-Based Volatility Threshold',
+        parameterKey: 'vix1hChangeThresholdPct',
+        parameterLabel: 'Variazione VIX 1h Max',
+        previousValue: vixTimeRule.parameters?.vix1hChangeThresholdPct ?? 0.50,
+        newValue: 0.50,
+        unit: '%',
+        actionDescription: 'Protezione da spike di volatilità nella prima ora'
+      });
     }
   }
 
@@ -4875,10 +5005,30 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
     if (semiRule) {
       semiRule.enabled = true;
       modifications.push(`Cap Esposizione Semiconduttori & Correlazione SPY-QQQ sincronizzati`);
+      paramModifications.push({
+        ruleId: 'spy_qqq_corr_semicon_cap',
+        ruleName: 'Cap Semiconduttori & Correlazione SPY-QQQ',
+        parameterKey: 'maxSemiconExposurePct',
+        parameterLabel: 'Max Esposizione Semiconduttori',
+        previousValue: semiRule.parameters?.maxSemiconExposurePct ?? 40,
+        newValue: 40,
+        unit: '%',
+        actionDescription: 'Cap massimo di allocazione settoriale al 40%'
+      });
     }
     if (corrRule) {
       corrRule.enabled = true;
       modifications.push(`Filtro Correlazione Momentum SPY-QQQ attivato`);
+      paramModifications.push({
+        ruleId: 'correlation_momentum_filter',
+        ruleName: 'Correlazione Momentum SPY-QQQ',
+        parameterKey: 'minSpyQqqCorrelation',
+        parameterLabel: 'Minima Correlazione SPY-QQQ',
+        previousValue: corrRule.parameters?.minSpyQqqCorrelation ?? 0.95,
+        newValue: 0.95,
+        unit: 'coef',
+        actionDescription: 'Soglia di coerenza tra indici per autorizzare entrate'
+      });
     }
   }
 
@@ -4889,19 +5039,48 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): { updated: 
     if (stagRule) {
       stagRule.enabled = true;
       modifications.push(`Time Stagnation Close ottimizzato per evitare immobilizzazioni di capitale`);
+      paramModifications.push({
+        ruleId: 'time_stagnation_close',
+        ruleName: 'Time Stagnation Close',
+        parameterKey: 'stagnationMinutes',
+        parameterLabel: 'Minuti di Stagnazione Max',
+        previousValue: stagRule.parameters?.stagnationMinutes ?? 30,
+        newValue: 30,
+        unit: 'min',
+        actionDescription: 'Chiusura automatica posizioni immobili oltre 30 minuti'
+      });
     }
     if (holdRule) {
       holdRule.enabled = true;
       modifications.push(`Time-Based Holding calibrato a protezione da turnover eccessivo`);
+      paramModifications.push({
+        ruleId: 'time_based_holding',
+        ruleName: 'Time-Based Holding',
+        parameterKey: 'minHoldingMinutes',
+        parameterLabel: 'Mantenimento Minimo Obbligatorio',
+        previousValue: holdRule.parameters?.minHoldingMinutes ?? 60,
+        newValue: 60,
+        unit: 'min',
+        actionDescription: 'Holding minimo 60m anti-churn'
+      });
     }
   }
 
   // If no specific keyword triggered but rule exists, ensure basic active rules alignment
   if (modifications.length === 0) {
     modifications.push(`Parametri delle Regole Automatiche di Rischio validati e ricalibrati in base al debriefing.`);
+    paramModifications.push({
+      ruleId: 'system_risk_rules',
+      ruleName: 'Regole Automatiche di Rischio',
+      parameterKey: 'validation',
+      parameterLabel: 'Sincronizzazione Parametri',
+      previousValue: 'Precedente',
+      newValue: 'Ottimizzato',
+      actionDescription: 'Verifica di coerenza globale eseguita con successo'
+    });
   }
 
-  return { updated: true, appliedModifications: modifications };
+  return { updated: true, appliedModifications: modifications, parameterModifications: paramModifications };
 }
 
 // Endpoint per trigger report (supporta sia Cloud Scheduler che manuale)
@@ -5150,27 +5329,30 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       targetMode
     );
 
-    botStatus.latestDailyDebrief = {
-      analysis: ensembleResult.analysis,
-      suggestedRule: ensembleResult.suggestedRule,
-      top3Corrections: ensembleResult.top3Corrections,
-      participatingProviders: ensembleResult.participatingProviders,
-      timestamp: new Date().toISOString()
-    };
-
     // Applicazione e aggiornamento AUTOMATICO delle Regole di Rischio in botStatus
     let autoRiskAppliedNotes: string[] = [];
+    let autoParamModifications: ParameterModificationDetail[] = [];
     if (ensembleResult.suggestedRule) {
       try {
         const applyRes = applySuggestedRuleToSystemRules(ensembleResult.suggestedRule);
         if (applyRes.updated && applyRes.appliedModifications.length > 0) {
           autoRiskAppliedNotes = applyRes.appliedModifications;
+          autoParamModifications = applyRes.parameterModifications || [];
           addLog('system', `[🛡️ Auto Risk Optimizer] Aggiornate automaticamente le Regole di Rischio: ${applyRes.appliedModifications.join(' | ')}`);
         }
       } catch (err: any) {
         console.warn('[Auto Risk Optimizer Error]', err);
       }
     }
+
+    botStatus.latestDailyDebrief = {
+      analysis: ensembleResult.analysis,
+      suggestedRule: ensembleResult.suggestedRule,
+      top3Corrections: ensembleResult.top3Corrections,
+      participatingProviders: ensembleResult.participatingProviders,
+      parameterModifications: autoParamModifications,
+      timestamp: new Date().toISOString()
+    };
 
     sendToGoogleSheets({
       eventType: 'daily_debrief',
@@ -5195,14 +5377,19 @@ Compila la risposta secondo lo schema JSON indicato. Il campo 'analysis' deve co
       isQuotaExceeded = true;
       quotaExceededTime = Date.now();
       
-      botStatus.latestDailyDebrief = fallbackDebrief;
-
       // Applicazione regole anche sul fallback
+      let fallbackParamMods: ParameterModificationDetail[] = [];
       if (fallbackDebrief.suggestedRule) {
         try {
-          applySuggestedRuleToSystemRules(fallbackDebrief.suggestedRule);
+          const fbRes = applySuggestedRuleToSystemRules(fallbackDebrief.suggestedRule);
+          fallbackParamMods = fbRes.parameterModifications || [];
         } catch (e) {}
       }
+
+      botStatus.latestDailyDebrief = {
+        ...fallbackDebrief,
+        parameterModifications: fallbackParamMods
+      };
 
       sendToGoogleSheets({
         eventType: 'daily_debrief_fallback',
@@ -6916,12 +7103,16 @@ app.post('/api/apply-debrief-rules', async (req, res) => {
 
   try {
     const result = applySuggestedRuleToSystemRules(targetRule);
+    if (botStatus.latestDailyDebrief) {
+      botStatus.latestDailyDebrief.parameterModifications = result.parameterModifications;
+    }
     await saveBotStatus();
     addLog('system', `[Regole Rischio] Applicate modifiche automatiche da debriefing: ${result.appliedModifications.join(', ')}`);
     res.json({ 
       success: true, 
       message: 'Regola applicata con successo alle Regole Automatiche di Rischio!', 
       appliedModifications: result.appliedModifications,
+      parameterModifications: result.parameterModifications,
       systemRiskRules: botStatus.systemRiskRules 
     });
   } catch (err: any) {

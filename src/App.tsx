@@ -2850,6 +2850,62 @@ export default function App() {
                           className="w-full bg-white border border-indigo-200 rounded-lg p-2.5 text-xs font-mono text-indigo-950 focus:outline-none resize-none shadow-sm"
                         />
                       </div>
+
+                      {/* Modifiche Dettagliate ai Parametri di Rischio */}
+                      {status.latestDailyDebrief.parameterModifications && status.latestDailyDebrief.parameterModifications.length > 0 && (
+                        <div className="mt-1 bg-white/95 border border-indigo-200/80 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[11px] font-bold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5 font-mono">
+                              <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                              Modifiche Apportate ai Parametri di Rischio
+                            </h5>
+                            <span className="text-[10px] font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                              {status.latestDailyDebrief.parameterModifications.length} parametri aggiornati
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {status.latestDailyDebrief.parameterModifications.map((mod, mIdx) => (
+                              <div
+                                key={mIdx}
+                                className="bg-slate-50/90 border border-slate-200/80 rounded-lg p-2.5 flex flex-col justify-between text-xs space-y-1.5 hover:border-indigo-300 transition"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <span className="font-bold text-slate-800 text-[11px] block">{mod.parameterLabel || mod.parameterKey}</span>
+                                    <span className="text-[10px] font-mono text-slate-500">{mod.ruleName}</span>
+                                  </div>
+                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-[9px] font-mono shrink-0">
+                                    {mod.parameterKey}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60 text-[11px]">
+                                  <div className="flex items-center gap-1 text-slate-500 font-mono">
+                                    <span className="text-[10px] uppercase text-slate-400">Prima:</span>
+                                    <span className="line-through bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded border border-rose-100">
+                                      {String(mod.previousValue !== undefined ? mod.previousValue : 'N/A')}{mod.unit ? ` ${mod.unit}` : ''}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-400 font-bold">→</span>
+                                  <div className="flex items-center gap-1 text-emerald-700 font-mono font-bold">
+                                    <span className="text-[10px] uppercase text-slate-400 font-normal">Nuovo:</span>
+                                    <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                                      {String(mod.newValue !== undefined ? mod.newValue : 'Attivo')}{mod.unit ? ` ${mod.unit}` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {mod.actionDescription && (
+                                  <p className="text-[10px] text-slate-600 leading-snug italic pt-0.5">
+                                    💡 {mod.actionDescription}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (

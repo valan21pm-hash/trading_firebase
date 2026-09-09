@@ -238,6 +238,16 @@ export interface BotStatus {
     suggestedRule: string;
     top3Corrections?: string[];
     participatingProviders?: string[];
+    parameterModifications?: {
+      ruleId: string;
+      ruleName: string;
+      parameterKey: string;
+      parameterLabel: string;
+      previousValue: any;
+      newValue: any;
+      unit?: string;
+      actionDescription: string;
+    }[];
     timestamp: string;
   };
   defaultTP?: number;
