@@ -174,7 +174,10 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       atrFilterPeriod: 14,
       atrSmaPeriod: 20,
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -183,7 +186,10 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     type: 'ATR_VOLATILITY_LOCK',
     parameters: {
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -1725,13 +1731,13 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            <strong>Protezione Anti-Consolidamento:</strong> Sospensione automatica dell&apos;operatività su asset o benchmark che presentano un <strong>ATR(14) normalizzato sul prezzo &lt; 1.50%</strong>. Previene l&apos;incastro del capitale in fasi di lateralità asfittica e bassissimo movimento operativo.
+            <strong>Protezione Anti-Consolidamento &amp; Scaling Dinamico:</strong> Sospensione automatica dell&apos;operatività su asset che presentano un <strong>ATR(14) normalizzato sul prezzo &lt; 1.50%</strong>. Se la correlazione a 1h <strong>SPY-QQQ è &ge; 0.95</strong>, la soglia viene ridotta dinamicamente all&apos;<strong>1.00%</strong> (Dynamic Volatility Scaling) per cogliere i trend direzionali corali.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Soglia Minima ATR Percentuale (ATR / Prezzo * 100):</span>
+                <span>Soglia Base ATR Percentuale (Standard):</span>
                 <span className="font-mono text-purple-600 font-bold">{(atrLockRule.parameters.minAtrPercentThreshold ?? 1.50).toFixed(2)}%</span>
               </div>
               <input
@@ -1749,16 +1755,52 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               />
             </div>
 
+            <div className="pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-medium text-slate-700">Dynamic Volatility Scaling (Corr &ge; 0.95):</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={atrLockRule.parameters.dynamicAtrScalingEnabled ?? true}
+                    onChange={(e) => updateRule('ATR_VOLATILITY_LOCK', r => ({
+                      ...r,
+                      parameters: { ...r.parameters, dynamicAtrScalingEnabled: e.target.checked }
+                    }))}
+                    disabled={!atrLockRule.enabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-7 h-3.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
+              <div className="flex justify-between text-slate-600 text-[11px] mb-1">
+                <span>Soglia Ridotta con SPY-QQQ &ge; 0.95:</span>
+                <span className="font-mono text-purple-600 font-bold">{(atrLockRule.parameters.dynamicAtrReducedThreshold ?? 1.00).toFixed(2)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.50"
+                max="1.50"
+                step="0.05"
+                value={atrLockRule.parameters.dynamicAtrReducedThreshold ?? 1.00}
+                onChange={(e) => updateRule('ATR_VOLATILITY_LOCK', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, dynamicAtrReducedThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!atrLockRule.enabled || !(atrLockRule.parameters.dynamicAtrScalingEnabled ?? true)}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+              />
+            </div>
+
             <div className="flex items-center justify-between p-2 rounded bg-purple-50/50 border border-purple-100">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
                 <div>
-                  <span className="font-semibold text-slate-800">Filtro Consolidamento &amp; Chop</span>
-                  <p className="text-[10px] text-slate-500">Esclude titoli senza range sufficiente a coprire i costi di spread e commissione</p>
+                  <span className="font-semibold text-slate-800">Dynamic Scaling: 1.5% &rarr; 1.0%</span>
+                  <p className="text-[10px] text-slate-500">Se Corr SPY-QQQ &ge; 0.95 sblocca ingressi su trend corale direzionale</p>
                 </div>
               </div>
               <span className="text-xs font-mono font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded">
-                ATR &ge; 1.5%
+                ATR &ge; {atrLockRule.parameters.dynamicAtrScalingEnabled ?? true ? '1.0% / 1.5%' : '1.5%'}
               </span>
             </div>
           </div>

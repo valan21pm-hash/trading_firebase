@@ -560,7 +560,7 @@ export class RiskManagementService {
   /**
    * 1. Filtro di Volatilità Operativa (ATR):
    * Inibisce l'apertura di nuovi trade se:
-   * - L'ATR(14) normalizzato in % è < 1.5% (CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: evita mercati piatti / consolidamenti)
+   * - L'ATR(14) normalizzato in % è < 1.5% (Soglia dinamica ridotta all'1.0% se la correlazione SPY-QQQ >= 0.95 - Dynamic Volatility Scaling)
    * - L'ATR(14) a 5 minuti è inferiore alla media mobile semplice a 20 periodi (SMA 20) dell'ATR stesso.
    */
   public static evaluateAtrVolatilityFilter(
@@ -568,21 +568,37 @@ export class RiskManagementService {
     atr5m: number,
     atr5mSma20: number,
     systemRules?: RiskRuleConfig[],
-    atrPercent?: number
-  ): { allowed: boolean; reason?: string } {
+    atrPercent?: number,
+    spyQqqCorrelation?: number
+  ): { allowed: boolean; reason?: string; effectiveThreshold?: number; isDynamicScalingActive?: boolean } {
     const atrRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_FILTER' || r.type === 'ATR_VOLATILITY_LOCK');
     const isEnabled = atrRule?.enabled ?? true;
     if (!isEnabled) {
       return { allowed: true };
     }
 
-    // CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: Blocco se ATR(14) normalizzato < 1.5%
+    // Dynamic Volatility Scaling: Se la correlazione statistica a 1h tra SPY e QQQ è >= 0.95,
+    // la soglia di inibizione ATR(14) viene ridotta dinamicamente dal 1.5% all'1.0%.
+    const dynamicScalingEnabled = atrRule?.parameters?.dynamicAtrScalingEnabled ?? true;
+    const corrThreshold = atrRule?.parameters?.dynamicAtrCorrThreshold ?? 0.95;
+    const reducedThreshold = atrRule?.parameters?.dynamicAtrReducedThreshold ?? 1.0;
+    const defaultThreshold = atrRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+
+    const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= corrThreshold;
+    const isDynamicScalingActive = dynamicScalingEnabled && isHighCorr;
+    const minAtrPct = isDynamicScalingActive ? reducedThreshold : defaultThreshold;
+
+    // CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: Blocco se ATR(14) normalizzato < minAtrPct
     const blockLowAtrPct = atrRule?.parameters?.blockLowAtrPercent ?? true;
-    const minAtrPct = atrRule?.parameters?.minAtrPercentThreshold ?? 1.5;
     if (blockLowAtrPct && atrPercent !== undefined && atrPercent < minAtrPct) {
+      const dynamicNote = isDynamicScalingActive 
+        ? ` (soglia scalata dinamicamente all'${minAtrPct.toFixed(1)}% per forte correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
+        : ` (soglia standard ${minAtrPct.toFixed(1)}%)`;
       return {
         allowed: false,
-        reason: `[Filtro Volatilità ATR - Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%. Volatilità compressa / fase di consolidamento orizzontale priva di direzionalità. Ingressi bloccati per evitare chop.`
+        reason: `[Filtro Volatilità ATR - Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%${dynamicNote}. Volatilità compressa / fase di consolidamento orizzontale priva di direzionalità. Ingressi bloccati per evitare chop.`,
+        effectiveThreshold: minAtrPct,
+        isDynamicScalingActive
       };
     }
 
@@ -590,22 +606,25 @@ export class RiskManagementService {
     if (atr5m < atr5mSma20 * 0.98) {
       return {
         allowed: false,
-        reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione/rumore.`
+        reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione/rumore.`,
+        effectiveThreshold: minAtrPct,
+        isDynamicScalingActive
       };
     }
 
-    return { allowed: true };
+    return { allowed: true, effectiveThreshold: minAtrPct, isDynamicScalingActive };
   }
 
   /**
    * CORREZIONE STRATEGICA #3: Metodo dedicato [ATR Volatility Lock]
-   * Inibisce l'apertura se l'oscillazione ATR(14)% è inferiore alla soglia di sicurezza dell'1.5%
+   * Inibisce l'apertura se l'oscillazione ATR(14)% è inferiore alla soglia di sicurezza (1.5% o 1.0% dinamico se Corr SPY-QQQ >= 0.95)
    */
   public static evaluateAtrVolatilityLock(
     symbol: string,
     atrPercent: number | undefined,
-    systemRules?: RiskRuleConfig[]
-  ): { allowed: boolean; reason?: string } {
+    systemRules?: RiskRuleConfig[],
+    spyQqqCorrelation?: number
+  ): { allowed: boolean; reason?: string; effectiveThreshold?: number; isDynamicScalingActive?: boolean } {
     if (atrPercent === undefined || isNaN(atrPercent)) {
       return { allowed: true };
     }
@@ -616,15 +635,29 @@ export class RiskManagementService {
       return { allowed: true };
     }
 
-    const minAtrPct = atrLockRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+    // Dynamic Volatility Scaling: Riduzione soglia da 1.5% a 1.0% se Corr SPY-QQQ >= 0.95
+    const dynamicScalingEnabled = atrLockRule?.parameters?.dynamicAtrScalingEnabled ?? true;
+    const corrThreshold = atrLockRule?.parameters?.dynamicAtrCorrThreshold ?? 0.95;
+    const reducedThreshold = atrLockRule?.parameters?.dynamicAtrReducedThreshold ?? 1.0;
+    const defaultThreshold = atrLockRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+
+    const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= corrThreshold;
+    const isDynamicScalingActive = dynamicScalingEnabled && isHighCorr;
+    const minAtrPct = isDynamicScalingActive ? reducedThreshold : defaultThreshold;
+
     if (atrPercent < minAtrPct) {
+      const dynamicNote = isDynamicScalingActive
+        ? ` (soglia ridotta dinamicamente a ${minAtrPct.toFixed(1)}% per correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
+        : ` (soglia standard ${minAtrPct.toFixed(1)}%)`;
       return {
         allowed: false,
-        reason: `[ATR Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%. Volatilità compressa / mercato in consolidamento privo di direzionalità. Apertura bloccata per evitare falsi segnali in laterale.`
+        reason: `[ATR Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%${dynamicNote}. Volatilità compressa / mercato in consolidamento privo di direzionalità. Apertura bloccata per evitare falsi segnali in laterale.`,
+        effectiveThreshold: minAtrPct,
+        isDynamicScalingActive
       };
     }
 
-    return { allowed: true };
+    return { allowed: true, effectiveThreshold: minAtrPct, isDynamicScalingActive };
   }
 
   /**

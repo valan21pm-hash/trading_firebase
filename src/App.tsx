@@ -14,6 +14,7 @@ import { ProTradingTerminal } from './components/ProTradingTerminal';
 import { SentimentBadge } from './components/SentimentBadge';
 import { ForceBuyModal } from './components/ForceBuyModal';
 import { SmartView } from './components/SmartView';
+import { VisualCycleTimer } from './components/VisualCycleTimer';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -813,6 +814,7 @@ function AccountPanel({
   // Stati per le nuove impostazioni di rischio e bot
   const [showSettingsForm, setShowSettingsForm] = useState(false);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
+  const [onlyMarketLogs, setOnlyMarketLogs] = useState(true);
   const [maxPos, setMaxPos] = useState<number>(10);
   const [tf, setTf] = useState<number>(15);
   const [risk, setRisk] = useState<number>(10);
@@ -1123,6 +1125,24 @@ function AccountPanel({
           </div>
         </div>
 
+        {/* Visual Cycle Timer (Timer Visivo Scansione Mercato) */}
+        <VisualCycleTimer
+          lastRunTime={status?.lastRunTime}
+          nextRunTime={status?.nextRunTime}
+          timeframeMinutes={status?.timeframe || 15}
+          isActive={isActive}
+          onForceRun={async () => {
+            try {
+              const res = await fetch('/api/trading/trigger-cycle', { method: 'POST' });
+              if (res.ok && fetchStatus) {
+                await fetchStatus();
+              }
+            } catch (e) {
+              console.error('Trigger cycle failed:', e);
+            }
+          }}
+        />
+
         {showSettingsForm && (
           <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 space-y-4 mt-2 animate-in fade-in duration-200">
             <div className="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -1414,8 +1434,20 @@ function AccountPanel({
         {/* System Logs */}
         <div className="mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-1 mb-2">
-            <h3 className="text-sm font-medium text-gray-900">Log Operativi</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-gray-900">Log Operazioni a Mercato</h3>
+              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">Solo Azioni Reali</span>
+            </div>
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-gray-500">
+              <label className="flex items-center gap-1 cursor-pointer select-none text-indigo-700 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={onlyMarketLogs}
+                  onChange={(e) => setOnlyMarketLogs(e.target.checked)}
+                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
+                />
+                <span>Solo Esecuzioni</span>
+              </label>
               <label className="flex items-center gap-1 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -1441,17 +1473,63 @@ function AccountPanel({
                   onChange={(e) => setShowTimestamps(e.target.checked)}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-3 h-3 cursor-pointer"
                 />
-                <span>Mostra timestamp</span>
+                <span>Timestamp</span>
               </label>
             </div>
           </div>
           <div className="bg-gray-900 text-gray-300 p-3 rounded-lg text-xs font-mono h-40 overflow-y-auto flex flex-col gap-1">
             {(() => {
-              const rawLogs = account.logs || [];
+              const isMarketAction = (log: string) => {
+                const lower = log.toLowerCase();
+                // Elimina log di countdown e routine superflui
+                if (
+                  lower.includes('in attesa finestra') || 
+                  lower.includes('verifica connessione') || 
+                  lower.includes('ciclo di trading ignorato') ||
+                  lower.includes('[scansione azioni]') ||
+                  lower.includes('[modulo statistico]') ||
+                  lower.includes('[mercato] avvio analisi') ||
+                  lower.includes('[intraday] mancano') ||
+                  lower.includes('mantengo la posizione') ||
+                  lower.includes('limite di operazioni') ||
+                  lower.includes('nessun asset con sentiment') ||
+                  lower.includes('[valutazione ia] riepilogo') ||
+                  lower.includes('salto acquisto') ||
+                  lower.includes('👉 [') ||
+                  lower.includes('└─ motivazione')
+                ) {
+                  return false;
+                }
+                if (!onlyMarketLogs) return true;
+                return (
+                  log.includes('ACQUISTO') ||
+                  log.includes('Acquistato') ||
+                  log.includes('VENDITA') ||
+                  log.includes('Venduto') ||
+                  log.includes('STOP-LOSS') ||
+                  log.includes('Trailing Stop') ||
+                  log.includes('HARD-RISK') ||
+                  log.includes('Circuit Breaker') ||
+                  log.includes('Errore') ||
+                  log.includes('ERRORE') ||
+                  log.includes('MANUALE') ||
+                  log.includes('Target') ||
+                  log.includes('Chiusura') ||
+                  log.includes('CHIUSURA')
+                );
+              };
+
+              const rawLogs = (account.logs || []).filter(isMarketAction);
               const processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
               
               if (processedLogs.length === 0) {
-                return <div className="text-gray-500">Nessun log disponibile...</div>;
+                return (
+                  <div className="text-gray-500 italic py-6 text-center">
+                    {onlyMarketLogs 
+                      ? 'Nessuna operazione a mercato recente (ordini, acquisti, vendite, stop loss).' 
+                      : 'Nessun log disponibile...'}
+                  </div>
+                );
               }
 
               const formatLogMsg = (msg: string) => {
@@ -1477,8 +1555,9 @@ function AccountPanel({
                     key={i}
                     className={`${
                       log.includes('Acquistato') || log.includes('ACQUISTO') ? 'text-green-400' : 
-                      log.includes('Venduto') || log.includes('VENDITA') ? 'text-red-400' : 
-                      log.includes('Errore') ? 'text-red-500 font-bold' :
+                      log.includes('Venduto') || log.includes('VENDITA') || log.includes('CHIUSURA') ? 'text-red-400' : 
+                      log.includes('Errore') || log.includes('ERRORE') ? 'text-red-500 font-bold' :
+                      log.includes('STOP') || log.includes('Trailing') ? 'text-amber-400' :
                       'text-gray-400'
                     } ${wrapLogs ? 'break-words whitespace-pre-wrap' : 'whitespace-nowrap overflow-x-auto truncate'}`}
                   >

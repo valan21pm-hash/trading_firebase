@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import type { BotStatus, AccountData } from '../types';
 import { ForceBuyModal } from './ForceBuyModal';
+import { VisualCycleTimer } from './VisualCycleTimer';
 
 interface SmartViewProps {
   onClose: () => void;
@@ -342,6 +343,25 @@ export const SmartView: React.FC<SmartViewProps> = ({
       {/* 2. AREA PRINCIPALE: ESCLUSIVAMENTE POSIZIONI APERTE */}
       <main className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-950 space-y-4">
         
+        {/* Timer Visivo Scansione Mercato */}
+        <VisualCycleTimer
+          lastRunTime={botStatus?.lastRunTime}
+          nextRunTime={botStatus?.nextRunTime}
+          timeframeMinutes={botStatus?.timeframe || 15}
+          isActive={Boolean(isBotActive)}
+          onForceRun={async () => {
+            try {
+              const res = await fetch('/api/trading/trigger-cycle', { method: 'POST' });
+              if (res.ok && onStatusUpdate) {
+                onStatusUpdate();
+                if (showToast) showToast('Scansione di mercato avviata con successo!', 'success');
+              }
+            } catch (e) {
+              console.error('Trigger cycle failed:', e);
+            }
+          }}
+        />
+
         {/* Intestazione Sezione Posizioni */}
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">

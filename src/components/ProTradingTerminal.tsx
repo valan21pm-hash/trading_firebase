@@ -18,6 +18,7 @@ import { ForceBuyModal } from './ForceBuyModal';
 import { ManualTrailingStopModal } from './ManualTrailingStopModal';
 import { StatisticalExpertModule } from './StatisticalExpertModule';
 import { RssNewsWidget } from './RssNewsWidget';
+import { VisualCycleTimer } from './VisualCycleTimer';
 import { getAccessToken } from '../auth';
 import { GeminiSignal } from '../types';
 
@@ -1140,8 +1141,25 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
       </div>
 
       {/* Gemini Signals Ticker */}
-      <div className="px-6 pt-2 bg-[#0B0F17]">
+      <div className="px-6 pt-2 bg-[#0B0F17] space-y-2">
         <GeminiSignalsTicker />
+        <VisualCycleTimer
+          lastRunTime={statusObj?.lastRunTime}
+          nextRunTime={statusObj?.nextRunTime}
+          timeframeMinutes={statusObj?.timeframe || 15}
+          isActive={isBotActiveInCurrentMode}
+          onForceRun={async () => {
+            try {
+              const res = await fetch('/api/trading/trigger-cycle', { method: 'POST' });
+              if (res.ok) {
+                await refreshBackendStatus();
+                showToast('🚀 Scansione di mercato avviata con successo!');
+              }
+            } catch (e) {
+              console.error('Trigger cycle failed:', e);
+            }
+          }}
+        />
       </div>
 
       {/* Terminal Workspace Body */}

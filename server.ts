@@ -246,7 +246,10 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       atrFilterPeriod: 14,
       atrSmaPeriod: 20,
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -255,7 +258,10 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     type: 'ATR_VOLATILITY_LOCK',
     parameters: {
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -2356,6 +2362,14 @@ async function loadStateFromFirestore() {
         console.log(`[Firebase] Loaded account data for ${mode} successfully.`);
       }
 
+      // Pulizia automatica dei log storici da messaggi di countdown e routine superflui
+      ['paper', 'live'].forEach((m) => {
+        const modeKey = m as 'paper' | 'live';
+        if (botData[modeKey].logs && botData[modeKey].logs.length > 0) {
+          botData[modeKey].logs = botData[modeKey].logs.filter(log => !isNoisyLog(log));
+        }
+      });
+
       try {
         const logsSnap = await db.collection('logic_logs')
           .orderBy('timestamp', 'desc')
@@ -2387,7 +2401,35 @@ async function loadStateFromFirestore() {
   }
 }
 
+export function isNoisyLog(msg: string): boolean {
+  if (!msg) return true;
+  const noisySubstrings = [
+    'In attesa finestra di calcolo',
+    'Verifica connessione completata',
+    'Ciclo di trading ignorato',
+    '[Scansione Azioni]',
+    '[Modulo Statistico]',
+    '[Mercato] Avvio analisi',
+    '[Intraday] Mancano',
+    '[Portafoglio] Mantengo la posizione',
+    '[Portafoglio] Limite di operazioni contemporanee raggiunto',
+    '[Mercato] Nessun asset con sentiment positivo',
+    '[Valutazione IA] Riepilogo sentiment',
+    'Salto acquisto per',
+    'potere d\'acquisto insufficiente',
+    'Posizione su', // for MANTENUTA a fine giornata
+    '👉 [',
+    '└─ Motivazione:'
+  ];
+  return noisySubstrings.some(sub => msg.includes(sub));
+}
+
 export function addLog(mode: 'paper' | 'live' | 'system', message: string) {
+  // Ignora completamente messaggi di countdown, routine o report spam non azionabili
+  if (isNoisyLog(message)) {
+    return;
+  }
+
   const timestamp = new Date().toISOString();
   const logMsg = `[${timestamp}] ${message}`;
   
@@ -4057,16 +4099,17 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 continue;
               }
 
-              // --- FILTRO VOLATILITÀ OPERATIVA ATR 5m & ATR VOLATILITY LOCK (ATR% >= 1.5%) ---
+              // --- FILTRO VOLATILITÀ OPERATIVA ATR 5m & ATR VOLATILITY LOCK (ATR% >= 1.5% o 1.0% Dinamico se Corr SPY-QQQ >= 0.95) ---
               const atrFilterRes = RiskManagementService.evaluateAtrVolatilityFilter(
                 item.symbol,
                 symIndicators.atr5m,
                 symIndicators.atr5mSma20,
                 activeRules,
-                symIndicators.atrPercent
+                symIndicators.atrPercent,
+                spyQqqCorr
               );
               if (!atrFilterRes.allowed) {
-                const vetoReason = atrFilterRes.reason || `Volatilità insufficiente: ATR(14) 5m < SMA(20) ATR o ATR% < 1.50%`;
+                const vetoReason = atrFilterRes.reason || `Volatilità insufficiente: ATR(14) 5m < SMA(20) ATR o ATR% < ${atrFilterRes.effectiveThreshold ? atrFilterRes.effectiveThreshold.toFixed(1) : '1.50'}%`;
                 addLog(mode as 'paper' | 'live', vetoReason);
                 addLogicLog(mode, {
                   timestamp: new Date().toISOString(),
@@ -4356,46 +4399,21 @@ async function executeTradingCycle(force: boolean = false) {
     const now = Date.now();
 
     if (anyActive || force) {
-    const alpacaTimeframeMs = (botStatus.timeframe || 5) * 60 * 1000;
-    if (force || lastAlpacaRunTime === 0 || (now - lastAlpacaRunTime >= alpacaTimeframeMs)) {
-      lastAlpacaRunTime = now;
-      botStatus.lastCheck = new Date().toISOString();
-      let executed = false;
-      if (botStatus.paperActive || force) {
-        await executeTradingCycleForMode('paper', force);
-        executed = true;
+      const alpacaTimeframeMs = (botStatus.timeframe || 15) * 60 * 1000;
+      if (force || lastAlpacaRunTime === 0 || (now - lastAlpacaRunTime >= alpacaTimeframeMs)) {
+        lastAlpacaRunTime = now;
+        botStatus.lastCheck = new Date().toISOString();
+        let executed = false;
+        if (botStatus.paperActive || force) {
+          await executeTradingCycleForMode('paper', force);
+          executed = true;
+        }
+        if (botStatus.liveActive || force) {
+          await executeTradingCycleForMode('live', force);
+          executed = true;
+        }
       }
-      if (botStatus.liveActive || force) {
-        await executeTradingCycleForMode('live', force);
-        executed = true;
-      }
-      if (!executed && force) {
-        addLog('system', `[Alpaca] Nessun conto attivo per il trading.`);
-      }
-    } else {
-      const nextRunTime = lastAlpacaRunTime + alpacaTimeframeMs;
-      const msLeft = nextRunTime - now;
-      const minLeft = Math.floor(msLeft / 60000);
-      const secLeft = Math.floor((msLeft % 60000) / 1000);
-      const lastCheckTimeStr = new Date(lastAlpacaRunTime).toLocaleTimeString('it-IT');
-      
-      const isMarketOpenUtc = (() => {
-        const utcNow = new Date();
-        const day = utcNow.getUTCDay();
-        if (day === 0 || day === 6) return false;
-        const hour = utcNow.getUTCHours();
-        const minute = utcNow.getUTCMinutes();
-        const timeInMinutes = hour * 60 + minute;
-        return timeInMinutes >= 810 && timeInMinutes <= 1260; // 13:30 - 21:00 UTC (9:30 AM - 4:00 PM EST/EDT)
-      })();
-      
-      const marketStateMsg = isMarketOpenUtc 
-        ? `🟢 Il mercato USA è attualmente APERTO.` 
-        : `🔴 Il mercato USA è attualmente CHIUSO (orario standard: lun-ven 13:30 - 21:00 UTC / 15:30 - 23:00 italiane).`;
-
-      addLog('system', `[Alpaca] In attesa finestra di calcolo (tra ${minLeft}m ${secLeft}s). Mercato USA ${isMarketOpenUtc ? 'APERTO' : 'CHIUSO'}.`);
     }
-  }
   } finally {
     isTradingRunning = false;
   }
@@ -4652,7 +4670,10 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
       atrFilterPeriod: 14,
       atrSmaPeriod: 20,
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -4661,7 +4682,10 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
     type: 'ATR_VOLATILITY_LOCK',
     parameters: {
       minAtrPercentThreshold: 1.50,
-      blockLowAtrPercent: true
+      blockLowAtrPercent: true,
+      dynamicAtrScalingEnabled: true,
+      dynamicAtrReducedThreshold: 1.00,
+      dynamicAtrCorrThreshold: 0.95
     }
   },
   {
@@ -4901,6 +4925,37 @@ function applySuggestedRuleToSystemRules(suggestedRuleText: string): {
         newValue: true,
         actionDescription: 'Lock incrementale dei profitti a scaglioni (0.50% / 0.80% / 1.00%)'
       });
+    }
+
+    // Dynamic Volatility Scaling / ATR Volatility Lock
+    if (text.includes('dynamic volatility scaling') || text.includes('soglia di inibizione atr') || text.includes('atr(14)') || text.includes('volatility scaling')) {
+      const atrLockRule = getRule('ATR_VOLATILITY_LOCK');
+      const atrFiltRule = getRule('ATR_VOLATILITY_FILTER');
+      if (atrLockRule || atrFiltRule) {
+        const targetRules = [atrLockRule, atrFiltRule].filter(Boolean);
+        targetRules.forEach(r => {
+          if (r) {
+            r.enabled = true;
+            r.parameters = {
+              ...r.parameters,
+              dynamicAtrScalingEnabled: true,
+              dynamicAtrReducedThreshold: 1.0,
+              dynamicAtrCorrThreshold: 0.95
+            };
+          }
+        });
+        modifications.push(`Dynamic Volatility Scaling attivato: soglia ATR ridotta all'1.0% con Corr SPY-QQQ >= 0.95`);
+        paramModifications.push({
+          ruleId: 'atr_volatility_lock',
+          ruleName: 'ATR Volatility Lock / Scaling',
+          parameterKey: 'dynamicAtrReducedThreshold',
+          parameterLabel: 'Soglia ATR Dinamica (Corr >= 0.95)',
+          previousValue: 1.5,
+          newValue: 1.0,
+          unit: '%',
+          actionDescription: 'Riduzione dinamica soglia inibizione ATR(14) da 1.5% a 1.0% per contesti di trend corale'
+        });
+      }
     }
   }
 
@@ -6264,6 +6319,8 @@ async function getStatusData() {
       timeframe: botStatus.timeframe ?? 15,
       riskPercentage: botStatus.riskPercentage ?? 10,
       maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+      lastRunTime: lastAlpacaRunTime,
+      nextRunTime: lastAlpacaRunTime > 0 ? lastAlpacaRunTime + (botStatus.timeframe || 15) * 60 * 1000 : Date.now() + (botStatus.timeframe || 15) * 60 * 1000,
       paper: paperData,
       live: liveData
     }
@@ -6503,6 +6560,18 @@ app.post('/api/toggle', async (req, res) => {
   } catch (err: any) {
     const errorMsg = err?.message || err?.toString() || 'Errore interno del server durante la modifica dello stato';
     res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+app.post('/api/trading/trigger-cycle', async (req, res) => {
+  try {
+    console.log('[Manual Trigger] Esecuzione immediata del ciclo di trading richiesta dall\'utente...');
+    await executeTradingCycle(true);
+    const data = await getStatusData();
+    res.json({ success: true, ...data });
+  } catch (err: any) {
+    console.error('[Trigger Cycle Error]:', err);
+    res.status(500).json({ success: false, error: err.message || 'Errore esecuzione ciclo di trading' });
   }
 });
 

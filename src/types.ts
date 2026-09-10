@@ -64,9 +64,12 @@ export interface RiskRuleConfig {
     // #2 Adaptive EMA Filter
     suspendOnHighCorrelation?: boolean; // default true (sospende filtro EMA 20/50 se Corr SPY-QQQ > 0.95)
     highCorrelationThreshold?: number;  // default 0.95
-    // #3 ATR Volatility Lock
+    // #3 ATR Volatility Lock & Dynamic Volatility Scaling
     minAtrPercentThreshold?: number;  // default 1.50 (blocco se ATR(14)% < 1.50% per evitare consolidamenti)
     blockLowAtrPercent?: boolean;     // default true
+    dynamicAtrScalingEnabled?: boolean; // default true (riduzione soglia ATR se Corr SPY-QQQ >= 0.95)
+    dynamicAtrReducedThreshold?: number; // default 1.00 (soglia ridotta all'1.0% in caso di forte correlazione)
+    dynamicAtrCorrThreshold?: number;    // default 0.95 (soglia correlazione SPY-QQQ)
     // #4 Dinamica Ibrida a Scaglioni (Decrescent Tiered Trailing Distance)
     tieredProfitLockEnabled?: boolean; // default true (Dinamica Ibrida a Distanza Decrescente)
     tier1ProfitThresholdPct?: number;  // default 0.50% (Scaglione 1: +0.50% - +0.80%)
@@ -256,6 +259,8 @@ export interface BotStatus {
   timeframe?: number;
   riskPercentage?: number;
   maxConcurrentPositions?: number;
+  lastRunTime?: number;
+  nextRunTime?: number;
   
   paper: AccountData;
   live: AccountData;
