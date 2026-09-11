@@ -1502,6 +1502,7 @@ function AccountPanel({
                 }
                 if (!onlyMarketLogs) return true;
                 return (
+                  log.includes('Scansione Mercato') ||
                   log.includes('ACQUISTO') ||
                   log.includes('Acquistato') ||
                   log.includes('VENDITA') ||

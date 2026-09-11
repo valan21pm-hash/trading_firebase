@@ -4244,7 +4244,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             reasoning: `Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`
           });
         } else {
-          addLog(mode as 'paper' | 'live', `[Mercato] Nessun asset con sentiment positivo (> 0.2) identificato in questo ciclo.`);
           addLogicLog(mode, {
             timestamp: new Date().toISOString(),
             symbol: 'MARKET',
@@ -4252,6 +4251,10 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             reasoning: 'Analisi di mercato completata: nessun asset con sentiment positivo (> 0.20) identificato in questo ciclo.'
           });
         }
+
+        // Log riassuntivo essenziale del ciclo (Heartbeat pulito)
+        const orderCount = ordersToSubmit ? ordersToSubmit.length : 0;
+        addLog(mode as 'paper' | 'live', `[Scansione Mercato] Check completato (${openPositions.length} posizioni attive, ${orderCount} nuovi ordini inviati).`);
       }
     }
   } catch (error: any) {
