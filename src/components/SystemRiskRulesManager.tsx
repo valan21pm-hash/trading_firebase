@@ -274,6 +274,18 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
       extremeTrendAdxOverride: 30.0,
       extremeTrendCorrOverride: 0.98
     }
+  },
+  {
+    id: 'high_correlation_regime_filter',
+    enabled: true,
+    type: 'HIGH_CORRELATION_REGIME_FILTER',
+    parameters: {
+      correlationThreshold: 0.95,
+      maxCapitalAllocationPct: 50,
+      allowedIndexEtfs: ['SPY', 'DIA', 'IWM', 'QQQ', 'VOO', 'IVV', 'GLD', 'IAU'],
+      antiChopNoiseTolerancePct: 0.50,
+      morningPre12MinAdx: 25.0
+    }
   }
 ];
 
@@ -379,6 +391,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const corrMomRule = getRule('CORRELATION_MOMENTUM_FILTER');
   const dynamicRiskRule = getRule('DYNAMIC_RISK_MANAGEMENT');
   const afternoonSuspensionRule = getRule('AFTERNOON_SESSION_SUSPENSION');
+  const highCorrRegimeRule = getRule('HIGH_CORRELATION_REGIME_FILTER');
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-6">
@@ -2102,6 +2115,143 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
               <span className="text-xs font-mono font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded">
                 Sospensione 14:00-15:30 EST
               </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 25. FILTRO DI REGIME A CORRELAZIONE ELEVATA & ANTI-CHOP (CONSENSO 2026-09-14) */}
+        <div className={`p-4 rounded-xl border transition-all ${
+          highCorrRegimeRule.enabled 
+            ? 'bg-gradient-to-br from-indigo-50/40 via-white to-sky-50/30 border-indigo-300 ring-1 ring-indigo-200' 
+            : 'bg-slate-50/60 border-slate-200 opacity-60'
+        }`}>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className={`p-2 rounded-lg ${highCorrRegimeRule.enabled ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-indigo-900 bg-indigo-100 px-2 py-0.5 rounded">
+                    Regola 25 • Consenso 2026-09-14
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Filtro di Regime a Correlazione Elevata &amp; Anti-Chop
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Se Corr SPY-QQQ &ge; 0.95: sospende stock-picking su singoli titoli, limita il capitale al 50% e alloca solo su ETF Indice (SPY/DIA/IWM/QQQ/GLD). Include filtro anti-chop 0.50% e blocco pre-12:00 senza ADX &gt; 25.
+                </p>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={highCorrRegimeRule.enabled}
+                onChange={(e) => updateRule('HIGH_CORRELATION_REGIME_FILTER', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
+          </div>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Correlazione SPY-QQQ:</span>
+                  <span className="font-mono text-indigo-600 font-bold">&ge; {(highCorrRegimeRule.parameters.correlationThreshold ?? 0.95).toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.85"
+                  max="0.99"
+                  step="0.01"
+                  value={highCorrRegimeRule.parameters.correlationThreshold ?? 0.95}
+                  onChange={(e) => updateRule('HIGH_CORRELATION_REGIME_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, correlationThreshold: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!highCorrRegimeRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Cap Capitale in High Corr:</span>
+                  <span className="font-mono text-indigo-600 font-bold">{(highCorrRegimeRule.parameters.maxCapitalAllocationPct ?? 50)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="20"
+                  max="80"
+                  step="5"
+                  value={highCorrRegimeRule.parameters.maxCapitalAllocationPct ?? 50}
+                  onChange={(e) => updateRule('HIGH_CORRELATION_REGIME_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, maxCapitalAllocationPct: parseInt(e.target.value) }
+                  }))}
+                  disabled={!highCorrRegimeRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Tolleranza Rumore Anti-Chop:</span>
+                  <span className="font-mono text-indigo-600 font-bold">{(highCorrRegimeRule.parameters.antiChopNoiseTolerancePct ?? 0.50).toFixed(2)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.20"
+                  max="1.00"
+                  step="0.05"
+                  value={highCorrRegimeRule.parameters.antiChopNoiseTolerancePct ?? 0.50}
+                  onChange={(e) => updateRule('HIGH_CORRELATION_REGIME_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, antiChopNoiseTolerancePct: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!highCorrRegimeRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
+              <div>
+                <div className="flex justify-between text-slate-700 font-medium mb-1">
+                  <span>Soglia Minima ADX Pre-12:00 EST:</span>
+                  <span className="font-mono text-indigo-600 font-bold">&gt; {(highCorrRegimeRule.parameters.morningPre12MinAdx ?? 25.0).toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="15.0"
+                  max="35.0"
+                  step="1.0"
+                  value={highCorrRegimeRule.parameters.morningPre12MinAdx ?? 25.0}
+                  onChange={(e) => updateRule('HIGH_CORRELATION_REGIME_FILTER', r => ({
+                    ...r,
+                    parameters: { ...r.parameters, morningPre12MinAdx: parseFloat(e.target.value) }
+                  }))}
+                  disabled={!highCorrRegimeRule.enabled}
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 p-2 rounded bg-indigo-50/60 border border-indigo-100 text-slate-700">
+                <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                <div className="text-[11px] leading-tight">
+                  <span className="font-semibold text-indigo-950">ETF Indice Autorizzati:</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {(highCorrRegimeRule.parameters.allowedIndexEtfs ?? ['SPY', 'DIA', 'IWM', 'QQQ', 'GLD', 'IAU']).map((etf) => (
+                      <span key={etf} className="font-mono font-bold bg-white text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 text-[10px]">
+                        {etf}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

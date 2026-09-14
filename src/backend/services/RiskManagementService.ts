@@ -296,17 +296,26 @@ export class RiskManagementService {
       }
     }
 
-    // --- 2. EARLY WARNING / SOFT STOP SUL CROLLO DI SENTIMENT ---
-    if (useSentimentOpt && currentProfitPct < 0 && sentimentScore !== undefined) {
-      const sentimentDrop = previousSentimentScore !== undefined ? (previousSentimentScore - sentimentScore) : 0;
-      const isSharpDrop = sentimentDrop >= 0.20;
-      const isLowSentimentInLoss = sentimentScore <= 0.05 && currentProfitPct <= -0.20;
+    // --- 2. EARLY WARNING / SOFT STOP SUL CROLLO DI SENTIMENT & ANTI-CHOP NOISE TOLERANCE ---
+    // Regola Anti-Chop: ignora fluttuazioni inferiori a 0.50% (evita il 'churning' statistico da rumore)
+    const highCorrRegimeRule = systemRules?.find(r => r.type === 'HIGH_CORRELATION_REGIME_FILTER' || r.type === 'DYNAMIC_RISK_MANAGEMENT');
+    const antiChopTolerancePct = highCorrRegimeRule?.parameters?.antiChopNoiseTolerancePct ?? 0.50; // default 0.50%
 
-      if (isSharpDrop || isLowSentimentInLoss) {
-        return {
-          action: 'CLOSE',
-          reason: `[Soft Stop / Early Warning Sentiment] Posizione ${asset} in perdita (${currentProfitPct.toFixed(2)}%) con Sentiment degradato a ${sentimentScore.toFixed(2)}${previousSentimentScore !== undefined ? ` (da ${previousSentimentScore.toFixed(2)})` : ''}. Chiusura anticipata preventiva prima dello Stop Loss hard.`
-        };
+    if (useSentimentOpt && currentProfitPct < 0 && sentimentScore !== undefined) {
+      // Se la perdita è contenuta entro la banda di tolleranza rumore (-0.50%), NON chiudiamo per rumore di sentiment
+      if (currentProfitPct > -antiChopTolerancePct) {
+        // Ignora il rumore di oscillazione intraday < 0.50% (Anti-Chop)
+      } else {
+        const sentimentDrop = previousSentimentScore !== undefined ? (previousSentimentScore - sentimentScore) : 0;
+        const isSharpDrop = sentimentDrop >= 0.30;
+        const isLowSentimentInLoss = sentimentScore <= 0.00 && currentProfitPct <= -antiChopTolerancePct;
+
+        if (isSharpDrop || isLowSentimentInLoss) {
+          return {
+            action: 'CLOSE',
+            reason: `[Soft Stop / Early Warning Sentiment] Posizione ${asset} in perdita oltre soglia anti-chop (${currentProfitPct.toFixed(2)}% <= -${antiChopTolerancePct.toFixed(2)}%) con Sentiment degradato a ${sentimentScore.toFixed(2)}${previousSentimentScore !== undefined ? ` (da ${previousSentimentScore.toFixed(2)})` : ''}. Chiusura anticipata prima dello Stop Loss hard.`
+          };
+        }
       }
     }
 
@@ -744,6 +753,20 @@ export class RiskManagementService {
       };
     }
 
+    // Fascia pre-12:00 EST (10:30 - 12:00 EST / 630 - 720 minuti) - Zona critica ad alto churn: richiede ADX > 25 (o momentum)
+    const isPre12Window = totalMinutes >= 630 && totalMinutes < 720;
+    const highCorrRule = systemRules?.find(r => r.type === 'HIGH_CORRELATION_REGIME_FILTER');
+    const pre12MinAdx = highCorrRule?.parameters?.morningPre12MinAdx ?? 25.0;
+    if (isPre12Window && highCorrRule?.enabled) {
+      if (adxValue !== undefined && adxValue < pre12MinAdx) {
+        return {
+          allowed: false,
+          inPrimeWindow: false,
+          reason: `[Filtro Orario Pre-12:00 EST] Finestra 10:30 - 12:00 EST (${timeFormatted}) soggetta ad alto churn operativo. Ingressi consentiti solo con segnali di forte momentum direzionale (ADX(14) >= ${pre12MinAdx.toFixed(1)}). Benchmark attuale ADX = ${adxValue.toFixed(1)} < ${pre12MinAdx.toFixed(1)}. Nuovi ordini BUY inibiti.`
+        };
+      }
+    }
+
     // Fascia di esecuzione privilegiata Midday: 12:00 - 14:30 EST (720 - 870 minuti)
     const isMiddayPrime = totalMinutes >= 720 && totalMinutes < 870;
 
@@ -978,6 +1001,64 @@ export class RiskManagementService {
       allowed: false,
       isExtremeTrendExemption: false,
       reason: `[Filtro Orario Pomeridiano: Sospensione 14:00-15:30 EST] Orario attuale ${timeFormatted} nella fascia di consolidamento pomeridiano. Nuovi ingressi BUY sospesi (HOLD) salvo condizioni di trend estremo (ADX >= ${extremeAdxThreshold}, Corr >= ${extremeCorrThreshold}).`
+    };
+  }
+
+  /**
+   * REGOLA DI CONSENSO 2026-09-14: Filtro di Regime a Correlazione Elevata
+   * Se la correlazione SPY-QQQ > 0.95:
+   * - Sospende l'operatività su singoli ticker (Stock Picking)
+   * - Limita l'esposizione al 50% del capitale
+   * - Autorizza esclusivamente ETF di indice (SPY/DIA/IWM/QQQ/GLD/IAU)
+   */
+  public static evaluateHighCorrelationRegimeFilter(
+    spyQqqCorrelation?: number,
+    systemRules?: RiskRuleConfig[]
+  ): { 
+    isHighCorrRegime: boolean; 
+    allowedEtfs: string[]; 
+    maxCapitalPct: number; 
+    reason?: string;
+    correlation: number;
+    threshold: number;
+  } {
+    const rule = systemRules?.find(r => r.type === 'HIGH_CORRELATION_REGIME_FILTER');
+    const isEnabled = rule?.enabled ?? true;
+    const corr = spyQqqCorrelation ?? 0.0;
+    const threshold = rule?.parameters?.correlationThreshold ?? 0.95;
+    const maxCapitalPct = rule?.parameters?.maxCapitalAllocationPct ?? 50;
+    const defaultEtfs = ['SPY', 'DIA', 'IWM', 'QQQ', 'VOO', 'IVV', 'GLD', 'IAU'];
+    const allowedEtfs = rule?.parameters?.allowedIndexEtfs && rule.parameters.allowedIndexEtfs.length > 0
+      ? rule.parameters.allowedIndexEtfs
+      : defaultEtfs;
+
+    if (!isEnabled) {
+      return {
+        isHighCorrRegime: false,
+        allowedEtfs: [],
+        maxCapitalPct: 95,
+        correlation: corr,
+        threshold
+      };
+    }
+
+    if (corr >= threshold) {
+      return {
+        isHighCorrRegime: true,
+        allowedEtfs,
+        maxCapitalPct,
+        correlation: corr,
+        threshold,
+        reason: `[Regola Sistema: HIGH_CORRELATION_REGIME_FILTER] Correlazione SPY-QQQ a +${corr.toFixed(2)} >= ${threshold.toFixed(2)}. Attivo Regime ad Alta Correlazione: stock-picking su singoli titoli sospeso, esposizione limitata al ${maxCapitalPct}% del capitale ed allocata esclusivamente su ETF di indice (${allowedEtfs.join(', ')}).`
+      };
+    }
+
+    return {
+      isHighCorrRegime: false,
+      allowedEtfs,
+      maxCapitalPct: 95,
+      correlation: corr,
+      threshold
     };
   }
 }

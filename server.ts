@@ -346,6 +346,18 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
       extremeTrendAdxOverride: 30.0,
       extremeTrendCorrOverride: 0.98
     }
+  },
+  {
+    id: 'high_correlation_regime_filter',
+    enabled: true,
+    type: 'HIGH_CORRELATION_REGIME_FILTER',
+    parameters: {
+      correlationThreshold: 0.95,
+      maxCapitalAllocationPct: 50,
+      allowedIndexEtfs: ['SPY', 'DIA', 'IWM', 'QQQ', 'VOO', 'IVV', 'GLD', 'IAU'],
+      antiChopNoiseTolerancePct: 0.50,
+      morningPre12MinAdx: 25.0
+    }
   }
 ];
 
@@ -3866,7 +3878,34 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           return b.score - a.score;
         });
 
-        // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95%)
+        // --- REGOLA DI CONSENSO 2026-09-14: HIGH_CORRELATION_REGIME_FILTER ---
+        // Se Correlazione SPY-QQQ > 0.95: sospendere stock-picking e limitare l'esposizione al 50% su soli ETF di indice
+        const highCorrEval = RiskManagementService.evaluateHighCorrelationRegimeFilter(currentSpyQqqCorr, activeRules);
+        let effectiveTargetCapitalPct = Math.min(95, Math.max(10, botStatus.riskPercentage ?? 95));
+
+        if (highCorrEval.isHighCorrRegime) {
+          addLog(mode as 'paper' | 'live', highCorrEval.reason || `[Regola Sistema: HIGH_CORRELATION_REGIME_FILTER] Regime ad Alta Correlazione SPY-QQQ (${(currentSpyQqqCorr ?? 0).toFixed(2)} >= ${highCorrEval.threshold.toFixed(2)}): stock-picking sospeso, operatività limitata al ${highCorrEval.maxCapitalPct}% su soli ETF Indice (${highCorrEval.allowedEtfs.join(', ')}).`);
+          addLogicLog(mode, {
+            timestamp: new Date().toISOString(),
+            symbol: 'MARKET',
+            action: 'HIGH_CORR_REGIME',
+            reasoning: highCorrEval.reason || `Regime Correlazione SPY-QQQ ${(currentSpyQqqCorr ?? 0).toFixed(2)} >= ${highCorrEval.threshold.toFixed(2)}. Solo ETF Indice.`
+          });
+
+          // Filtra i candidati trattenendo SOLO gli ETF di indice (SPY, DIA, IWM, QQQ, GLD, IAU, ecc.)
+          const prevCount = positiveSymbolsWithSentiment.length;
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => 
+            highCorrEval.allowedEtfs.includes(item.symbol)
+          );
+          if (prevCount !== positiveSymbolsWithSentiment.length) {
+            addLog(mode as 'paper' | 'live', `[Filtro Regime Correlazione] Esclusi ${prevCount - positiveSymbolsWithSentiment.length} singoli titoli. Candidati ETF ammessi: ${positiveSymbolsWithSentiment.map(p => p.symbol).join(', ') || 'Nessuno'}.`);
+          }
+
+          // Riduci la quota target di capitale al 50% (o al valore configurato)
+          effectiveTargetCapitalPct = Math.min(effectiveTargetCapitalPct, highCorrEval.maxCapitalPct);
+        }
+
+        // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95% o 50% in high corr)
         const maxPosRule = activeRules.find(r => r.type === 'MAX_CONCURRENT_POSITIONS_CAP');
         const maxPositions = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
         const currentSlotsFilled = openPositions.length;
@@ -3880,8 +3919,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           availableSlots = Math.min(availableSlots, 1);
         }
 
-        // Quota target di capitale totale da impiegare (default 95% dell'equity)
-        const targetCapitalPct = Math.min(95, Math.max(10, botStatus.riskPercentage ?? 95));
+        // Quota target di capitale totale da impiegare (default 95% dell'equity, ridotto al 50% se correlazione elevata)
+        const targetCapitalPct = effectiveTargetCapitalPct;
         const targetCapitalRatio = targetCapitalPct / 100;
         const targetCapitalUsage = totalAccountEquity * targetCapitalRatio;
 

@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK' | 'CORRELATION_MOMENTUM_FILTER' | 'DYNAMIC_RISK_MANAGEMENT' | 'AFTERNOON_SESSION_SUSPENSION';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK' | 'CORRELATION_MOMENTUM_FILTER' | 'DYNAMIC_RISK_MANAGEMENT' | 'AFTERNOON_SESSION_SUSPENSION' | 'HIGH_CORRELATION_REGIME_FILTER';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
@@ -91,6 +91,12 @@ export interface RiskRuleConfig {
     afternoonSuspensionEnd?: string;  // default '15:30'
     extremeTrendAdxOverride?: number; // default 30.0 (Override se ADX > 30)
     extremeTrendCorrOverride?: number;// default 0.98 (Override se Corr >= 0.98)
+    // --- CONSENSO MULTI-IA 2026-09-14: FILTRO REGIME A CORRELAZIONE ELEVATA & ANTI-CHOP TOLERANCE ---
+    correlationThreshold?: number;    // default 0.95 (Soglia correlazione SPY-QQQ > 0.95)
+    maxCapitalAllocationPct?: number; // default 50 (Cap al 50% di capitale su soli ETF di indice)
+    allowedIndexEtfs?: string[];      // default ['SPY', 'DIA', 'IWM', 'QQQ', 'GLD', 'IAU']
+    antiChopNoiseTolerancePct?: number; // default 0.50% (Tolleranza stop-loss a 0.50% per ignorare rumore intraday)
+    morningPre12MinAdx?: number;      // default 25.0 (Restrizione pre-12:00 EST a meno di ADX > 25)
   };
 }
 
