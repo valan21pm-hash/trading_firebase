@@ -3892,6 +3892,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         const remainingCapitalToTarget = Math.max(0, targetCapitalUsage - currentlyInvested);
         const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget);
 
+        const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
+        let submittedOrdersCount = 0;
+
         if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0 && allocatableBuyingPower > 2.0) {
           const numCandidatesToFund = Math.min(availableSlots, positiveSymbolsWithSentiment.length);
 
@@ -3905,7 +3908,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
           addLog(mode as 'paper' | 'live', `[Allocazione Capitale ${targetCapitalPct}%] Equity: $${totalAccountEquity.toFixed(2)} | Target (${targetCapitalPct}%): $${targetCapitalUsage.toFixed(2)} | Attualmente Investito: $${currentlyInvested.toFixed(2)} | Rimanente al Target: $${remainingCapitalToTarget.toFixed(2)} | Allocazione per singola operazione: $${singlePositionSize.toFixed(2)} (${numCandidatesToFund} asset in questo ciclo).`);
 
-          const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
           let slotsAllocated = 0;
           
           const sAndPTrackers = ['SPY', 'VOO', 'IVV', 'VTI'];
@@ -4227,6 +4229,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 addLog(mode as 'paper' | 'live', `[Alpaca] Ordine di ACQUISTO eseguito con successo per ${order.symbol}! ID: ${orderData.id}`);
                 currentBuyingPower -= order.amount;
                 lastPurchaseTimes[mode][order.symbol] = Date.now();
+                submittedOrdersCount++;
               } else {
                 const errorData = await orderResponse.json();
                 addLog(mode as 'paper' | 'live', `[Alpaca Errore Ordine] Non è stato possibile eseguire l'ordine per ${order.symbol}: ${errorData.message}`);
@@ -4253,8 +4256,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         }
 
         // Log riassuntivo essenziale del ciclo (Heartbeat pulito)
-        const orderCount = ordersToSubmit ? ordersToSubmit.length : 0;
-        addLog(mode as 'paper' | 'live', `[Scansione Mercato] Check completato (${openPositions.length} posizioni attive, ${orderCount} nuovi ordini inviati).`);
+        addLog(mode as 'paper' | 'live', `[Scansione Mercato] Check completato (${openPositions.length} posizioni attive, ${submittedOrdersCount} nuovi ordini eseguiti).`);
       }
     }
   } catch (error: any) {
