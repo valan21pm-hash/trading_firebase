@@ -276,3 +276,48 @@ export interface BotStateResponse {
   status: BotStatus;
 }
 
+export type DiagnosticLogLevel = 'ALL' | 'CRITICAL' | 'AUTH' | 'TIMEOUT' | 'EXECUTION';
+
+export interface DiagnosticLogEntry {
+  id: string;
+  timestamp: string;
+  source: string;
+  category: 'CRITICAL_ERROR' | 'AUTH_401' | 'TIMEOUT' | 'EXECUTION_ANOMALY' | 'WARNING';
+  message: string;
+  errorType?: string;
+  trace?: string;
+  mode?: 'paper' | 'live' | 'system';
+}
+
+export interface ExecutionCycleMetric {
+  id: string;
+  cycleId: string;
+  mode: 'paper' | 'live';
+  timestamp: string;
+  durationMs: number;
+  expectedIntervalMs: number;
+  timeSinceLastCycleMs: number;
+  anomalyType?: 'DELAYED_INTERVAL' | 'EXECUTION_SPIKE' | 'TIMEOUT_RISK' | 'NORMAL';
+  anomalySeverity?: 'low' | 'medium' | 'high';
+  anomalyDescription?: string;
+  ordersEvaluated?: number;
+  symbolsScanned?: number;
+  hadErrors?: boolean;
+}
+
+export interface DiagnosticSummaryResponse {
+  success: boolean;
+  totalParsed: number;
+  criticalErrorsCount: number;
+  authErrorsCount: number;
+  timeoutErrorsCount: number;
+  anomaliesCount: number;
+  logs: DiagnosticLogEntry[];
+  executionCycles: ExecutionCycleMetric[];
+  cacheStats: {
+    inMemoryLogsCount: number;
+    logBufferSize: number;
+    lastClearTime: string | null;
+  };
+}
+

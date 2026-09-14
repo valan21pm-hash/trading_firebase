@@ -1818,6 +1818,85 @@ app.post("/api/trading/position-stops", async (req, res) => {
   }
 });
 
+// --- DIAGNOSTIC LOGS & EXECUTION ANOMALIES ENDPOINTS ---
+app.get("/api/diagnostics/summary", async (req, res) => {
+  try {
+    // 1. Unisci tutti i log operativi attuali in memoria
+    const paperLogs = botData.paper?.logs || [];
+    const liveLogs = botData.live?.logs || [];
+    
+    // Controlla anche file di backup o file locali di log se presenti
+    let diskLogs: string[] = [];
+    try {
+      if (fs.existsSync('./local_logs_backup.json')) {
+        const raw = fs.readFileSync('./local_logs_backup.json', 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed.paperLogs && Array.isArray(parsed.paperLogs)) diskLogs.push(...parsed.paperLogs);
+        if (parsed.liveLogs && Array.isArray(parsed.liveLogs)) diskLogs.push(...parsed.liveLogs);
+      }
+    } catch (e) {}
+
+    const allRawLogs = Array.from(new Set([...paperLogs, ...liveLogs, ...diskLogs]));
+    const parsedErrors = parseDiagnosticErrors(allRawLogs);
+
+    // Ordina i log per data decrescente (più recenti in alto)
+    parsedErrors.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+    const criticalErrorsCount = parsedErrors.filter(e => e.category === 'CRITICAL_ERROR').length;
+    const authErrorsCount = parsedErrors.filter(e => e.category === 'AUTH_401').length;
+    const timeoutErrorsCount = parsedErrors.filter(e => e.category === 'TIMEOUT').length;
+    const anomaliesCount = executionCyclesHistory.filter(c => c.anomalyType && c.anomalyType !== 'NORMAL').length;
+
+    res.json({
+      success: true,
+      totalParsed: allRawLogs.length,
+      criticalErrorsCount,
+      authErrorsCount,
+      timeoutErrorsCount,
+      anomaliesCount,
+      logs: parsedErrors,
+      executionCycles: executionCyclesHistory,
+      cacheStats: {
+        inMemoryLogsCount: paperLogs.length + liveLogs.length,
+        logBufferSize: logBuffer.length,
+        lastClearTime: lastDiagnosticsClearTime
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/diagnostics/clear-cache", async (req, res) => {
+  try {
+    const prevPaperCount = botData.paper?.logs?.length || 0;
+    const prevLiveCount = botData.live?.logs?.length || 0;
+
+    // Svuota i log operativi mantenendo solo un log di reset
+    const nowIso = new Date().toISOString();
+    lastDiagnosticsClearTime = nowIso;
+    
+    botData.paper.logs = [`[${nowIso}] [Sistema] Cache log diagnostici ed operativi resettata dall'utente.`];
+    botData.live.logs = [`[${nowIso}] [Sistema] Cache log diagnostici ed operativi resettata dall'utente.`];
+    
+    // Pulisci il buffer in transito verso Firestore
+    logBuffer.length = 0;
+    
+    // Aggiorna anche il file di backup su disco
+    saveLogsToBackupFile();
+
+    addLog('system', `[Diagnostica] Cache log pulita con successo (${prevPaperCount + prevLiveCount} voci rimosse).`);
+
+    res.json({
+      success: true,
+      message: `Cache log svuotata con successo. Rimosse ${prevPaperCount + prevLiveCount} voci dai log diagnostici in memoria.`,
+      clearedAt: nowIso
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // --- Alpaca Bridge Endpoints for TradingModule ---
 app.get("/api/trading/alpaca-account", async (req, res) => {
   const mode = botStatus.tradingMode;
@@ -2476,6 +2555,115 @@ export function addLog(mode: 'paper' | 'live' | 'system', message: string) {
   }
   
   console.log(logMsg);
+}
+
+// --- DIAGNOSTIC ENGINE: ADVANCED LOG & EXECUTION TRACKING ---
+export interface ExecutionCycleMetric {
+  id: string;
+  cycleId: string;
+  mode: 'paper' | 'live';
+  timestamp: string;
+  durationMs: number;
+  expectedIntervalMs: number;
+  timeSinceLastCycleMs: number;
+  anomalyType?: 'DELAYED_INTERVAL' | 'EXECUTION_SPIKE' | 'TIMEOUT_RISK' | 'NORMAL';
+  anomalySeverity?: 'low' | 'medium' | 'high';
+  anomalyDescription?: string;
+  ordersEvaluated?: number;
+  symbolsScanned?: number;
+  hadErrors?: boolean;
+}
+
+const executionCyclesHistory: ExecutionCycleMetric[] = [];
+let lastCycleCompletionTime: Record<'paper' | 'live', number> = { paper: 0, live: 0 };
+let lastDiagnosticsClearTime: string | null = null;
+
+export function recordExecutionCycleMetric(metric: ExecutionCycleMetric) {
+  executionCyclesHistory.unshift(metric);
+  if (executionCyclesHistory.length > 50) {
+    executionCyclesHistory.pop();
+  }
+}
+
+export function parseDiagnosticErrors(logs: string[], mode?: 'paper' | 'live' | 'system') {
+  const criticalItems: Array<{
+    id: string;
+    timestamp: string;
+    source: string;
+    category: 'CRITICAL_ERROR' | 'AUTH_401' | 'TIMEOUT' | 'EXECUTION_ANOMALY' | 'WARNING';
+    message: string;
+    errorType?: string;
+    mode?: 'paper' | 'live' | 'system';
+  }> = [];
+
+  for (let i = 0; i < logs.length; i++) {
+    const raw = logs[i];
+    if (!raw) continue;
+
+    // Estrai timestamp
+    const tsMatch = raw.match(/^\[(.*?)\]\s*(.*)$/);
+    const timestamp = tsMatch ? tsMatch[1] : new Date().toISOString();
+    const content = tsMatch ? tsMatch[2] : raw;
+    const lower = content.toLowerCase();
+
+    // 1. Errori Critici di Codice / Runtime
+    const isReferenceError = lower.includes('is not defined') || lower.includes('referenceerror') || lower.includes('orderstosubmit is not defined');
+    const isTypeError = lower.includes('typeerror') || lower.includes('cannot read properties') || lower.includes('cannot read property') || lower.includes('is not a function');
+    const isCrash = lower.includes('critical error') || lower.includes('fatal') || lower.includes('unhandledrejection') || lower.includes('uncaughtexception');
+    
+    // 2. Errori 401 Unauthorized / Autenticazione
+    const isAuth401 = lower.includes('401') || lower.includes('unauthorized') || lower.includes('credenziali alpaca non valide') || lower.includes('chiavi non valide o revocate') || lower.includes('autenticazione fallita');
+    
+    // 3. Timeout API & Rete
+    const isTimeout = lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout') || lower.includes('esockettimedout') || lower.includes('econnaborted') || lower.includes('econnreset') || lower.includes('fetch failed');
+
+    // 4. Warning operativi rilevanti
+    const isRiskWarning = lower.includes('[alpaca errore]') || lower.includes('[errore') || lower.includes('error:') || lower.includes('circuit breaker');
+
+    if (isReferenceError || isTypeError || isCrash) {
+      criticalItems.push({
+        id: `crit_${i}_${timestamp}`,
+        timestamp,
+        source: content.includes('[') ? (content.match(/\[(.*?)\]/)?.[1] || 'Runtime Engine') : 'Server Runtime',
+        category: 'CRITICAL_ERROR',
+        message: content,
+        errorType: isReferenceError ? 'ReferenceError' : isTypeError ? 'TypeError' : 'Runtime Crash',
+        mode
+      });
+    } else if (isAuth401) {
+      criticalItems.push({
+        id: `auth_${i}_${timestamp}`,
+        timestamp,
+        source: 'Alpaca Auth Bridge',
+        category: 'AUTH_401',
+        message: content,
+        errorType: '401 Unauthorized',
+        mode
+      });
+    } else if (isTimeout) {
+      criticalItems.push({
+        id: `timeout_${i}_${timestamp}`,
+        timestamp,
+        source: 'Network / Gateway',
+        category: 'TIMEOUT',
+        message: content,
+        errorType: 'API Timeout',
+        mode
+      });
+    } else if (isRiskWarning && (lower.includes('errore') || lower.includes('error'))) {
+      criticalItems.push({
+        id: `warn_${i}_${timestamp}`,
+        timestamp,
+        source: 'Execution Engine',
+        category: 'WARNING',
+        message: content,
+        errorType: 'Operational Error',
+        mode
+      });
+    }
+  }
+
+  return criticalItems;
 }
 
 const marketEvents: Record<string, string> = {
@@ -4449,11 +4637,100 @@ async function executeTradingCycle(force: boolean = false) {
         botStatus.lastCheck = new Date().toISOString();
         let executed = false;
         if (botStatus.paperActive || force) {
-          await executeTradingCycleForMode('paper', force);
+          const startTime = Date.now();
+          const expectedIntervalMs = (botStatus.timeframe || 15) * 60 * 1000;
+          const timeSinceLast = lastCycleCompletionTime.paper > 0 ? (startTime - lastCycleCompletionTime.paper) : expectedIntervalMs;
+          let hadErrors = false;
+          try {
+            await executeTradingCycleForMode('paper', force);
+          } catch (e) {
+            hadErrors = true;
+            throw e;
+          } finally {
+            const durationMs = Date.now() - startTime;
+            lastCycleCompletionTime.paper = Date.now();
+            
+            // Analisi anomalie temporali
+            let anomalyType: 'DELAYED_INTERVAL' | 'EXECUTION_SPIKE' | 'TIMEOUT_RISK' | 'NORMAL' = 'NORMAL';
+            let anomalySeverity: 'low' | 'medium' | 'high' = 'low';
+            let anomalyDescription: string | undefined = undefined;
+
+            if (timeSinceLast > expectedIntervalMs * 1.8 && lastCycleCompletionTime.paper > 0) {
+              anomalyType = 'DELAYED_INTERVAL';
+              anomalySeverity = timeSinceLast > expectedIntervalMs * 2.5 ? 'high' : 'medium';
+              anomalyDescription = `Intervallo ritardato di ${(timeSinceLast / (60 * 1000)).toFixed(1)}m (Atteso: ${(expectedIntervalMs / (60 * 1000)).toFixed(0)}m)`;
+            } else if (durationMs > 8000) {
+              anomalyType = 'EXECUTION_SPIKE';
+              anomalySeverity = durationMs > 15000 ? 'high' : 'medium';
+              anomalyDescription = `Picco esecutivo: il ciclo ha impiegato ${(durationMs / 1000).toFixed(1)}s per completare`;
+            } else if (hadErrors) {
+              anomalyType = 'TIMEOUT_RISK';
+              anomalySeverity = 'high';
+              anomalyDescription = 'Errore non gestito durante il ciclo operativo';
+            }
+
+            recordExecutionCycleMetric({
+              id: `cycle_paper_${Date.now()}`,
+              cycleId: `paper_${Date.now()}`,
+              mode: 'paper',
+              timestamp: new Date().toISOString(),
+              durationMs,
+              expectedIntervalMs,
+              timeSinceLastCycleMs: timeSinceLast,
+              anomalyType,
+              anomalySeverity,
+              anomalyDescription,
+              hadErrors
+            });
+          }
           executed = true;
         }
         if (botStatus.liveActive || force) {
-          await executeTradingCycleForMode('live', force);
+          const startTime = Date.now();
+          const expectedIntervalMs = (botStatus.timeframe || 15) * 60 * 1000;
+          const timeSinceLast = lastCycleCompletionTime.live > 0 ? (startTime - lastCycleCompletionTime.live) : expectedIntervalMs;
+          let hadErrors = false;
+          try {
+            await executeTradingCycleForMode('live', force);
+          } catch (e) {
+            hadErrors = true;
+            throw e;
+          } finally {
+            const durationMs = Date.now() - startTime;
+            lastCycleCompletionTime.live = Date.now();
+            
+            let anomalyType: 'DELAYED_INTERVAL' | 'EXECUTION_SPIKE' | 'TIMEOUT_RISK' | 'NORMAL' = 'NORMAL';
+            let anomalySeverity: 'low' | 'medium' | 'high' = 'low';
+            let anomalyDescription: string | undefined = undefined;
+
+            if (timeSinceLast > expectedIntervalMs * 1.8 && lastCycleCompletionTime.live > 0) {
+              anomalyType = 'DELAYED_INTERVAL';
+              anomalySeverity = timeSinceLast > expectedIntervalMs * 2.5 ? 'high' : 'medium';
+              anomalyDescription = `Intervallo ritardato di ${(timeSinceLast / (60 * 1000)).toFixed(1)}m (Atteso: ${(expectedIntervalMs / (60 * 1000)).toFixed(0)}m)`;
+            } else if (durationMs > 8000) {
+              anomalyType = 'EXECUTION_SPIKE';
+              anomalySeverity = durationMs > 15000 ? 'high' : 'medium';
+              anomalyDescription = `Picco esecutivo: il ciclo ha impiegato ${(durationMs / 1000).toFixed(1)}s per completare`;
+            } else if (hadErrors) {
+              anomalyType = 'TIMEOUT_RISK';
+              anomalySeverity = 'high';
+              anomalyDescription = 'Errore non gestito durante il ciclo operativo';
+            }
+
+            recordExecutionCycleMetric({
+              id: `cycle_live_${Date.now()}`,
+              cycleId: `live_${Date.now()}`,
+              mode: 'live',
+              timestamp: new Date().toISOString(),
+              durationMs,
+              expectedIntervalMs,
+              timeSinceLastCycleMs: timeSinceLast,
+              anomalyType,
+              anomalySeverity,
+              anomalyDescription,
+              hadErrors
+            });
+          }
           executed = true;
         }
       }

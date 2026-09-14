@@ -587,35 +587,39 @@ export class RiskManagementService {
     }
 
     // Dynamic Volatility Scaling: Se la correlazione statistica a 1h tra SPY e QQQ è >= 0.95,
-    // la soglia di inibizione ATR(14) viene ridotta dinamicamente dal 1.5% all'1.0%.
+    // la soglia di inibizione ATR(14) viene ridotta dinamicamente.
+    // Per ETF a larga capitalizzazione (SPY, QQQ, DIA, IWM, GLD, IAU) l'ATR% intrinseco è storicamente 0.40%-0.90%,
+    // per cui la soglia è calibrata a 0.35% (o 0.70% per titoli azionari individuali) per non paralizzare l'operatività.
+    const isIndexOrGold = ['SPY', 'QQQ', 'DIA', 'IWM', 'VOO', 'IVV', 'GLD', 'IAU'].includes(symbol.toUpperCase());
+    const baseThreshold = isIndexOrGold ? 0.35 : (atrRule?.parameters?.minAtrPercentThreshold ?? 0.80);
     const dynamicScalingEnabled = atrRule?.parameters?.dynamicAtrScalingEnabled ?? true;
     const corrThreshold = atrRule?.parameters?.dynamicAtrCorrThreshold ?? 0.95;
-    const reducedThreshold = atrRule?.parameters?.dynamicAtrReducedThreshold ?? 1.0;
-    const defaultThreshold = atrRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+    const reducedThreshold = isIndexOrGold ? 0.25 : (atrRule?.parameters?.dynamicAtrReducedThreshold ?? 0.50);
+    const defaultThreshold = baseThreshold;
 
     const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= corrThreshold;
     const isDynamicScalingActive = dynamicScalingEnabled && isHighCorr;
     const minAtrPct = isDynamicScalingActive ? reducedThreshold : defaultThreshold;
 
-    // CORREZIONE STRATEGICA #3 [ATR Volatility Lock]: Blocco se ATR(14) normalizzato < minAtrPct
+    // CORREZIONE STRATEGICA: Blocco se ATR(14) normalizzato < minAtrPct
     const blockLowAtrPct = atrRule?.parameters?.blockLowAtrPercent ?? true;
     if (blockLowAtrPct && atrPercent !== undefined && atrPercent < minAtrPct) {
       const dynamicNote = isDynamicScalingActive 
-        ? ` (soglia scalata dinamicamente all'${minAtrPct.toFixed(1)}% per forte correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
-        : ` (soglia standard ${minAtrPct.toFixed(1)}%)`;
+        ? ` (soglia scalata dinamicamente all'${minAtrPct.toFixed(2)}% per forte correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
+        : ` (soglia calibrata ${minAtrPct.toFixed(2)}%)`;
       return {
         allowed: false,
-        reason: `[Filtro Volatilità ATR - Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%${dynamicNote}. Volatilità compressa / fase di consolidamento orizzontale priva di direzionalità. Ingressi bloccati per evitare chop.`,
+        reason: `[Filtro Volatilità ATR - Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(2)}%${dynamicNote}. Volatilità compressa / fase di consolidamento orizzontale priva di direzionalità. Ingressi bloccati per evitare chop.`,
         effectiveThreshold: minAtrPct,
         isDynamicScalingActive
       };
     }
 
-    // Se l'ATR(14) a 5m è inferiore alla SMA(20) dell'ATR stesso (tolleranza 2% per stabilità)
-    if (atr5m < atr5mSma20 * 0.98) {
+    // Se l'ATR(14) a 5m è sensibilmente inferiore alla SMA(20) dell'ATR stesso (filtro con tolleranza ampia 85% per evitare panico)
+    if (atr5m < atr5mSma20 * 0.85) {
       return {
         allowed: false,
-        reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione/rumore.`,
+        reason: `[Filtro Volatilità Operativa ATR] ${symbol.toUpperCase()} presenta ATR(14) 5m (${atr5m.toFixed(2)}) < 85% SMA(20) dell'ATR (${atr5mSma20.toFixed(2)}). Volatilità/impulso di mercato insufficiente. Apertura inibita per evitare trade in compressione.`,
         effectiveThreshold: minAtrPct,
         isDynamicScalingActive
       };
@@ -644,11 +648,13 @@ export class RiskManagementService {
       return { allowed: true };
     }
 
-    // Dynamic Volatility Scaling: Riduzione soglia da 1.5% a 1.0% se Corr SPY-QQQ >= 0.95
+    // Dynamic Volatility Scaling: Riduzione soglia per ETF Indice / Oro (0.35% / 0.25%) e Stock (0.80% / 0.50%)
+    const isIndexOrGold = ['SPY', 'QQQ', 'DIA', 'IWM', 'VOO', 'IVV', 'GLD', 'IAU'].includes(symbol.toUpperCase());
+    const baseThreshold = isIndexOrGold ? 0.35 : (atrLockRule?.parameters?.minAtrPercentThreshold ?? 0.80);
     const dynamicScalingEnabled = atrLockRule?.parameters?.dynamicAtrScalingEnabled ?? true;
     const corrThreshold = atrLockRule?.parameters?.dynamicAtrCorrThreshold ?? 0.95;
-    const reducedThreshold = atrLockRule?.parameters?.dynamicAtrReducedThreshold ?? 1.0;
-    const defaultThreshold = atrLockRule?.parameters?.minAtrPercentThreshold ?? 1.5;
+    const reducedThreshold = isIndexOrGold ? 0.25 : (atrLockRule?.parameters?.dynamicAtrReducedThreshold ?? 0.50);
+    const defaultThreshold = baseThreshold;
 
     const isHighCorr = spyQqqCorrelation !== undefined && spyQqqCorrelation >= corrThreshold;
     const isDynamicScalingActive = dynamicScalingEnabled && isHighCorr;
@@ -656,11 +662,11 @@ export class RiskManagementService {
 
     if (atrPercent < minAtrPct) {
       const dynamicNote = isDynamicScalingActive
-        ? ` (soglia ridotta dinamicamente a ${minAtrPct.toFixed(1)}% per correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
-        : ` (soglia standard ${minAtrPct.toFixed(1)}%)`;
+        ? ` (soglia ridotta dinamicamente a ${minAtrPct.toFixed(2)}% per correlazione SPY-QQQ ${spyQqqCorrelation?.toFixed(2)} >= ${corrThreshold})`
+        : ` (soglia calibrata ${minAtrPct.toFixed(2)}%)`;
       return {
         allowed: false,
-        reason: `[ATR Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(1)}%${dynamicNote}. Volatilità compressa / mercato in consolidamento privo di direzionalità. Apertura bloccata per evitare falsi segnali in laterale.`,
+        reason: `[ATR Volatility Lock] ${symbol.toUpperCase()} presenta ATR(14) normalizzato = ${atrPercent.toFixed(2)}% < ${minAtrPct.toFixed(2)}%${dynamicNote}. Volatilità compressa / mercato in consolidamento privo di direzionalità. Apertura bloccata per evitare falsi segnali in laterale.`,
         effectiveThreshold: minAtrPct,
         isDynamicScalingActive
       };

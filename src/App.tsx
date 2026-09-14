@@ -15,6 +15,7 @@ import { SentimentBadge } from './components/SentimentBadge';
 import { ForceBuyModal } from './components/ForceBuyModal';
 import { SmartView } from './components/SmartView';
 import { VisualCycleTimer } from './components/VisualCycleTimer';
+import { AdvancedDiagnosticLogs } from './components/AdvancedDiagnosticLogs';
 
 const formatDate = (dateStr: string) => {
   try {
@@ -3784,6 +3785,11 @@ export default function App() {
         </div>
 
         {/* Panic Button Confirmation Modal */}
+        <AdvancedDiagnosticLogs 
+          showToast={showToast} 
+          onRefreshParentStatus={fetchStatus} 
+        />
+
         {showPanicConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
             <div className="bg-white rounded-2xl shadow-xl border border-red-200 max-w-md w-full p-6 overflow-hidden relative animate-scale-in">
