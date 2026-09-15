@@ -1699,7 +1699,7 @@ let botStatus: {
   userFeedbackRules: [],
   systemRiskRules: DEFAULT_SYSTEM_RISK_RULES,
   monitoredSymbols: [],
-  historicalProfits: 2.50,
+  historicalProfits: 0.0,
   y: 1,
   defaultTP: 2.00,
   defaultSL: -0.50,
@@ -3608,6 +3608,66 @@ function checkAndLogTrailingStopStatus(
   }
 }
 
+/**
+ * Calcola i profitti storici realmente realizzati (Realized PnL da chiusure effettive) su Alpaca
+ */
+async function calculateActualRealizedProfits(mode: 'paper' | 'live'): Promise<number> {
+  const conf = getAlpacaConfig(mode);
+  if (!conf.isConfigured) return 0;
+  try {
+    const actResponse = await fetch(`${conf.baseUrl}/account/activities?activity_types=FILL&direction=desc&page_size=100`, {
+      headers: {
+        'APCA-API-KEY-ID': conf.apiKey,
+        'APCA-API-SECRET-KEY': conf.secretKey
+      }
+    });
+    if (!actResponse.ok) return 0;
+    const fills = await actResponse.json();
+    if (!Array.isArray(fills) || fills.length === 0) return 0;
+
+    const fillsBySymbol = new Map<string, any[]>();
+    for (const f of fills) {
+      const sym = f.symbol;
+      if (!sym) continue;
+      if (!fillsBySymbol.has(sym)) fillsBySymbol.set(sym, []);
+      fillsBySymbol.get(sym)!.push(f);
+    }
+
+    let totalRealizedProfit = 0;
+    fillsBySymbol.forEach((symFills) => {
+      symFills.sort((a, b) => new Date(a.transaction_time || a.timestamp).getTime() - new Date(b.transaction_time || b.timestamp).getTime());
+      const buyQueue: { qty: number; price: number }[] = [];
+
+      for (const f of symFills) {
+        const side = (f.side || '').toLowerCase();
+        const qty = parseFloat(f.qty || '0');
+        const price = parseFloat(f.price || '0');
+
+        if (side === 'buy') {
+          buyQueue.push({ qty, price });
+        } else if (side === 'sell') {
+          let remainingQty = qty;
+          while (remainingQty > 0 && buyQueue.length > 0) {
+            const matchedQty = Math.min(remainingQty, buyQueue[0].qty);
+            const tradePnl = matchedQty * (price - buyQueue[0].price);
+            if (tradePnl > 0) {
+              totalRealizedProfit += tradePnl;
+            }
+            remainingQty -= matchedQty;
+            buyQueue[0].qty -= matchedQty;
+            if (buyQueue[0].qty <= 0) buyQueue.shift();
+          }
+        }
+      }
+    });
+
+    return parseFloat(totalRealizedProfit.toFixed(2));
+  } catch (err) {
+    console.warn('[Realized Profits Calculation Error]', err);
+    return 0;
+  }
+}
+
 async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean) {
   const { isConfigured, isLive, baseUrl, apiKey, secretKey } = getAlpacaConfig(mode);
   const labelTipoConto = isLive ? 'Reale (Live)' : 'Simulazione (Paper)';
@@ -3670,7 +3730,11 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     const dailyPnLPct = lastEquity > 0 ? ((botData[mode].balance - lastEquity) / lastEquity) * 100 : 0;
     const amountToBuy = mode === 'paper' ? 1000 : 5;
     
-    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} (P&L Giornaliero: ${dailyPnLPct >= 0 ? '+' : ''}${dailyPnLPct.toFixed(2)}%) | Cassa: $${botData[mode].cash.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
+    // Calcolo e sincronizzazione dei profitti storici reali realizzati dall'account Alpaca
+    const realHistoricalProfits = await calculateActualRealizedProfits(mode as 'paper' | 'live');
+    botStatus.historicalProfits = realHistoricalProfits;
+
+    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} (P&L Giornaliero: ${dailyPnLPct >= 0 ? '+' : ''}${dailyPnLPct.toFixed(2)}%) | Cassa: $${botData[mode].cash.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)} | Profitti Realizzati Storici: $${realHistoricalProfits.toFixed(2)}`);
     
     // Recupero della distanza dalla chiusura del mercato per valutare il Check-Point pre-chiusura
     const minutesToClose = await getMarketMinutesToClose(baseUrl, apiKey, secretKey);
@@ -7749,7 +7813,9 @@ async function executeAlpacaRealtimeCheck() {
           }
         }
 
-        const historicalProfits = botStatus.historicalProfits || 0;
+        // Calcolo dinamico profitti storici reali da Alpaca
+        const historicalProfits = await calculateActualRealizedProfits(mode as 'paper' | 'live');
+        botStatus.historicalProfits = historicalProfits;
         const vix24hChangePct = await getVix24hChange(getAlpacaConfig(mode));
 
         for (const pos of positions) {

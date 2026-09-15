@@ -69,7 +69,8 @@ export class RiskManagementService {
     const yHistoricalTarget = Math.min(3.00, 2 * yVal);
 
     // 1. Regola "y=1": Imponi la chiusura delle operazioni quando i profitti storici raggiungono "2Y", fino a un tetto massimo di 3€.
-    if (historicalProfits >= yHistoricalTarget) {
+    // L'Oro (Gold: GLD, IAU) è un asset primario protetto che non deve mai essere bloccato o chiuso forzatamente da questa regola.
+    if (historicalProfits >= yHistoricalTarget && !['GLD', 'IAU'].includes(asset)) {
       return {
         action: 'CLOSE',
         reason: `[Regola y=1] Profitti storici raggiunti a ${historicalProfits.toFixed(2)}€/$ (>= 2Y con target ${yHistoricalTarget.toFixed(2)}€/$ e tetto massimo 3.00€/$). Chiusura operazioni imposta.`
