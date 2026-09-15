@@ -3610,6 +3610,7 @@ function checkAndLogTrailingStopStatus(
 
 /**
  * Calcola i profitti storici realmente realizzati (Realized PnL da chiusure effettive) su Alpaca
+ * limitati alla sessione odierna (dalle ore 00:00 UTC della data corrente)
  */
 async function calculateActualRealizedProfits(mode: 'paper' | 'live'): Promise<number> {
   const conf = getAlpacaConfig(mode);
@@ -3625,8 +3626,19 @@ async function calculateActualRealizedProfits(mode: 'paper' | 'live'): Promise<n
     const fills = await actResponse.json();
     if (!Array.isArray(fills) || fills.length === 0) return 0;
 
+    // Considera la sessione odierna (inizio giornata UTC)
+    const now = new Date();
+    const startOfTodayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0)).getTime();
+
+    const sessionFills = fills.filter((f: any) => {
+      const txTime = new Date(f.transaction_time || f.timestamp).getTime();
+      return txTime >= startOfTodayUtc;
+    });
+
+    if (sessionFills.length === 0) return 0;
+
     const fillsBySymbol = new Map<string, any[]>();
-    for (const f of fills) {
+    for (const f of sessionFills) {
       const sym = f.symbol;
       if (!sym) continue;
       if (!fillsBySymbol.has(sym)) fillsBySymbol.set(sym, []);
@@ -3947,6 +3959,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
         closeReason = riskDecision.reason;
+      } else if (riskDecision && riskDecision.action === 'HOLD') {
+        shouldClose = false;
       } else if (profitAmt > 0) {
         // Se la posizione è in guadagno ma non è esattamente a 2€ e la regola y=1 non è scattata, l'istruzione categorica è ATTENDERE ('HOLD')
         shouldClose = false;
@@ -4158,6 +4172,14 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
           // Riduci la quota target di capitale al 50% (o al valore configurato)
           effectiveTargetCapitalPct = Math.min(effectiveTargetCapitalPct, highCorrEval.maxCapitalPct);
+        }
+
+        // --- REGOLA y=1: INIBIZIONE NUOVI INGRESSI AZIONARI SE TARGET GIORNALIERO RAGGIUNTO ---
+        const yVal = botStatus.y || 1;
+        const yHistoricalTarget = Math.min(3.00, 2 * yVal);
+        if (realHistoricalProfits >= yHistoricalTarget) {
+          addLog(mode as 'paper' | 'live', `[Regola y=1] Target profitti giornalieri raggiunto ($${realHistoricalProfits.toFixed(2)} >= $${yHistoricalTarget.toFixed(2)}). Nuovi ingressi inibiti per preservare i profitti di sessione (Oro preservato).`);
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => ['GLD', 'IAU', 'BAR', 'SGOL'].includes(item.symbol.toUpperCase()));
         }
 
         // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95% o 50% in high corr)
@@ -4439,26 +4461,29 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               }
 
               // --- REGOLA 3 CONSENSO MULTI-IA: FILTRO ORARIO SESSIONE POMERIDIANA (Sospensione 14:00-15:30 EST salvo trend estremo) ---
-              const estInfo = getEstMarketTime();
-              const afternoonSuspensionRes = RiskManagementService.evaluateAfternoonSessionSuspension(
-                estInfo,
-                symIndicators.adx,
-                spyQqqCorr,
-                symIndicators.rsi,
-                activeRules
-              );
-              if (afternoonSuspensionRes.isExtremeTrendExemption && afternoonSuspensionRes.reason) {
-                addLog(mode as 'paper' | 'live', afternoonSuspensionRes.reason);
-              } else if (!afternoonSuspensionRes.allowed) {
-                const vetoReason = afternoonSuspensionRes.reason || `[Filtro Orario] Sospensione operativa 14:00-15:30 EST in assenza di trend estremo. Posizione in HOLD.`;
-                addLog(mode as 'paper' | 'live', vetoReason);
-                addLogicLog(mode, {
-                  timestamp: new Date().toISOString(),
-                  symbol: item.symbol,
-                  action: 'HOLD',
-                  reasoning: vetoReason
-                });
-                continue;
+              // L'Oro (GLD, IAU) è un asset primario protetto che non è soggetto alla sospensione pomeridiana
+              if (!['GLD', 'IAU', 'BAR', 'SGOL'].includes(item.symbol.toUpperCase())) {
+                const estInfo = getEstMarketTime();
+                const afternoonSuspensionRes = RiskManagementService.evaluateAfternoonSessionSuspension(
+                  estInfo,
+                  symIndicators.adx,
+                  spyQqqCorr,
+                  symIndicators.rsi,
+                  activeRules
+                );
+                if (afternoonSuspensionRes.isExtremeTrendExemption && afternoonSuspensionRes.reason) {
+                  addLog(mode as 'paper' | 'live', afternoonSuspensionRes.reason);
+                } else if (!afternoonSuspensionRes.allowed) {
+                  const vetoReason = afternoonSuspensionRes.reason || `[Filtro Orario] Sospensione operativa 14:00-15:30 EST in assenza di trend estremo. Posizione in HOLD.`;
+                  addLog(mode as 'paper' | 'live', vetoReason);
+                  addLogicLog(mode, {
+                    timestamp: new Date().toISOString(),
+                    symbol: item.symbol,
+                    action: 'HOLD',
+                    reasoning: vetoReason
+                  });
+                  continue;
+                }
               }
 
               ordersToSubmit.push({

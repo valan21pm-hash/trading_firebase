@@ -48,7 +48,7 @@ export class RiskManagementService {
     historicalProfits: number, 
     config: RiskConfig,
     systemRules?: RiskRuleConfig[]
-  ): { action: 'CLOSE'; reason: string } | null {
+  ): { action: 'CLOSE' | 'HOLD'; reason: string } | null {
     const { unrealizedProfit, openPrice, currentPrice, highestPrice, asset, sentimentScore, previousSentimentScore, vix24hChangePct, entryTime, atr } = position;
 
     // Se non abbiamo un prezzo d'ingresso valido o un prezzo corrente, non possiamo calcolare i livelli
@@ -70,23 +70,14 @@ export class RiskManagementService {
 
     // 1. Regola "y=1": Imponi la chiusura delle operazioni quando i profitti storici raggiungono "2Y", fino a un tetto massimo di 3€.
     // L'Oro (Gold: GLD, IAU) è un asset primario protetto che non deve mai essere bloccato o chiuso forzatamente da questa regola.
-    if (historicalProfits >= yHistoricalTarget && !['GLD', 'IAU'].includes(asset)) {
+    if (historicalProfits >= yHistoricalTarget && !['GLD', 'IAU', 'BAR', 'SGOL'].includes(asset.toUpperCase())) {
       return {
         action: 'CLOSE',
         reason: `[Regola y=1] Profitti storici raggiunti a ${historicalProfits.toFixed(2)}€/$ (>= 2Y con target ${yHistoricalTarget.toFixed(2)}€/$ e tetto massimo 3.00€/$). Chiusura operazioni imposta.`
       };
     }
 
-    // 2. Gestione del pareggio: Imposta la perdita minima da considerare a 0.50€ per il pareggio su tutte le posizioni maggiori o uguali a 2€.
-    const positionMarketVal = position.currentValue ?? (currentPrice * (typeof position.qty === 'number' ? position.qty : 1));
-    if (positionMarketVal >= 2.00 && unrealizedProfit <= -0.50) {
-      return {
-        action: 'CLOSE',
-        reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
-      };
-    }
-
-    // 3. Logica di chiusura a 2€: Autorizza l'uscita a 2€ solo ed esclusivamente se i profitti correnti sono esattamente pari a 2€. In qualsiasi altro caso, l'istruzione deve essere di attendere ("Hold").
+    // 2. Logica di chiusura a 2€: Autorizza l'uscita a 2€ solo ed esclusivamente se i profitti correnti sono esattamente pari a 2€. In qualsiasi altro caso, l'istruzione deve essere di attendere ("Hold").
     if (unrealizedProfit > 0) {
       const isExactlyTwoEuro = Math.abs(unrealizedProfit - 2.00) <= 0.05;
       if (isExactlyTwoEuro) {
@@ -95,7 +86,26 @@ export class RiskManagementService {
           reason: `[Logica Chiusura a 2€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (esattamente pari alla soglia di 2.00€/$). Uscita autorizzata.`
         };
       }
-      // Se il profitto è positivo ma non esattamente 2€, non deve scattare alcuna chiusura take-profit anticipata casuale (istruzione: HOLD)
+      return {
+        action: 'HOLD',
+        reason: `[Logica Chiusura a 2€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (differente dalla soglia vincolante di 2.00€/$). Istruzione: ATTENDERE ('HOLD').`
+      };
+    }
+
+    // 3. Gestione del pareggio: Imposta la perdita minima da considerare a 0.50€ per il pareggio su tutte le posizioni maggiori o uguali a 2€.
+    const positionMarketVal = position.currentValue ?? (currentPrice * (typeof position.qty === 'number' ? position.qty : 1));
+    if (positionMarketVal >= 2.00) {
+      if (unrealizedProfit <= -0.50) {
+        return {
+          action: 'CLOSE',
+          reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
+        };
+      } else if (unrealizedProfit <= 0) {
+        return {
+          action: 'HOLD',
+          reason: `[Gestione Pareggio] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) con perdita contenuta ($${unrealizedProfit.toFixed(2)} > -0.50€/$). Istruzione: ATTENDERE ('HOLD').`
+        };
+      }
     }
 
     // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE) ---
@@ -485,6 +495,11 @@ export class RiskManagementService {
       return { allowed: true };
     }
 
+    // Oro (GLD, IAU) asset primario valido: non bloccare mai le direttive o i calcoli strategici che lo riguardano
+    if (['GLD', 'IAU', 'BAR', 'SGOL'].includes(symbol.toUpperCase())) {
+      return { allowed: true };
+    }
+
     // Regola Adattiva: Sospensione del filtro EMA 20/50 se SPY-QQQ Correlation >= 0.95
     const suspendOnHighCorr = emaRule?.parameters?.suspendOnHighCorrelation ?? true;
     const highCorrThreshold = emaRule?.parameters?.highCorrelationThreshold ?? 0.95;
@@ -622,6 +637,11 @@ export class RiskManagementService {
     const atrRule = systemRules?.find(r => r.type === 'ATR_VOLATILITY_FILTER' || r.type === 'ATR_VOLATILITY_LOCK');
     const isEnabled = atrRule?.enabled ?? true;
     if (!isEnabled) {
+      return { allowed: true };
+    }
+
+    // Oro (GLD, IAU) asset primario valido: non bloccare mai le direttive o i calcoli strategici che lo riguardano
+    if (['GLD', 'IAU', 'BAR', 'SGOL'].includes(symbol.toUpperCase())) {
       return { allowed: true };
     }
 
