@@ -45,7 +45,7 @@ export class RiskManagementService {
   
   public static evaluateClosure(
     position: Position, 
-    _historicalProfits: number, 
+    historicalProfits: number, 
     config: RiskConfig,
     systemRules?: RiskRuleConfig[]
   ): { action: 'CLOSE'; reason: string } | null {

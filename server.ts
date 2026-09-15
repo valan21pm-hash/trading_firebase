@@ -3650,15 +3650,27 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     }
     
     const account = await response.json();
-    botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
+    const portfolioEquity = parseFloat(account.equity || account.portfolio_value || '0');
+    const cashVal = parseFloat(account.cash !== undefined ? account.cash : '0');
+    const nonMarginableBP = parseFloat(account.non_marginable_buying_power !== undefined ? account.non_marginable_buying_power : '0');
+    const rawBP = parseFloat(account.buying_power !== undefined ? account.buying_power : '0');
+    
+    // Su conti Alpaca Cash / RegT e per ordini frazionari, il vero potere d'acquisto disponibile è il massimo tra cassa reale, potere non-marginabile e buying power generico
+    let currentBuyingPower = Math.max(cashVal, nonMarginableBP, rawBP);
+    if (currentBuyingPower <= 0 && portfolioEquity > 0) {
+      // Se buying power è 0 ma c'è equity, usa l'equity come cassa disponibile
+      currentBuyingPower = portfolioEquity;
+    }
+    
+    botData[mode].balance = portfolioEquity > 0 ? portfolioEquity : botData[mode].balance;
+    botData[mode].cash = cashVal > 0 ? cashVal : currentBuyingPower;
     botData[mode].accountNumber = account.account_number;
     
-    let currentBuyingPower = parseFloat(account.buying_power || '0');
     const lastEquity = parseFloat(account.last_equity || account.equity || '0');
     const dailyPnLPct = lastEquity > 0 ? ((botData[mode].balance - lastEquity) / lastEquity) * 100 : 0;
     const amountToBuy = mode === 'paper' ? 1000 : 5;
     
-    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} (P&L Giornaliero: ${dailyPnLPct >= 0 ? '+' : ''}${dailyPnLPct.toFixed(2)}%) | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
+    addLog(mode as 'paper' | 'live', `[Alpaca] Conto di ${labelTipoConto} verificato con successo. Saldo Equity: $${botData[mode].balance.toFixed(2)} (P&L Giornaliero: ${dailyPnLPct >= 0 ? '+' : ''}${dailyPnLPct.toFixed(2)}%) | Cassa: $${botData[mode].cash.toFixed(2)} | Potere d'Acquisto: $${currentBuyingPower.toFixed(2)}`);
     
     // Recupero della distanza dalla chiusura del mercato per valutare il Check-Point pre-chiusura
     const minutesToClose = await getMarketMinutesToClose(baseUrl, apiKey, secretKey);
@@ -3790,6 +3802,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     for (const pos of openPositions) {
       const symbol = pos.symbol;
       const { score: sentimentScore, reasoning: sentimentReasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
+      const isSentimentError = sentimentReasoning.includes('Errore') || 
+                               sentimentReasoning.includes('Quota') || 
+                               sentimentReasoning.includes('Nessun sentiment');
       
       const profitPct = parseFloat(pos.unrealized_intraday_plpc || pos.unrealized_plpc || '0');
       const profitAmt = parseFloat(pos.unrealized_pl || '0');
@@ -3873,10 +3888,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         shouldClose = false;
       } else {
         // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment
-        const isSentimentError = sentimentReasoning.includes('Errore') || 
-                                 sentimentReasoning.includes('Quota') || 
-                                 sentimentReasoning.includes('Nessun sentiment');
-
         if (!isSentimentError && sentimentScore < -0.35) {
           if (!positionEntryTimes[mode][symbol]) {
             positionEntryTimes[mode][symbol] = Date.now();
@@ -4006,16 +4017,16 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         reasoning: reason
       });
     } else {
-      // Controllo soglia critica liquidità (< 5% del valore totale)
-      const totalAccountEquity = botData[mode].balance;
-      if (currentBuyingPower < 0.05 * totalAccountEquity) {
-        addLog(mode as 'paper' | 'live', `[Liquidità Critica] Liquidità disponibile ($${currentBuyingPower.toFixed(2)}) inferiore al 5% del totale conto ($${totalAccountEquity.toFixed(2)}). Apertura nuove posizioni bloccata.`);
+      // Controllo soglia critica liquidità (< $2.00 minimo per ordine frazionario)
+      const totalAccountEquity = botData[mode].balance > 0 ? botData[mode].balance : Math.max(currentBuyingPower, 100);
+      if (currentBuyingPower < 2.0) {
+        addLog(mode as 'paper' | 'live', `[Liquidità Insufficiente] Liquidità disponibile ($${currentBuyingPower.toFixed(2)}) inferiore al minimo d'ordine di $2.00. Apertura nuove posizioni sospesa.`);
       } else {
-        // Filtra tutti i simboli con sentiment positivo (>= 0.20)
+        // Filtra tutti i simboli con sentiment positivo (>= 0.20), con Oro (GLD/IAU) sempre ammesso come asset primario e riserva di valore
         let positiveSymbolsWithSentiment = ALL_TRADED_SYMBOLS.map(symbol => {
           const { score, reasoning } = bulkSentiment[symbol] || { score: 0, reasoning: 'Nessun sentiment disponibile' };
           return { symbol, score, reasoning };
-        }).filter(item => item.score >= 0.20);
+        }).filter(item => item.score >= 0.20 || ['GLD', 'IAU'].includes(item.symbol));
 
         // Veto dell'Esperto Statistico di Sfondo
         positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => {
@@ -4041,17 +4052,17 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode as 'paper' | 'live', `[Filtro Tech QQQ] Sentiment QQQ (${qqqScore.toFixed(2)}) < 0.2: apertura di nuove posizioni Tech bloccata.`);
         }
 
-        // Gestione Liquidità Bassa (< $100 o < $70)
-        if (currentBuyingPower < 70) {
-          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => item.score > 0.5);
-          addLog(mode as 'paper' | 'live', `[Liquidità < $70] Operatività limitata a singoli asset con sentiment > 0.50.`);
-        } else if (currentBuyingPower < 100) {
-          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => item.score > 0.6);
-          addLog(mode as 'paper' | 'live', `[Liquidità < $100] Esposizione limitata a 1 asset con sentiment > 0.60.`);
+        // Gestione Liquidità Residua: se la liquidità è molto bassa (< $20), focalizza sui massimi punteggi ma mantieni SEMPRE l'Oro primario
+        if (currentBuyingPower < 20) {
+          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => ['GLD', 'IAU'].includes(item.symbol) || item.score > 0.5);
+          addLog(mode as 'paper' | 'live', `[Liquidità Residua < $20] Nuove aperture limitate a Oro primario e asset ad alta convinzione.`);
         }
 
-        // Priorità di Selezione Globale: priorità assoluta ad asset singoli con sentiment > 0.65
+        // Priorità di Selezione Globale: priorità assoluta ad Oro primario (GLD/IAU) e asset singoli con sentiment > 0.65
         positiveSymbolsWithSentiment.sort((a, b) => {
+          const aIsGold = ['GLD', 'IAU'].includes(a.symbol) ? 1 : 0;
+          const bIsGold = ['GLD', 'IAU'].includes(b.symbol) ? 1 : 0;
+          if (aIsGold !== bIsGold) return bIsGold - aIsGold;
           const aPriority = a.score > 0.65 ? 1 : 0;
           const bPriority = b.score > 0.65 ? 1 : 0;
           if (aPriority !== bPriority) return bPriority - aPriority;
@@ -4087,16 +4098,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
         // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95% o 50% in high corr)
         const maxPosRule = activeRules.find(r => r.type === 'MAX_CONCURRENT_POSITIONS_CAP');
-        const maxPositions = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
+        const configuredMaxPos = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
         const currentSlotsFilled = openPositions.length;
-        let availableSlots = maxPositions - currentSlotsFilled;
+        let availableSlots = Math.max(0, configuredMaxPos - currentSlotsFilled);
 
         if (availableSlots <= 0) {
-          addLog(mode as 'paper' | 'live', `[Cap Posizioni Simultanee] Limite massimo di ${maxPositions} posizioni raggiunto (${currentSlotsFilled}/${maxPositions} occupate). Nessun nuovo acquisto effettuato.`);
-        }
-
-        if (currentBuyingPower < 100) {
-          availableSlots = Math.min(availableSlots, 1);
+          addLog(mode as 'paper' | 'live', `[Cap Posizioni Simultanee] Limite massimo di ${configuredMaxPos} posizioni raggiunto (${currentSlotsFilled}/${configuredMaxPos} occupate). Nessun nuovo acquisto effettuato.`);
         }
 
         // Quota target di capitale totale da impiegare (default 95% dell'equity, ridotto al 50% se correlazione elevata)
@@ -4109,25 +4116,30 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
 
         // Capitale rimanente da allocare per raggiungere il target (es. 95%)
         const remainingCapitalToTarget = Math.max(0, targetCapitalUsage - currentlyInvested);
-        const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget);
+        const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget > 0 ? remainingCapitalToTarget : currentBuyingPower * 0.98);
+
+        // Limita gli slot in base al capitale minimo per operazione ($2.00)
+        const maxFundableSlots = Math.max(1, Math.floor(allocatableBuyingPower / 2.0));
+        availableSlots = Math.min(availableSlots, maxFundableSlots);
 
         const ordersToSubmit: { symbol: string; sentimentScore: number; reasoning: string; amount: number }[] = [];
         let submittedOrdersCount = 0;
 
-        if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0 && allocatableBuyingPower > 2.0) {
+        if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0 && allocatableBuyingPower >= 2.0) {
           const numCandidatesToFund = Math.min(availableSlots, positiveSymbolsWithSentiment.length);
 
           // Calcola allocazione per singola operazione calibrata per distribuire il capitale al target 95%
           let singlePositionSize = Math.floor((allocatableBuyingPower / numCandidatesToFund) * 100) / 100;
 
-          // Cap prudenziale per singola posizione (non più del 45% dell'equity a meno che maxPositions sia <= 2)
-          const maxSinglePositionCap = totalAccountEquity * (maxPositions <= 2 ? 0.90 : 0.45);
+          // Cap prudenziale per singola posizione (non più del 45% dell'equity a meno che configuredMaxPos sia <= 2)
+          const maxSinglePositionCap = totalAccountEquity * (configuredMaxPos <= 2 ? 0.90 : 0.45);
           singlePositionSize = Math.min(singlePositionSize, maxSinglePositionCap);
           singlePositionSize = Math.max(2.0, singlePositionSize);
 
           addLog(mode as 'paper' | 'live', `[Allocazione Capitale ${targetCapitalPct}%] Equity: $${totalAccountEquity.toFixed(2)} | Target (${targetCapitalPct}%): $${targetCapitalUsage.toFixed(2)} | Attualmente Investito: $${currentlyInvested.toFixed(2)} | Rimanente al Target: $${remainingCapitalToTarget.toFixed(2)} | Allocazione per singola operazione: $${singlePositionSize.toFixed(2)} (${numCandidatesToFund} asset in questo ciclo).`);
 
           let slotsAllocated = 0;
+          let remainingPlannedBP = allocatableBuyingPower;
           
           const sAndPTrackers = ['SPY', 'VOO', 'IVV', 'VTI'];
 
@@ -4147,7 +4159,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           while (slotsAllocated < availableSlots && positiveSymbolsWithSentiment.length > 0) {
             let allocatedInThisRound = 0;
             for (const item of positiveSymbolsWithSentiment) {
-              if (slotsAllocated >= availableSlots) break;
+              if (slotsAllocated >= availableSlots || remainingPlannedBP < 2.0) break;
 
               // Restrizione S&P 500 trackers: max 1 posizione contemporanea tra SPY, VOO, IVV, VTI
               if (sAndPTrackers.includes(item.symbol)) {
@@ -4182,8 +4194,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               }
 
               let amountToBuy = singlePositionSize;
-              if (currentBuyingPower < 100) {
-                amountToBuy = currentBuyingPower;
+              if (['GLD', 'IAU'].includes(item.symbol)) {
+                amountToBuy = singlePositionSize;
               } else if (item.score > 0.6) {
                 amountToBuy = singlePositionSize;
               } else if (item.score > 0.4) {
@@ -4192,8 +4204,8 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 amountToBuy = Math.max(2.0, singlePositionSize * 0.70);
               }
 
-              // Non superare mai il potere d'acquisto disponibile
-              amountToBuy = Math.min(amountToBuy, currentBuyingPower * 0.98);
+              // Non superare mai il capitale pianificabile ancora residuo
+              amountToBuy = Math.min(amountToBuy, remainingPlannedBP);
               amountToBuy = Math.floor(amountToBuy * 100) / 100;
 
               if (amountToBuy < 2.0) continue;
@@ -4392,6 +4404,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
                 amount: amountToBuy
               });
 
+              remainingPlannedBP = Math.max(0, remainingPlannedBP - amountToBuy);
               slotsAllocated++;
               allocatedInThisRound++;
             }
@@ -4458,12 +4471,12 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
             }
           }
         } else if (availableSlots <= 0) {
-          addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`);
+          addLog(mode as 'paper' | 'live', `[Portafoglio] Limite di operazioni contemporanee raggiunto (${configuredMaxPos}/${configuredMaxPos}). Nessun nuovo acquisto pianificato.`);
           addLogicLog(mode, {
             timestamp: new Date().toISOString(),
             symbol: 'PORTFOLIO',
             action: 'HOLD',
-            reasoning: `Limite di operazioni contemporanee raggiunto (${maxPositions}/${maxPositions}). Nessun nuovo acquisto pianificato.`
+            reasoning: `Limite di operazioni contemporanee raggiunto (${configuredMaxPos}/${configuredMaxPos}). Nessun nuovo acquisto pianificato.`
           });
         } else {
           addLogicLog(mode, {
@@ -4523,6 +4536,10 @@ async function verifyAlpacaConnectionAndResume(): Promise<{ paperConnected: bool
           paperConnected = true;
           const acc = await res.json();
           botData.paper.balance = parseFloat(acc.equity || acc.portfolio_value || '0');
+          const pCash = parseFloat(acc.cash !== undefined ? acc.cash : '0');
+          const pNonMargin = parseFloat(acc.non_marginable_buying_power !== undefined ? acc.non_marginable_buying_power : '0');
+          const pRawBP = parseFloat(acc.buying_power !== undefined ? acc.buying_power : '0');
+          botData.paper.cash = Math.max(pCash, pNonMargin, pRawBP);
           botData.paper.accountNumber = acc.account_number;
         } else if (res.status === 401) {
           console.warn('[HealthCheck 30m] Chiavi Paper non valide o revocate (401).');
@@ -4546,7 +4563,10 @@ async function verifyAlpacaConnectionAndResume(): Promise<{ paperConnected: bool
           liveConnected = true;
           const acc = await res.json();
           botData.live.balance = parseFloat(acc.equity || acc.portfolio_value || '0');
-          botData.live.cash = parseFloat(acc.cash || acc.buying_power || '0');
+          const lCash = parseFloat(acc.cash !== undefined ? acc.cash : '0');
+          const lNonMargin = parseFloat(acc.non_marginable_buying_power !== undefined ? acc.non_marginable_buying_power : '0');
+          const lRawBP = parseFloat(acc.buying_power !== undefined ? acc.buying_power : '0');
+          botData.live.cash = Math.max(lCash, lNonMargin, lRawBP);
           botData.live.accountNumber = acc.account_number;
           // Assicura che la modalità Live sia flaggata attiva se le credenziali sono valide e configurate
           if (!botStatus.liveActive) {
@@ -6469,7 +6489,11 @@ async function getStatusData() {
         if (accResponse.ok) {
           const account = await accResponse.json();
           botData[mode].balance = parseFloat(account.equity || account.portfolio_value || '0');
-          botData[mode].cash = parseFloat(account.cash !== undefined ? account.cash : (account.buying_power || '0'));
+          const cashVal = parseFloat(account.cash !== undefined ? account.cash : '0');
+          const nonMarginableBP = parseFloat(account.non_marginable_buying_power !== undefined ? account.non_marginable_buying_power : '0');
+          const rawBP = parseFloat(account.buying_power !== undefined ? account.buying_power : '0');
+          const effectiveCash = Math.max(cashVal, nonMarginableBP, rawBP);
+          botData[mode].cash = effectiveCash > 0 ? effectiveCash : (positions.length === 0 ? botData[mode].balance : 0);
           botData[mode].accountNumber = account.account_number;
         } else {
           if (accResponse.status === 401 && !errorAlpaca) {
