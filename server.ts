@@ -3991,7 +3991,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       }
 
       if (shouldClose) {
-        addLog(mode as 'paper' | 'live', `[Portafoglio] ${closeReason} Procedo alla CHIUSURA della posizione su ${symbol}.`);
+        addLog(mode as 'paper' | 'live', `[Decisione IA: SELL] ${symbol} - Procedo alla CHIUSURA della posizione. Motivo: ${closeReason}`);
         addLogicLog(mode, {
           timestamp: new Date().toISOString(),
           symbol,
@@ -4034,9 +4034,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         }
       } else {
         if (isSentimentError) {
-          addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Analisi sentiment temporaneamente non disponibile: ${sentimentReasoning}). Il bot continua a monitorare l'asset tramite i restanti parametri di rischio (SL/TP/Trailing).`);
+          addLog(mode as 'paper' | 'live', `[Decisione IA: HOLD] Mantengo ${symbol} (Sentiment temporaneamente non disponibile: ${sentimentReasoning}). Parametri di rischio attivi.`);
         } else {
-          addLog(mode as 'paper' | 'live', `[Portafoglio] Mantengo la posizione su ${symbol} (Sentiment favorevole: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Il bot monitora costantemente l'asset per eventuali chiusure automatiche.`);
+          addLog(mode as 'paper' | 'live', `[Decisione IA: HOLD] Mantengo ${symbol} (Sentiment favorevole: ${sentimentScore.toFixed(2)}: ${sentimentReasoning}). Parametri di rischio attivi.`);
         }
 
         addLogicLog(mode, {
@@ -4512,7 +4512,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
               continue;
             }
 
-            addLog(mode as 'paper' | 'live', `[Mercato] Sentiment positivo per ${order.symbol}: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario (notional: $${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}).`);
+            addLog(mode as 'paper' | 'live', `[Decisione IA: BUY] ${order.symbol} - Sentiment favorevole: ${order.sentimentScore.toFixed(2)}. Procedo all'acquisto frazionario ($${order.amount.toFixed(2)}) su Alpaca (${labelTipoConto}). Motivazione: ${order.reasoning}`);
             addLogicLog(mode, {
               timestamp: new Date().toISOString(),
               symbol: order.symbol,

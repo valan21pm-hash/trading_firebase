@@ -815,7 +815,8 @@ function AccountPanel({
   // Stati per le nuove impostazioni di rischio e bot
   const [showSettingsForm, setShowSettingsForm] = useState(false);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
-  const [onlyMarketLogs, setOnlyMarketLogs] = useState(true);
+  const [logFilterMode, setLogFilterMode] = useState<'decisions' | 'all' | 'executions'>('decisions');
+  const [onlyMarketLogs, setOnlyMarketLogs] = useState(false);
   const [maxPos, setMaxPos] = useState<number>(10);
   const [tf, setTf] = useState<number>(15);
   const [risk, setRisk] = useState<number>(10);
@@ -1436,19 +1437,44 @@ function AccountPanel({
         <div className="mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-1 mb-2">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-gray-900">Log Operazioni a Mercato</h3>
-              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">Solo Azioni Reali</span>
+              <h3 className="text-sm font-medium text-gray-900">Console Log & Decisioni Operative</h3>
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setLogFilterMode('decisions')}
+                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                    logFilterMode === 'decisions'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  🎯 Decisioni IA & Mercato
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogFilterMode('all')}
+                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                    logFilterMode === 'all'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  📋 Tutti i Log
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogFilterMode('executions')}
+                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                    logFilterMode === 'executions'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ⚡ Solo Esecuzioni
+                </button>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-gray-500">
-              <label className="flex items-center gap-1 cursor-pointer select-none text-indigo-700 font-semibold">
-                <input
-                  type="checkbox"
-                  checked={onlyMarketLogs}
-                  onChange={(e) => setOnlyMarketLogs(e.target.checked)}
-                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
-                />
-                <span>Solo Esecuzioni</span>
-              </label>
               <label className="flex items-center gap-1 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -1478,58 +1504,77 @@ function AccountPanel({
               </label>
             </div>
           </div>
-          <div className="bg-gray-900 text-gray-300 p-3 rounded-lg text-xs font-mono h-40 overflow-y-auto flex flex-col gap-1">
+          <div className="bg-gray-900 text-gray-300 p-3 rounded-lg text-xs font-mono h-64 overflow-y-auto flex flex-col gap-1 border border-gray-800 shadow-inner">
             {(() => {
-              const isMarketAction = (log: string) => {
+              const filterLog = (log: string) => {
                 const lower = log.toLowerCase();
-                // Elimina log di countdown e routine superflui
+                // Filtra unicamente i countdown ripetitivi del server
                 if (
-                  lower.includes('in attesa finestra') || 
+                  lower.includes('in attesa finestra di calcolo') || 
                   lower.includes('verifica connessione') || 
-                  lower.includes('ciclo di trading ignorato') ||
-                  lower.includes('[scansione azioni]') ||
-                  lower.includes('[modulo statistico]') ||
-                  lower.includes('[mercato] avvio analisi') ||
-                  lower.includes('[intraday] mancano') ||
-                  lower.includes('mantengo la posizione') ||
-                  lower.includes('limite di operazioni') ||
-                  lower.includes('nessun asset con sentiment') ||
-                  lower.includes('[valutazione ia] riepilogo') ||
-                  lower.includes('salto acquisto') ||
-                  lower.includes('👉 [') ||
-                  lower.includes('└─ motivazione')
+                  lower.includes('ciclo di trading ignorato')
                 ) {
                   return false;
                 }
-                if (!onlyMarketLogs) return true;
-                return (
-                  log.includes('Scansione Mercato') ||
-                  log.includes('ACQUISTO') ||
-                  log.includes('Acquistato') ||
-                  log.includes('VENDITA') ||
-                  log.includes('Venduto') ||
-                  log.includes('STOP-LOSS') ||
-                  log.includes('Trailing Stop') ||
-                  log.includes('HARD-RISK') ||
-                  log.includes('Circuit Breaker') ||
-                  log.includes('Errore') ||
-                  log.includes('ERRORE') ||
-                  log.includes('MANUALE') ||
-                  log.includes('Target') ||
-                  log.includes('Chiusura') ||
-                  log.includes('CHIUSURA')
-                );
+
+                if (logFilterMode === 'executions') {
+                  return (
+                    log.includes('Scansione Mercato') ||
+                    log.includes('ACQUISTO') ||
+                    log.includes('Acquistato') ||
+                    log.includes('VENDITA') ||
+                    log.includes('Venduto') ||
+                    log.includes('STOP-LOSS') ||
+                    log.includes('Trailing Stop') ||
+                    log.includes('HARD-RISK') ||
+                    log.includes('Circuit Breaker') ||
+                    log.includes('Target') ||
+                    log.includes('Chiusura') ||
+                    log.includes('CHIUSURA')
+                  );
+                }
+
+                if (logFilterMode === 'decisions') {
+                  return (
+                    log.includes('Decisione') ||
+                    log.includes('DECISIONE') ||
+                    log.includes('Valutazione IA') ||
+                    log.includes('VALUTAZIONE IA') ||
+                    log.includes('Sentiment') ||
+                    log.includes('sentiment') ||
+                    log.includes('BUY') ||
+                    log.includes('SELL') ||
+                    log.includes('HOLD') ||
+                    log.includes('Acquistato') ||
+                    log.includes('ACQUISTO') ||
+                    log.includes('Venduto') ||
+                    log.includes('VENDITA') ||
+                    log.includes('Chiusura') ||
+                    log.includes('CHIUSURA') ||
+                    log.includes('Mantengo') ||
+                    log.includes('👉') ||
+                    log.includes('└─') ||
+                    log.includes('Regola') ||
+                    log.includes('Portafoglio') ||
+                    log.includes('Mercato') ||
+                    log.includes('Alpaca') ||
+                    log.includes('Errore') ||
+                    log.includes('ERRORE')
+                  );
+                }
+
+                return true;
               };
 
-              const rawLogs = (account.logs || []).filter(isMarketAction);
+              const rawLogs = (account.logs || []).filter(filterLog);
               const processedLogs = reverseLogs ? rawLogs : [...rawLogs].reverse();
               
               if (processedLogs.length === 0) {
                 return (
                   <div className="text-gray-500 italic py-6 text-center">
-                    {onlyMarketLogs 
-                      ? 'Nessuna operazione a mercato recente (ordini, acquisti, vendite, stop loss).' 
-                      : 'Nessun log disponibile...'}
+                    {logFilterMode === 'executions'
+                      ? 'Nessuna esecuzione recente (ordini eseguiti, stop loss o prese di profitto).' 
+                      : 'Nessuna decisione o log registrato al momento.'}
                   </div>
                 );
               }
@@ -1552,15 +1597,26 @@ function AccountPanel({
 
               return processedLogs.map((log, i) => {
                 const formattedText = formatLogMsg(log);
+                const isBuy = log.includes('Acquistato') || log.includes('ACQUISTO') || log.includes('BUY') || log.includes('🟢 RIALZISTA');
+                const isSell = log.includes('Venduto') || log.includes('VENDITA') || log.includes('CHIUSURA') || log.includes('SELL') || log.includes('🔴 RIBASSISTA');
+                const isHold = log.includes('HOLD') || log.includes('Mantengo') || log.includes('🟡 NEUTRO');
+                const isReason = log.includes('└─ Motivazione') || log.includes('Motivazione:');
+                const isDecisionHeader = log.includes('[Valutazione IA]') || log.includes('[Decisione IA') || log.includes('[Regola');
+                const isError = log.includes('Errore') || log.includes('ERRORE');
+                const isWarning = log.includes('STOP') || log.includes('Trailing') || log.includes('Allarme');
+
                 return (
                   <div
                     key={i}
                     className={`${
-                      log.includes('Acquistato') || log.includes('ACQUISTO') ? 'text-green-400' : 
-                      log.includes('Venduto') || log.includes('VENDITA') || log.includes('CHIUSURA') ? 'text-red-400' : 
-                      log.includes('Errore') || log.includes('ERRORE') ? 'text-red-500 font-bold' :
-                      log.includes('STOP') || log.includes('Trailing') ? 'text-amber-400' :
-                      'text-gray-400'
+                      isBuy ? 'text-emerald-400 font-semibold' : 
+                      isSell ? 'text-rose-400 font-semibold' : 
+                      isError ? 'text-red-400 font-bold bg-red-950/20 px-1 rounded' :
+                      isWarning ? 'text-amber-400 font-medium' :
+                      isDecisionHeader ? 'text-cyan-300 font-semibold' :
+                      isHold ? 'text-amber-200' :
+                      isReason ? 'text-slate-300 italic pl-3 border-l border-slate-700 ml-1' :
+                      'text-gray-300'
                     } ${wrapLogs ? 'break-words whitespace-pre-wrap' : 'whitespace-nowrap overflow-x-auto truncate'}`}
                   >
                     {formattedText}
