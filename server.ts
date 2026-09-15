@@ -316,7 +316,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'correlation_momentum_filter',
-    enabled: true,
+    enabled: false,
     type: 'CORRELATION_MOMENTUM_FILTER',
     parameters: {
       minSpyQqqCorrelation: 0.95,
@@ -1742,7 +1742,7 @@ let positionStopOverrides: {
 
 function getDefaultStrategy(symbol: string): 'Prudente' | 'Conservativa' | 'Aggressiva' {
   const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
-  const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
+  const COMMODITIES = ['GLD', 'IAU', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
   if (INDICES.includes(symbol)) return 'Conservativa';
   if (COMMODITIES.includes(symbol)) return 'Prudente';
   return 'Aggressiva';
@@ -3704,7 +3704,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
     }
 
     const INDICES = ['SPY', 'VOO', 'IVV', 'VTI', 'QQQ'];
-    const COMMODITIES = ['GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
+    const COMMODITIES = ['GLD', 'IAU', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'UGA', 'WEAT', 'CORN'];
     
     // Scansione dinamica giornaliera di asset esterni ad alto potenziale di rialzo
     let trendingSymbols: string[] = [];
@@ -3864,48 +3864,40 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       let shouldClose = false;
       let closeReason = '';
 
-      // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment (manterremo basato su SL/TP/Trailing)
-      const isSentimentError = sentimentReasoning.includes('Errore') || 
-                               sentimentReasoning.includes('Quota') || 
-                               sentimentReasoning.includes('Nessun sentiment');
-
-      if (!isSentimentError && sentimentScore < -0.2) {
-        if (!positionEntryTimes[mode][symbol]) {
-          positionEntryTimes[mode][symbol] = Date.now();
-        }
-        const entryTime = positionEntryTimes[mode][symbol];
-        const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
-        
-        // Time-Based Holding (Mantenimento Minimo 60 Minuti Anti-Churn)
-        const holdingRule = (botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES).find(r => r.type === 'TIME_BASED_HOLDING');
-        const minHoldingMins = (holdingRule && holdingRule.enabled) ? (holdingRule.parameters.minHoldingMinutes ?? 60) : 60;
-        const isHoldingBlocked = (holdingRule?.enabled ?? true) && ageMinutes < minHoldingMins;
-        
-        const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
-        const isCatastrophicBreach = currentPlPct <= -3.00;
-
-        if (isHoldingBlocked && !isCatastrophicBreach) {
-          addLog(mode as 'paper' | 'live', `[Time-Based Holding] Posizione su ${symbol} aperta da ${ageMinutes.toFixed(1)} min < ${minHoldingMins} min: chiusura anticipata da sentiment bloccata a tutela del trend (P&L attuale: ${currentPlPct >= 0 ? '+' : ''}${currentPlPct.toFixed(2)}%).`);
-        } else {
-          shouldClose = true;
-          closeReason = `Sentiment negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
-        }
-      } else if (riskDecision && riskDecision.action === 'CLOSE') {
+      // 1. Valutazione prioritaria delle regole di Risk Management (y=1, uscita a 2€ esatti, pareggio 0.50€ su posizioni >= 2€, SL/TP/Trailing)
+      if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
         closeReason = riskDecision.reason;
-      } else if (isPreCloseWindow) {
-        // Regola EOD: Eliminata la chiusura automatica generica dei profitti a fine giornata.
-        // Vengono chiuse a fine giornata SOLO ed ESCLUSIVAMENTE le posizioni con margine di profitto >= +2.00%.
-        const profitMarginPct = avgEntryPrice > 0 
-          ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 
-          : (profitPct * 100);
+      } else if (profitAmt > 0) {
+        // Se la posizione è in guadagno ma non è esattamente a 2€ e la regola y=1 non è scattata, l'istruzione categorica è ATTENDERE ('HOLD')
+        shouldClose = false;
+      } else {
+        // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment
+        const isSentimentError = sentimentReasoning.includes('Errore') || 
+                                 sentimentReasoning.includes('Quota') || 
+                                 sentimentReasoning.includes('Nessun sentiment');
 
-        if (profitMarginPct >= 2.0) {
-          shouldClose = true;
-          closeReason = `[Check-Point EOD - Target +2%] Posizione su ${symbol} ha raggiunto un margine di profitto di +${profitMarginPct.toFixed(2)}% (>= +2.00%, utile +$${profitAmt.toFixed(2)}). Chiusura e monetizzazione target a fine giornata.`;
-        } else {
-          shouldClose = false;
-          addLog(mode as 'paper' | 'live', `[Check-Point EOD] Posizione su ${symbol} MANTENUTA a fine giornata: Margine di profitto attuale (${profitMarginPct >= 0 ? '+' : ''}${profitMarginPct.toFixed(2)}%) inferiore alla soglia di uscita EOD del +2.00%. Nessuna liquidazione forzata.`);
+        if (!isSentimentError && sentimentScore < -0.35) {
+          if (!positionEntryTimes[mode][symbol]) {
+            positionEntryTimes[mode][symbol] = Date.now();
+          }
+          const entryTime = positionEntryTimes[mode][symbol];
+          const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
+          
+          // Time-Based Holding (Mantenimento Minimo 60 Minuti Anti-Churn)
+          const holdingRule = (botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES).find(r => r.type === 'TIME_BASED_HOLDING');
+          const minHoldingMins = (holdingRule && holdingRule.enabled) ? (holdingRule.parameters.minHoldingMinutes ?? 60) : 60;
+          const isHoldingBlocked = (holdingRule?.enabled ?? true) && ageMinutes < minHoldingMins;
+          
+          const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
+          const isCatastrophicBreach = currentPlPct <= -3.00;
+
+          if (isHoldingBlocked && !isCatastrophicBreach) {
+            addLog(mode as 'paper' | 'live', `[Time-Based Holding] Posizione su ${symbol} aperta da ${ageMinutes.toFixed(1)} min < ${minHoldingMins} min: chiusura anticipata da sentiment bloccata a tutela del trend (P&L attuale: ${currentPlPct >= 0 ? '+' : ''}${currentPlPct.toFixed(2)}%).`);
+          } else {
+            shouldClose = true;
+            closeReason = `Sentiment negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
+          }
         }
       }
 
@@ -5061,7 +5053,7 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
   },
   {
     id: 'correlation_momentum_filter',
-    enabled: true,
+    enabled: false,
     type: 'CORRELATION_MOMENTUM_FILTER',
     parameters: {
       minSpyQqqCorrelation: 0.95,

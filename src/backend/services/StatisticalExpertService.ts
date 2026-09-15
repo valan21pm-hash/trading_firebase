@@ -200,6 +200,15 @@ class StatisticalExpertService {
    * Valuta statisticamente se l'acquisto di un determinato asset è consigliato o sconsigliato
    */
   public evaluateTradePermission(symbol: string, sentimentScore: number): { allowed: boolean; reason: string; sizeMultiplier: number } {
+    // Oro (GLD, IAU) asset primario valido: non bloccare mai le direttive o i calcoli strategici che lo riguardano
+    if (['GLD', 'IAU', 'BAR', 'SGOL'].includes(symbol.toUpperCase())) {
+      return {
+        allowed: true,
+        reason: `[Approvazione Statistica - Oro Primario] ${symbol.toUpperCase()} è un asset primario valido (bene rifugio e riserva di valore). Operatività sempre autorizzata.`,
+        sizeMultiplier: 1.0
+      };
+    }
+
     const { marketState, correlations, indexChanges24h, recommendedPositionSizeMultiplier } = this.latestMetrics;
 
     const spyChg = indexChanges24h.SPY ?? 0;

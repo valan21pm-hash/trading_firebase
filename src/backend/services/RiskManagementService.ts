@@ -64,6 +64,39 @@ export class RiskManagementService {
     const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
     const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
 
+    // --- 0.0 REGOLE VINCOLANTI STRATEGICHE (y=1, Uscita a 2€ esatti, Gestione Pareggio a 0.50€) ---
+    const yVal = config.y !== undefined && config.y > 0 ? config.y : 1;
+    const yHistoricalTarget = Math.min(3.00, 2 * yVal);
+
+    // 1. Regola "y=1": Imponi la chiusura delle operazioni quando i profitti storici raggiungono "2Y", fino a un tetto massimo di 3€.
+    if (historicalProfits >= yHistoricalTarget) {
+      return {
+        action: 'CLOSE',
+        reason: `[Regola y=1] Profitti storici raggiunti a ${historicalProfits.toFixed(2)}€/$ (>= 2Y con target ${yHistoricalTarget.toFixed(2)}€/$ e tetto massimo 3.00€/$). Chiusura operazioni imposta.`
+      };
+    }
+
+    // 2. Gestione del pareggio: Imposta la perdita minima da considerare a 0.50€ per il pareggio su tutte le posizioni maggiori o uguali a 2€.
+    const positionMarketVal = position.currentValue ?? (currentPrice * (typeof position.qty === 'number' ? position.qty : 1));
+    if (positionMarketVal >= 2.00 && unrealizedProfit <= -0.50) {
+      return {
+        action: 'CLOSE',
+        reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
+      };
+    }
+
+    // 3. Logica di chiusura a 2€: Autorizza l'uscita a 2€ solo ed esclusivamente se i profitti correnti sono esattamente pari a 2€. In qualsiasi altro caso, l'istruzione deve essere di attendere ("Hold").
+    if (unrealizedProfit > 0) {
+      const isExactlyTwoEuro = Math.abs(unrealizedProfit - 2.00) <= 0.05;
+      if (isExactlyTwoEuro) {
+        return {
+          action: 'CLOSE',
+          reason: `[Logica Chiusura a 2€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (esattamente pari alla soglia di 2.00€/$). Uscita autorizzata.`
+        };
+      }
+      // Se il profitto è positivo ma non esattamente 2€, non deve scattare alcuna chiusura take-profit anticipata casuale (istruzione: HOLD)
+    }
+
     // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE) ---
     // Agisce come paracadute estremo contro crolli verticali o flash crash, impostato a -2.50% / -3.00%
     const catastrophicRule = systemRules?.find(r => r.type === 'CATASTROPHIC_CIRCUIT_BREAKER_SL');
@@ -392,6 +425,11 @@ export class RiskManagementService {
     systemRules?: RiskRuleConfig[],
     spyQqqCorrelation?: number
   ): { allowed: boolean; reason?: string; effectiveThreshold?: number; isDynamic?: boolean } {
+    // Oro (GLD, IAU) asset primario valido: non bloccare mai le direttive o i calcoli strategici che lo riguardano
+    if (['GLD', 'IAU', 'BAR', 'SGOL'].includes(symbol.toUpperCase())) {
+      return { allowed: true, effectiveThreshold: 0, isDynamic: false };
+    }
+
     const adxRule = systemRules?.find(r => r.type === 'ADX_VOLATILITY_FILTER');
     const isEnabled = adxRule?.enabled ?? true;
     if (!isEnabled) {
@@ -928,6 +966,16 @@ export class RiskManagementService {
     const vix = vixValue !== undefined && !isNaN(vixValue) ? vixValue : 15.0;
 
     const metrics = { corr, rsi, vix };
+
+    // Oro (GLD, IAU) asset primario valido: non bloccare mai le direttive o i calcoli strategici che lo riguardano
+    if (['GLD', 'IAU', 'BAR', 'SGOL'].includes(symbol.toUpperCase())) {
+      return { 
+        allowed: true, 
+        action: 'BUY', 
+        metrics, 
+        reason: `[Oro Primario] ${symbol.toUpperCase()} classificato come asset primario valido per gli investimenti: operatività e calcoli strategici non soggetti a blocco.` 
+      };
+    }
 
     if (!isEnabled) {
       return { allowed: true, action: 'BUY', metrics };
