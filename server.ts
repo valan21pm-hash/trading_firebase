@@ -4174,14 +4174,6 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           effectiveTargetCapitalPct = Math.min(effectiveTargetCapitalPct, highCorrEval.maxCapitalPct);
         }
 
-        // --- REGOLA y=1: INIBIZIONE NUOVI INGRESSI AZIONARI SE TARGET GIORNALIERO RAGGIUNTO ---
-        const yVal = botStatus.y || 1;
-        const yHistoricalTarget = Math.min(3.00, 2 * yVal);
-        if (realHistoricalProfits >= yHistoricalTarget) {
-          addLog(mode as 'paper' | 'live', `[Regola y=1] Target profitti giornalieri raggiunto ($${realHistoricalProfits.toFixed(2)} >= $${yHistoricalTarget.toFixed(2)}). Nuovi ingressi inibiti per preservare i profitti di sessione (Oro preservato).`);
-          positiveSymbolsWithSentiment = positiveSymbolsWithSentiment.filter(item => ['GLD', 'IAU', 'BAR', 'SGOL'].includes(item.symbol.toUpperCase()));
-        }
-
         // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95% o 50% in high corr)
         const maxPosRule = activeRules.find(r => r.type === 'MAX_CONCURRENT_POSITIONS_CAP');
         const configuredMaxPos = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
