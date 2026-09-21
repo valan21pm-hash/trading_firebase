@@ -77,35 +77,22 @@ export class RiskManagementService {
       };
     }
 
-    // 2. Logica di chiusura a 2€: Autorizza l'uscita a 2€ solo ed esclusivamente se i profitti correnti sono esattamente pari a 2€. In qualsiasi altro caso, l'istruzione deve essere di attendere ("Hold").
-    if (unrealizedProfit > 0) {
-      const isExactlyTwoEuro = Math.abs(unrealizedProfit - 2.00) <= 0.05;
-      if (isExactlyTwoEuro) {
-        return {
-          action: 'CLOSE',
-          reason: `[Logica Chiusura a 2€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (esattamente pari alla soglia di 2.00€/$). Uscita autorizzata.`
-        };
-      }
+    // 2. Target Massimo di Chiusura a 3.00€: Autorizza la chiusura immediata con profitto quando il guadagno raggiunge o supera i 3.00€/$ (con tolleranza spread a 2.95€).
+    if (unrealizedProfit >= 2.95) {
       return {
-        action: 'HOLD',
-        reason: `[Logica Chiusura a 2€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (differente dalla soglia vincolante di 2.00€/$). Istruzione: ATTENDERE ('HOLD').`
+        action: 'CLOSE',
+        reason: `[Target Massimo 3.00€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (ha raggiunto o superato il massimo di chiusura a 3.00€/$). Chiusura con profitto eseguita con successo.`
       };
     }
 
     // 3. Gestione del pareggio: Imposta la perdita minima da considerare a 0.50€ per il pareggio su tutte le posizioni maggiori o uguali a 2€.
+    // Se la perdita supera -0.50€, scatta l'uscita di pareggio.
     const positionMarketVal = position.currentValue ?? (currentPrice * (typeof position.qty === 'number' ? position.qty : 1));
-    if (positionMarketVal >= 2.00) {
-      if (unrealizedProfit <= -0.50) {
-        return {
-          action: 'CLOSE',
-          reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
-        };
-      } else if (unrealizedProfit <= 0) {
-        return {
-          action: 'HOLD',
-          reason: `[Gestione Pareggio] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) con perdita contenuta ($${unrealizedProfit.toFixed(2)} > -0.50€/$). Istruzione: ATTENDERE ('HOLD').`
-        };
-      }
+    if (positionMarketVal >= 2.00 && unrealizedProfit <= -0.50) {
+      return {
+        action: 'CLOSE',
+        reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
+      };
     }
 
     // --- 0. LIVELLO 2: STOP LOSS CATASTROFICO / CIRCUIT BREAKER ESTREMO (ATTIVO DI DEFAULT, DISATTIVABILE PER SINGOLA POSIZIONE O GLOBALE) ---

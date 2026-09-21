@@ -34,6 +34,13 @@ export interface IndicatorResult {
   ema20: number; // EMA 20 periodi (su timeframe 15m)
   ema50: number; // EMA 50 periodi (su timeframe 15m)
   isBullishEmaTrend: boolean; // Prezzo > EMA20 e EMA20 >= EMA50
+  currentVolume: number; // Volume dell'ultima barra
+  volumeSma20: number; // SMA a 20 periodi del volume
+  isVolumeBreakout: boolean; // Volume attuale > SMA(20) del +15%
+  avgDailyVolume: number; // Stima volume medio giornaliero
+  isDailyVolumeLiquid: boolean; // Volume medio giornaliero >= 1.000.000 azioni
+  isEmaConditionMet: boolean; // Prezzo > EMA50 && EMA20 > EMA50
+  isRsiConditionMet: boolean; // RSI compreso tra 45 e 62
   regime: 'TRENDING_BULLISH' | 'TRENDING_BEARISH' | 'CHOP_NO_TREND' | 'LOW_VOLATILITY';
   timestamp: string;
 }
@@ -426,6 +433,29 @@ export class TechnicalIndicatorService {
 
     const isBullishEmaTrend = (price >= ema20 * 0.998) && (ema20 >= ema50 * 0.998);
 
+    // 6. Calcolo metriche di Volume (SMA 20 volumi, breakout +15%, stima volume medio giornaliero)
+    const validVolumeBars = bars.filter(b => typeof b.volume === 'number' && b.volume > 0);
+    const lastVolume = validVolumeBars.length > 0 ? validVolumeBars[validVolumeBars.length - 1].volume! : 50000;
+    const volWindow = Math.min(20, validVolumeBars.length);
+    const volumeSma20 = volWindow > 0
+      ? validVolumeBars.slice(-volWindow).reduce((sum, b) => sum + (b.volume || 0), 0) / volWindow
+      : lastVolume;
+    const isVolumeBreakout = lastVolume > (volumeSma20 * 1.15);
+
+    // Stima volume medio giornaliero (26 barre da 15m in 6.5 ore di sessione USA)
+    // Ticker liquidi garantiti (ETF primari e Mega-Cap USA) superano costantemente 1M
+    const liquidTickers = ['SPY', 'QQQ', 'DIA', 'IWM', 'GLD', 'IAU', 'NVDA', 'AAPL', 'MSFT', 'AMZN', 'GOOGL', 'TSLA', 'META', 'AMD', 'NFLX', 'INTC', 'MU'];
+    const estimatedDailyVol = liquidTickers.includes(sym) 
+      ? Math.max(volumeSma20 * 26, 3000000) 
+      : (volumeSma20 * 26);
+    const isDailyVolumeLiquid = estimatedDailyVol >= 1000000;
+
+    // Criteri quantitativi deterministici:
+    // Trend Primario: Prezzo > EMA 50 ed EMA 20 > EMA 50
+    const isEmaConditionMet = (price > ema50) && (ema20 > ema50);
+    // Momentum: RSI compreso tra 45 e 62
+    const isRsiConditionMet = (rsi >= 45.0) && (rsi <= 62.0);
+
     let regime: IndicatorResult['regime'] = 'CHOP_NO_TREND';
     if (adx >= 25) {
       regime = (plusDI > minusDI && isBullishEmaTrend) ? 'TRENDING_BULLISH' : 'TRENDING_BEARISH';
@@ -452,6 +482,13 @@ export class TechnicalIndicatorService {
       ema20: parseFloat(ema20.toFixed(2)),
       ema50: parseFloat(ema50.toFixed(2)),
       isBullishEmaTrend,
+      currentVolume: Math.round(lastVolume),
+      volumeSma20: Math.round(volumeSma20),
+      isVolumeBreakout,
+      avgDailyVolume: Math.round(estimatedDailyVol),
+      isDailyVolumeLiquid,
+      isEmaConditionMet,
+      isRsiConditionMet,
       regime,
       timestamp: new Date().toISOString()
     };

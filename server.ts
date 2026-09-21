@@ -79,6 +79,7 @@ import StatisticalExpertService from "./src/backend/services/StatisticalExpertSe
 import RssNewsService from "./src/backend/services/RssNewsService.js";
 import HourlyEfficiencyAnalyzer from "./src/backend/services/HourlyEfficiencyAnalyzer.js";
 import TechnicalIndicatorService from "./src/backend/services/TechnicalIndicatorService.js";
+import QuantitativeStrategyEngine from "./src/backend/services/QuantitativeStrategyEngine.js";
 
 const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   {
@@ -1701,7 +1702,7 @@ let botStatus: {
   monitoredSymbols: [],
   historicalProfits: 0.0,
   y: 1,
-  defaultTP: 2.00,
+  defaultTP: 3.00,
   defaultSL: -0.50,
   trailingStop: 1.2,
   timeframe: 15,
@@ -1985,7 +1986,7 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     tradingMode: botStatus.tradingMode,
     isOperatingHours: isOperating,
     estTime: estTime.timeFormatted,
-    defaultTP: botStatus.defaultTP ?? 2.00,
+    defaultTP: botStatus.defaultTP ?? 3.00,
     defaultSL: botStatus.defaultSL ?? -0.50,
     trailingStop: botStatus.trailingStop ?? 1.0,
     timeframe: botStatus.timeframe ?? 15,
@@ -2012,6 +2013,69 @@ app.post("/api/trading/alpaca-healthcheck", async (req, res) => {
     res.json({ success: true, result });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.all("/api/quantitative/evaluate", async (req, res) => {
+  try {
+    const mode = (req.query.mode || req.body?.mode || botStatus.tradingMode || 'paper') as 'paper' | 'live';
+    const alpacaConf = getAlpacaConfig(mode);
+
+    let totalEquity = botData[mode].balance || 100000;
+    let availableCash = botData[mode].balance || 100000;
+    let rawPositions: any[] = [];
+
+    if (alpacaConf.isConfigured) {
+      try {
+        const accRes = await fetch(`${alpacaConf.baseUrl}/account`, {
+          headers: {
+            'APCA-API-KEY-ID': alpacaConf.apiKey,
+            'APCA-API-SECRET-KEY': alpacaConf.secretKey
+          }
+        });
+        if (accRes.ok) {
+          const acc = await accRes.json();
+          totalEquity = parseFloat(acc.equity || acc.portfolio_value || '100000');
+          availableCash = parseFloat(acc.cash || acc.buying_power || '100000');
+        }
+        const posRes = await fetch(`${alpacaConf.baseUrl}/positions`, {
+          headers: {
+            'APCA-API-KEY-ID': alpacaConf.apiKey,
+            'APCA-API-SECRET-KEY': alpacaConf.secretKey
+          }
+        });
+        if (posRes.ok) {
+          rawPositions = await posRes.json();
+        }
+      } catch (e: any) {
+        console.warn('[Quantitative Endpoint] Errore fetch Alpaca:', e?.message || e);
+      }
+    }
+
+    const openPositions = rawPositions.map(p => ({
+      symbol: p.symbol,
+      qty: parseFloat(p.qty || '0'),
+      avg_entry_price: parseFloat(p.avg_entry_price || '0'),
+      current_price: parseFloat(p.current_price || '0'),
+      market_value: parseFloat(p.market_value || '0'),
+      unrealized_pl: parseFloat(p.unrealized_pl || '0'),
+      entry_timestamp: positionEntryTimes[mode]?.[p.symbol],
+      peak_price: localHighestPrices[p.symbol] || parseFloat(p.current_price || '0')
+    }));
+
+    const candidateSymbols = ['SPY', 'QQQ', 'GLD', 'NVDA', 'AAPL', 'MSFT', 'AMZN', 'TSLA', 'AMD', 'META', 'GOOGL'];
+
+    const payload = await QuantitativeStrategyEngine.getInstance().evaluateFullPortfolio({
+      totalEquity,
+      availableCash,
+      openPositions,
+      candidateSymbols,
+      alpacaCreds: alpacaConf
+    });
+
+    res.json(payload);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2287,7 +2351,7 @@ async function saveBotStatus() {
       latestDailyReport: botStatus.latestDailyReport || null,
       latestDailyDebrief: botStatus.latestDailyDebrief || null,
       lastCheck: botStatus.lastCheck || null,
-      defaultTP: botStatus.defaultTP ?? 2.00,
+      defaultTP: botStatus.defaultTP ?? 3.00,
       defaultSL: botStatus.defaultSL ?? -0.50,
       trailingStop: botStatus.trailingStop ?? 1.0,
       timeframe: botStatus.timeframe ?? 15,
@@ -3955,15 +4019,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       let shouldClose = false;
       let closeReason = '';
 
-      // 1. Valutazione prioritaria delle regole di Risk Management (y=1, uscita a 2€ esatti, pareggio 0.50€ su posizioni >= 2€, SL/TP/Trailing)
+      // 1. Valutazione prioritaria delle regole di Risk Management (Target max 3.00€, Trailing Stop rigorosamente rispettato, Pareggio -0.50€ su posizioni >= 2€)
       if (riskDecision && riskDecision.action === 'CLOSE') {
         shouldClose = true;
         closeReason = riskDecision.reason;
       } else if (riskDecision && riskDecision.action === 'HOLD') {
         shouldClose = false;
-      } else if (profitAmt > 0) {
-        // Se la posizione è in guadagno ma non è esattamente a 2€ e la regola y=1 non è scattata, l'istruzione categorica è ATTENDERE ('HOLD')
-        shouldClose = false;
+      } else if (profitAmt >= 2.95) {
+        shouldClose = true;
+        closeReason = `[Target Massimo 3.00€] Profitto corrente su ${symbol} pari a $${profitAmt.toFixed(2)} (>= 3.00€/$). Chiusura con profitto eseguita.`;
       } else {
         // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment
         if (!isSentimentError && sentimentScore < -0.35) {
@@ -6731,7 +6795,7 @@ async function getStatusData() {
       y: botStatus.y || 1,
       latestDailyReport: botStatus.latestDailyReport,
       latestDailyDebrief: botStatus.latestDailyDebrief,
-      defaultTP: botStatus.defaultTP ?? 2.00,
+      defaultTP: botStatus.defaultTP ?? 3.00,
       defaultSL: botStatus.defaultSL ?? -0.50,
       trailingStop: botStatus.trailingStop ?? 1.0,
       timeframe: botStatus.timeframe ?? 15,
