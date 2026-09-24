@@ -817,7 +817,7 @@ function AccountPanel({
   const [showLlmSettings, setShowLlmSettings] = useState(false);
   const [logFilterMode, setLogFilterMode] = useState<'decisions' | 'all' | 'executions'>('decisions');
   const [onlyMarketLogs, setOnlyMarketLogs] = useState(false);
-  const [maxPos, setMaxPos] = useState<number>(10);
+  const [maxPos, setMaxPos] = useState<number>(3);
   const [tf, setTf] = useState<number>(15);
   const [risk, setRisk] = useState<number>(10);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -826,9 +826,9 @@ function AccountPanel({
   // Sincronizza i parametri correnti recuperati dal server
   useEffect(() => {
     if (status) {
-      setMaxPos(status.maxConcurrentPositions ?? 10);
+      setMaxPos(status.maxConcurrentPositions ?? 3);
       setTf(status.timeframe ?? 15);
-      setRisk(status.riskPercentage ?? 95);
+      setRisk(status.riskPercentage ?? 80);
     }
   }, [status]);
 
@@ -1191,7 +1191,7 @@ function AccountPanel({
                   onChange={(e) => setRisk(Number(e.target.value))}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-indigo-500 outline-none"
                 />
-                <span className="text-[9px] text-slate-500 mt-0.5 block">Quota totale dell'equity distribuita sul mercato (fino al 95%).</span>
+                <span className="text-[9px] text-slate-500 mt-0.5 block">Quota totale dell'equity distribuita sul mercato (fino all'80%, con 20% riserva di sicurezza).</span>
               </div>
             </div>
 

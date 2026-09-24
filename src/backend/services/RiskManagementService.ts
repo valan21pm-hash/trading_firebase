@@ -257,11 +257,11 @@ export class RiskManagementService {
           }
         }
 
-        // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop)
+        // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop / Uscita Rapida a 5 Centesimi dopo 60 min)
         if (rule.type === 'TIME_STAGNATION_CLOSE' && ageMinutes !== null) {
           const baseStagMins = Math.max(rule.parameters.stagnationMinutes ?? 30, isTimeHoldingEnabled ? minHoldingMinutes : 30);
           const highStagMins = Math.max(rule.parameters.stagnationMinutesHighSentiment ?? 60, isTimeHoldingEnabled ? minHoldingMinutes : 60);
-          const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.10;
+          const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.05;
 
           let effectiveStagMins = baseStagMins;
           let sentimentDetail = '';
@@ -276,7 +276,7 @@ export class RiskManagementService {
           if (ageMinutes >= effectiveStagMins && currentProfitPct <= stagMaxPnl) {
             return {
               action: 'CLOSE',
-              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} in stasi da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite, Holding 60m rispettato)${sentimentDetail} con P&L stazionario/debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}%). Chiusura automatica per liberare capitale immobile.`
+              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite)${sentimentDetail} rimasta in stasi/negativo e ora con profitto/P&L debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}% / ~5 centesimi). Chiusura immediata per liberare capitale e slot per un asset più promettente.`
             };
           }
         }

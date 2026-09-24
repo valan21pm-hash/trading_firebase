@@ -87,9 +87,9 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
   );
 
   // Settings inputs state (synced with currentStatus)
-  const [maxPosInput, setMaxPosInput] = useState<number>(botStatus?.maxConcurrentPositions || 10);
+  const [maxPosInput, setMaxPosInput] = useState<number>(botStatus?.maxConcurrentPositions || 3);
   const [tfInput, setTfInput] = useState<number>(botStatus?.timeframe || 15);
-  const [riskInput, setRiskInput] = useState<number>(botStatus?.riskPercentage || 95);
+  const [riskInput, setRiskInput] = useState<number>(botStatus?.riskPercentage || 80);
 
   // Loading and UI states
   const [savingSettings, setSavingSettings] = useState(false);
@@ -1704,13 +1704,13 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       onChange={e => setRiskInput(Number(e.target.value))}
                       className="w-full bg-[#0E1526] border border-slate-700 rounded-lg px-3 py-2 text-sm text-emerald-400 font-bold focus:outline-none focus:border-indigo-500"
                     />
-                    <span className="text-[9px] text-slate-500 block">Percentuale totale dell'equity distribuita sul mercato (fino al 95%).</span>
+                    <span className="text-[9px] text-slate-500 block">Percentuale totale dell'equity distribuita sul mercato (fino all'80%, 20% riserva).</span>
                   </div>
                 </div>
 
                 <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
                   <div className="text-[10px] text-slate-400 font-sans">
-                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({statusObj?.maxConcurrentPositions ?? 10})</strong>, <strong>Timeframe ({statusObj?.timeframe ?? 15}m)</strong>, <strong>Allocazione Capitale ({statusObj?.riskPercentage ?? 95}%)</strong>.
+                    I campi riflettono le opzioni reali del motore: <strong>Max Posizioni ({statusObj?.maxConcurrentPositions ?? 3})</strong>, <strong>Timeframe ({statusObj?.timeframe ?? 15}m)</strong>, <strong>Allocazione Capitale ({statusObj?.riskPercentage ?? 80}%)</strong>.
                   </div>
                   <button
                     disabled={savingSettings}

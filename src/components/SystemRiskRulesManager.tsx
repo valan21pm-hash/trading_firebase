@@ -32,9 +32,9 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 30,
+      stagnationMinutes: 60,
       stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.10
+      stagnationMaxPnlPct: 0.05
     }
   },
   {
@@ -99,12 +99,12 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'MAX_CONCURRENT_POSITIONS_CAP',
     parameters: {
-      maxConcurrentPositions: 5
+      maxConcurrentPositions: 3
     }
   },
   {
     id: 'volatility_time_window_lock',
-    enabled: true,
+    enabled: false,
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -123,7 +123,7 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'trading_window_lockdown',
-    enabled: true,
+    enabled: false,
     type: 'TRADING_WINDOW_LOCKDOWN',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -266,7 +266,7 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'afternoon_session_suspension',
-    enabled: true,
+    enabled: false,
     type: 'AFTERNOON_SESSION_SUSPENSION',
     parameters: {
       afternoonSuspensionStart: '14:00',
@@ -1105,7 +1105,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Sliders className={`w-4 h-4 ${maxPosRule.enabled ? 'text-violet-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">9. Limite Max Posizioni Simultanee (Cap = 5)</h3>
+              <h3 className="text-xs font-bold text-slate-900">9. Limite Max Posizioni Simultanee (Cap = 3)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -1119,21 +1119,21 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            Evita l'eccessiva frammentazione del capitale limitando a un massimo di 5 le posizioni aperte simultaneamente. Concentra la liquidità sui migliori asset con il sentiment più elevato.
+            Evita l'eccessiva frammentazione del capitale limitando a un massimo di 3 le posizioni aperte simultaneamente. Concentra la liquidità sui migliori asset con il sentiment più elevato.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
                 <span>Numero Massimo Posizioni Aperte:</span>
-                <span className="font-mono text-violet-600 font-bold">{maxPosRule.parameters.maxConcurrentPositions ?? 5} posizioni</span>
+                <span className="font-mono text-violet-600 font-bold">{maxPosRule.parameters.maxConcurrentPositions ?? 3} posizioni</span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="10"
                 step="1"
-                value={maxPosRule.parameters.maxConcurrentPositions ?? 5}
+                value={maxPosRule.parameters.maxConcurrentPositions ?? 3}
                 onChange={(e) => updateRule('MAX_CONCURRENT_POSITIONS_CAP', r => ({
                   ...r,
                   parameters: { ...r.parameters, maxConcurrentPositions: parseInt(e.target.value, 10) }
@@ -1144,7 +1144,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
             </div>
 
             <div className="pt-1 text-[10px] text-slate-500 font-mono">
-              Quando sono aperte 5 posizioni, i nuovi ordini vengono scartati finché non viene liberato uno slot.
+              Quando sono aperte 3 posizioni, i nuovi ordini vengono scartati finché non viene liberato uno slot.
             </div>
           </div>
         </div>

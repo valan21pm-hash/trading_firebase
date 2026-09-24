@@ -105,9 +105,9 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 30,
+      stagnationMinutes: 60,
       stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.10
+      stagnationMaxPnlPct: 0.05
     }
   },
   {
@@ -172,12 +172,12 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'MAX_CONCURRENT_POSITIONS_CAP',
     parameters: {
-      maxConcurrentPositions: 5
+      maxConcurrentPositions: 3
     }
   },
   {
     id: 'volatility_time_window_lock',
-    enabled: true,
+    enabled: false,
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -196,7 +196,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'trading_window_lockdown',
-    enabled: true,
+    enabled: false,
     type: 'TRADING_WINDOW_LOCKDOWN',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -339,7 +339,7 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
   },
   {
     id: 'afternoon_session_suspension',
-    enabled: true,
+    enabled: false,
     type: 'AFTERNOON_SESSION_SUSPENSION',
     parameters: {
       afternoonSuspensionStart: '14:00',
@@ -569,7 +569,7 @@ function isPurchaseAllowedBySystemRules(
 
     // Regola 9: MAX_CONCURRENT_POSITIONS_CAP (Cap a 5 posizioni simultanee)
     if (rule.type === 'MAX_CONCURRENT_POSITIONS_CAP' && currentOpenPositionsCount !== undefined) {
-      const maxPositions = rule.parameters.maxConcurrentPositions ?? 5;
+      const maxPositions = rule.parameters.maxConcurrentPositions ?? 3;
       if (currentOpenPositionsCount >= maxPositions) {
         return {
           allowed: false,
@@ -1706,7 +1706,7 @@ let botStatus: {
   defaultSL: -0.50,
   trailingStop: 1.2,
   timeframe: 15,
-  riskPercentage: 95,
+  riskPercentage: 80,
   maxConcurrentPositions: 3,
   llmPreferredProvider: 'gemini',
   llmFailoverEnabled: true,
@@ -1990,8 +1990,8 @@ app.get("/api/trading/alpaca-status", async (req, res) => {
     defaultSL: botStatus.defaultSL ?? -0.50,
     trailingStop: botStatus.trailingStop ?? 1.0,
     timeframe: botStatus.timeframe ?? 15,
-    riskPercentage: botStatus.riskPercentage ?? 10,
-    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+    riskPercentage: botStatus.riskPercentage ?? 80,
+    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 3,
     errorAlpaca
   };
 
@@ -2212,7 +2212,7 @@ app.get("/api/trading/alpaca-analysis/:instrument", async (req, res) => {
     unrealizedPL,
     currentValue,
     stopLossThreshold,
-    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+    maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 3,
     currentPositionsCount,
     sentimentScore,
     sentimentReasoning,
@@ -2355,8 +2355,8 @@ async function saveBotStatus() {
       defaultSL: botStatus.defaultSL ?? -0.50,
       trailingStop: botStatus.trailingStop ?? 1.0,
       timeframe: botStatus.timeframe ?? 15,
-      riskPercentage: botStatus.riskPercentage ?? 10,
-      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+      riskPercentage: botStatus.riskPercentage ?? 80,
+      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 3,
       llmPreferredProvider: botStatus.llmPreferredProvider ?? 'gemini',
       llmFailoverEnabled: botStatus.llmFailoverEnabled ?? true,
       llmProviderOrder: botStatus.llmProviderOrder || ['mistral', 'gemini', 'anthropic', 'deepseek', 'groq'],
@@ -2974,6 +2974,31 @@ async function getMarketSentiment(symbol: string, context?: string): Promise<{sc
 
 const lastPurchaseTimes: Record<string, Record<string, number>> = { paper: {}, live: {} };
 const positionEntryTimes: Record<string, Record<string, number>> = { paper: {}, live: {} };
+// Tracciamento tempo cumulativo trascorso in territorio negativo (drawdown/perdita)
+const positionCumulativeNegativeMs: Record<string, Record<string, number>> = { paper: {}, live: {} };
+const positionLastNegativeCheckTs: Record<string, Record<string, number>> = { paper: {}, live: {} };
+
+function updatePositionNegativeTracking(mode: string, symbol: string, isNegative: boolean): number {
+  if (!positionCumulativeNegativeMs[mode]) positionCumulativeNegativeMs[mode] = {};
+  if (positionCumulativeNegativeMs[mode][symbol] === undefined) {
+    positionCumulativeNegativeMs[mode][symbol] = 0;
+  }
+  if (!positionLastNegativeCheckTs[mode]) positionLastNegativeCheckTs[mode] = {};
+
+  const now = Date.now();
+  const lastTs = positionLastNegativeCheckTs[mode][symbol];
+  positionLastNegativeCheckTs[mode][symbol] = now;
+
+  if (lastTs && isNegative) {
+    const elapsed = now - lastTs;
+    // Cap a 2 minuti per intervallo per sicurezza contro sospensioni/sleep
+    if (elapsed > 0 && elapsed <= 120000) {
+      positionCumulativeNegativeMs[mode][symbol] += elapsed;
+    }
+  }
+
+  return positionCumulativeNegativeMs[mode][symbol];
+}
 
 let trendingStocksCache: { date: string; symbols: string[] } | null = null;
 let lastScanSlotInfo: { date: string; slot: 'market_open' | 'mid_session' | 'none' } = { date: '', slot: 'none' };
@@ -4190,21 +4215,13 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode as 'paper' | 'live', `[Liquidità Residua < $20] Nuove aperture limitate a Oro primario e asset ad alta convinzione.`);
         }
 
-        // Priorità di Selezione Globale: priorità assoluta ad Oro primario (GLD/IAU) e asset singoli con sentiment > 0.65
-        positiveSymbolsWithSentiment.sort((a, b) => {
-          const aIsGold = ['GLD', 'IAU'].includes(a.symbol) ? 1 : 0;
-          const bIsGold = ['GLD', 'IAU'].includes(b.symbol) ? 1 : 0;
-          if (aIsGold !== bIsGold) return bIsGold - aIsGold;
-          const aPriority = a.score > 0.65 ? 1 : 0;
-          const bPriority = b.score > 0.65 ? 1 : 0;
-          if (aPriority !== bPriority) return bPriority - aPriority;
-          return b.score - a.score;
-        });
+        // Priorità di Selezione: acquista quella con il sentimento migliore (Best Sentiment First)
+        positiveSymbolsWithSentiment.sort((a, b) => b.score - a.score);
 
         // --- REGOLA DI CONSENSO 2026-09-14: HIGH_CORRELATION_REGIME_FILTER ---
         // Se Correlazione SPY-QQQ > 0.95: sospendere stock-picking e limitare l'esposizione al 50% su soli ETF di indice
         const highCorrEval = RiskManagementService.evaluateHighCorrelationRegimeFilter(currentSpyQqqCorr, activeRules);
-        let effectiveTargetCapitalPct = Math.min(95, Math.max(10, botStatus.riskPercentage ?? 95));
+        let effectiveTargetCapitalPct = Math.min(80, Math.max(10, botStatus.riskPercentage ?? 80));
 
         if (highCorrEval.isHighCorrRegime) {
           addLog(mode as 'paper' | 'live', highCorrEval.reason || `[Regola Sistema: HIGH_CORRELATION_REGIME_FILTER] Regime ad Alta Correlazione SPY-QQQ (${(currentSpyQqqCorr ?? 0).toFixed(2)} >= ${highCorrEval.threshold.toFixed(2)}): stock-picking sospeso, operatività limitata al ${highCorrEval.maxCapitalPct}% su soli ETF Indice (${highCorrEval.allowedEtfs.join(', ')}).`);
@@ -4228,9 +4245,9 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           effectiveTargetCapitalPct = Math.min(effectiveTargetCapitalPct, highCorrEval.maxCapitalPct);
         }
 
-        // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino al 95% o 50% in high corr)
+        // 2. Calcola quanti slot totali vogliamo occupare e l'allocazione dinamica del capitale (fino a max 80% totale, 20% sicurezza)
         const maxPosRule = activeRules.find(r => r.type === 'MAX_CONCURRENT_POSITIONS_CAP');
-        const configuredMaxPos = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 5);
+        const configuredMaxPos = (maxPosRule && maxPosRule.enabled) ? (maxPosRule.parameters.maxConcurrentPositions ?? 5) : (botStatus.maxConcurrentPositions ?? 3);
         const currentSlotsFilled = openPositions.length;
         let availableSlots = Math.max(0, configuredMaxPos - currentSlotsFilled);
 
@@ -4238,7 +4255,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
           addLog(mode as 'paper' | 'live', `[Cap Posizioni Simultanee] Limite massimo di ${configuredMaxPos} posizioni raggiunto (${currentSlotsFilled}/${configuredMaxPos} occupate). Nessun nuovo acquisto effettuato.`);
         }
 
-        // Quota target di capitale totale da impiegare (default 95% dell'equity, ridotto al 50% se correlazione elevata)
+        // Quota target di capitale totale da impiegare (max 80% dell'equity per mantenere il 20% di sicurezza, ridotto in alta correlazione)
         const targetCapitalPct = effectiveTargetCapitalPct;
         const targetCapitalRatio = targetCapitalPct / 100;
         const targetCapitalUsage = totalAccountEquity * targetCapitalRatio;
@@ -4246,9 +4263,15 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         // Capitale attualmente investito nelle posizioni aperte
         const currentlyInvested = openPositions.reduce((sum: number, p: any) => sum + Math.abs(parseFloat(p.market_value || '0')), 0);
 
-        // Capitale rimanente da allocare per raggiungere il target (es. 95%)
+        // Capitale rimanente da allocare per raggiungere il target (max 80%, mantenendo il 20% di riserva di sicurezza)
         const remainingCapitalToTarget = Math.max(0, targetCapitalUsage - currentlyInvested);
-        const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget > 0 ? remainingCapitalToTarget : currentBuyingPower * 0.98);
+        const allocatableBuyingPower = Math.min(currentBuyingPower * 0.98, remainingCapitalToTarget);
+
+        if (currentlyInvested >= targetCapitalUsage || allocatableBuyingPower < 2.0) {
+          if (currentlyInvested > 0 && remainingCapitalToTarget <= 0) {
+            addLog(mode as 'paper' | 'live', `[Limite Capitale 80%] Raggiunto o superato il limite max dell'80% del capitale impiegato ($${currentlyInvested.toFixed(2)} / $${targetCapitalUsage.toFixed(2)} target). Il 20% ($${(totalAccountEquity * 0.20).toFixed(2)}) rimane riservato come margine di sicurezza.`);
+          }
+        }
 
         // Limita gli slot in base al capitale minimo per operazione ($2.00)
         const maxFundableSlots = Math.max(1, Math.floor(allocatableBuyingPower / 2.0));
@@ -4260,7 +4283,7 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         if (positiveSymbolsWithSentiment.length > 0 && availableSlots > 0 && allocatableBuyingPower >= 2.0) {
           const numCandidatesToFund = Math.min(availableSlots, positiveSymbolsWithSentiment.length);
 
-          // Calcola allocazione per singola operazione calibrata per distribuire il capitale al target 95%
+          // Calcola allocazione per singola operazione calibrata per distribuire il capitale entro il target max dell'80%
           let singlePositionSize = Math.floor((allocatableBuyingPower / numCandidatesToFund) * 100) / 100;
 
           // Cap prudenziale per singola posizione (non più del 45% dell'equity a meno che configuredMaxPos sia <= 2)
@@ -4996,9 +5019,9 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 30,
+      stagnationMinutes: 60,
       stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.10
+      stagnationMaxPnlPct: 0.05
     }
   },
   {
@@ -5063,12 +5086,12 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
     enabled: true,
     type: 'MAX_CONCURRENT_POSITIONS_CAP',
     parameters: {
-      maxConcurrentPositions: 5
+      maxConcurrentPositions: 3
     }
   },
   {
     id: 'volatility_time_window_lock',
-    enabled: true,
+    enabled: false,
     type: 'VOLATILITY_TIME_WINDOW_LOCK',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -5087,7 +5110,7 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
   },
   {
     id: 'trading_window_lockdown',
-    enabled: true,
+    enabled: false,
     type: 'TRADING_WINDOW_LOCKDOWN',
     parameters: {
       blockMorningOpeningWindow: true,
@@ -5230,7 +5253,7 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
   },
   {
     id: 'afternoon_session_suspension',
-    enabled: true,
+    enabled: false,
     type: 'AFTERNOON_SESSION_SUSPENSION',
     parameters: {
       afternoonSuspensionStart: '14:00',
@@ -6789,8 +6812,8 @@ async function getStatusData() {
       defaultSL: botStatus.defaultSL ?? -0.50,
       trailingStop: botStatus.trailingStop ?? 1.0,
       timeframe: botStatus.timeframe ?? 15,
-      riskPercentage: botStatus.riskPercentage ?? 10,
-      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 10,
+      riskPercentage: botStatus.riskPercentage ?? 80,
+      maxConcurrentPositions: botStatus.maxConcurrentPositions ?? 3,
       lastRunTime: lastAlpacaRunTime,
       nextRunTime: lastAlpacaRunTime > 0 ? lastAlpacaRunTime + (botStatus.timeframe || 15) * 60 * 1000 : Date.now() + (botStatus.timeframe || 15) * 60 * 1000,
       paper: paperData,
