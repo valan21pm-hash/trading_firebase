@@ -64,7 +64,25 @@ export class RiskManagementService {
     const peakPrice = (highestPrice && highestPrice > currentPrice) ? highestPrice : currentPrice;
     const highestProfitPct = ((peakPrice - openPrice) / openPrice) * 100;
 
-    // --- 0.0 REGOLE VINCOLANTI STRATEGICHE (y=1, Uscita a 2€ esatti, Gestione Pareggio a 0.50€) ---
+    // --- 0.0 REGOLA FONDAMENTALE ASSOLUTA: NESSUNA CHIUSURA IN NEGATIVO ---
+    // Le posizioni in perdita NON possono essere chiuse. Devono rimanere attive (HOLD) finché non tornano in positivo.
+    if (unrealizedProfit < 0 || currentPrice < openPrice) {
+      return {
+        action: 'HOLD',
+        reason: `[Regola Assoluta No-Perdite] Posizione ${asset} attualmente in perdita ($${unrealizedProfit.toFixed(2)} / ${currentProfitPct.toFixed(2)}%). Chiusura in negativo categoricamente inibita: posizione mantenuta attiva (HOLD) in attesa del ritorno in positivo.`
+      };
+    }
+
+    // --- 0.1 REGOLA DI RECUPERO POST-1H (> 60 MINUTI): USCITA RAPIDA AL MINIMO PROFITTO (+0.05%) ---
+    // Se la posizione è rimasta aperta per oltre 1 ora ed è tornata in positivo anche solo al +0.05%: chiudi subito!
+    if (ageMinutes !== null && ageMinutes >= 60 && (currentProfitPct >= 0.05 || unrealizedProfit >= 0.01)) {
+      return {
+        action: 'CLOSE',
+        reason: `[Uscita Rapida Post-Sofferenza >1h] Posizione ${asset} rimasta aperta per ${ageMinutes.toFixed(0)} min (>= 60 min). Raggiunto il profitto positivo di recupero (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% >= +0.05%). Chiusura immediata in profitto eseguita con successo per liberare capitale.`
+      };
+    }
+
+    // --- 0.2 REGOLE VINCOLANTI STRATEGICHE (y=1, Target Max 3.00€) ---
     const yVal = config.y !== undefined && config.y > 0 ? config.y : 1;
     const yHistoricalTarget = Math.min(3.00, 2 * yVal);
 
@@ -82,16 +100,6 @@ export class RiskManagementService {
       return {
         action: 'CLOSE',
         reason: `[Target Massimo 3.00€] Profitto corrente su ${asset} pari a $${unrealizedProfit.toFixed(2)} (ha raggiunto o superato il massimo di chiusura a 3.00€/$). Chiusura con profitto eseguita con successo.`
-      };
-    }
-
-    // 3. Gestione del pareggio: Imposta la perdita minima da considerare a 0.50€ per il pareggio su tutte le posizioni maggiori o uguali a 2€.
-    // Se la perdita supera -0.50€, scatta l'uscita di pareggio.
-    const positionMarketVal = position.currentValue ?? (currentPrice * (typeof position.qty === 'number' ? position.qty : 1));
-    if (positionMarketVal >= 2.00 && unrealizedProfit <= -0.50) {
-      return {
-        action: 'CLOSE',
-        reason: `[Gestione Pareggio: Perdita Minima 0.50€] Posizione ${asset} (valore ${positionMarketVal.toFixed(2)}€/$ >= 2.00€/$) ha raggiunto o superato la perdita di pareggio (-$${Math.abs(unrealizedProfit).toFixed(2)} <= -0.50€/$). Chiusura per pareggio applicata.`
       };
     }
 

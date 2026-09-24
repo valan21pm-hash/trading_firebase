@@ -110,6 +110,40 @@ export class QuantitativeStrategyEngine {
       ? pos.sessions_held 
       : (pos.entry_timestamp ? Math.floor((Date.now() - pos.entry_timestamp) / (24 * 60 * 60 * 1000)) : 1);
 
+    // --- REGOLA FONDAMENTALE ASSOLUTA: NESSUNA CHIUSURA IN NEGATIVO ---
+    if (profitPerShare < 0) {
+      return {
+        symbol: pos.symbol,
+        action: 'HOLD',
+        order_type: 'market',
+        quantity: Math.abs(pos.qty),
+        limit_price: parseFloat(currentPrice.toFixed(2)),
+        stop_loss: initialSl,
+        take_profit: initialTp,
+        trailing_stop_atr_multiplier: QuantitativeStrategyEngine.TRAILING_STOP_ATR_MULTIPLIER,
+        risk_reward_ratio: '1:2',
+        reasoning: `Posizione in perdita ($${profitPerShare.toFixed(2)}/azione). Regola categorica no-perdite: posizione mantenuta attiva (HOLD) fino al recupero del prezzo di carico.`
+      };
+    }
+
+    // Regola Post-1h: se aperta da oltre 1 ora ed è tornata in positivo (anche solo >= +0.05%), chiudi subito
+    const holdHours = pos.entry_timestamp ? (Date.now() - pos.entry_timestamp) / (3600 * 1000) : 0;
+    const profitPct = entryPrice > 0 ? (profitPerShare / entryPrice) * 100 : 0;
+    if (holdHours >= 1 && profitPct >= 0.05) {
+      return {
+        symbol: pos.symbol,
+        action: 'CLOSE',
+        order_type: 'market',
+        quantity: Math.abs(pos.qty),
+        limit_price: parseFloat(currentPrice.toFixed(2)),
+        stop_loss: initialSl,
+        take_profit: initialTp,
+        trailing_stop_atr_multiplier: QuantitativeStrategyEngine.TRAILING_STOP_ATR_MULTIPLIER,
+        risk_reward_ratio: '1:2',
+        reasoning: `Posizione mantenuta da oltre 1 ora (${holdHours.toFixed(1)}h) e tornata in positivo (+${profitPct.toFixed(2)}% >= +0.05%). Chiusura rapida di recupero eseguita con successo in profitto.`
+      };
+    }
+
     // 1. Chiusura su Ipercomprato Estremo (RSI > 75)
     if (ind.rsi > 75.0) {
       return {

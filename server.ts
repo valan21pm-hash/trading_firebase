@@ -4019,38 +4019,28 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
       let shouldClose = false;
       let closeReason = '';
 
-      // 1. Valutazione prioritaria delle regole di Risk Management (Target max 3.00€, Trailing Stop rigorosamente rispettato, Pareggio -0.50€ su posizioni >= 2€)
-      if (riskDecision && riskDecision.action === 'CLOSE') {
-        shouldClose = true;
-        closeReason = riskDecision.reason;
-      } else if (riskDecision && riskDecision.action === 'HOLD') {
+      // 1. Valutazione prioritaria delle regole di Risk Management
+      // REGOLA ASSOLUTA: NESSUNA CHIUSURA IN NEGATIVO
+      if (profitAmt < 0 || currentPrice < avgEntryPrice) {
         shouldClose = false;
-      } else if (profitAmt >= 2.95) {
-        shouldClose = true;
-        closeReason = `[Target Massimo 3.00€] Profitto corrente su ${symbol} pari a $${profitAmt.toFixed(2)} (>= 3.00€/$). Chiusura con profitto eseguita.`;
+        closeReason = `[Regola Assoluta No-Perdite] Posizione su ${symbol} in negativo ($${profitAmt.toFixed(2)}). Chiusura in negativo inibita categoricamente: mantenimento attivo (HOLD) fino al recupero.`;
       } else {
-        // Se c'è un errore o limite di quota nel sentiment, NON chiudiamo l'asset in base al sentiment
-        if (!isSentimentError && sentimentScore < -0.35) {
-          if (!positionEntryTimes[mode][symbol]) {
-            positionEntryTimes[mode][symbol] = Date.now();
-          }
-          const entryTime = positionEntryTimes[mode][symbol];
-          const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
-          
-          // Time-Based Holding (Mantenimento Minimo 60 Minuti Anti-Churn)
-          const holdingRule = (botStatus.systemRiskRules || DEFAULT_SYSTEM_RISK_RULES).find(r => r.type === 'TIME_BASED_HOLDING');
-          const minHoldingMins = (holdingRule && holdingRule.enabled) ? (holdingRule.parameters.minHoldingMinutes ?? 60) : 60;
-          const isHoldingBlocked = (holdingRule?.enabled ?? true) && ageMinutes < minHoldingMins;
-          
-          const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
-          const isCatastrophicBreach = currentPlPct <= -3.00;
+        const entryTime = positionEntryTimes[mode][symbol] || Date.now();
+        const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
+        const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
 
-          if (isHoldingBlocked && !isCatastrophicBreach) {
-            addLog(mode as 'paper' | 'live', `[Time-Based Holding] Posizione su ${symbol} aperta da ${ageMinutes.toFixed(1)} min < ${minHoldingMins} min: chiusura anticipata da sentiment bloccata a tutela del trend (P&L attuale: ${currentPlPct >= 0 ? '+' : ''}${currentPlPct.toFixed(2)}%).`);
-          } else {
-            shouldClose = true;
-            closeReason = `Sentiment negativo (${sentimentScore.toFixed(2)}): ${sentimentReasoning}`;
-          }
+        // Se la posizione è aperta da più di 1 ora ed è tornata in positivo anche solo al +0.05%: chiudi subito!
+        if (ageMinutes >= 60 && (currentPlPct >= 0.05 || profitAmt >= 0.01)) {
+          shouldClose = true;
+          closeReason = `[Uscita Rapida Post-Sofferenza >1h] Posizione su ${symbol} rimasta aperta per ${ageMinutes.toFixed(0)} min (>= 60 min). Raggiunto il profitto positivo di recupero (+${currentPlPct.toFixed(2)}% >= +0.05%). Chiusura immediata in profitto eseguita con successo.`;
+        } else if (riskDecision && riskDecision.action === 'CLOSE') {
+          shouldClose = true;
+          closeReason = riskDecision.reason;
+        } else if (riskDecision && riskDecision.action === 'HOLD') {
+          shouldClose = false;
+        } else if (profitAmt >= 2.95) {
+          shouldClose = true;
+          closeReason = `[Target Massimo 3.00€] Profitto corrente su ${symbol} pari a $${profitAmt.toFixed(2)} (>= 3.00€/$). Chiusura con profitto eseguita.`;
         }
       }
 
