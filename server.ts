@@ -111,6 +111,17 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     }
   },
   {
+    id: 'pre_scan_profit_flush',
+    enabled: true,
+    type: 'PRE_SCAN_PROFIT_FLUSH',
+    parameters: {
+      preScanProfitThresholdDollars: 0.03,
+      preScanConfidenceThreshold: 0.90,
+      preScanRetracementStopDollars: 0.01,
+      preScanWindowMinutesBefore: 1
+    }
+  },
+  {
     id: 'eod_buy_lock',
     enabled: true,
     type: 'EOD_BUY_LOCK',
@@ -5022,6 +5033,17 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
       stagnationMinutes: 60,
       stagnationMinutesHighSentiment: 60,
       stagnationMaxPnlPct: 0.05
+    }
+  },
+  {
+    id: 'pre_scan_profit_flush',
+    enabled: true,
+    type: 'PRE_SCAN_PROFIT_FLUSH',
+    parameters: {
+      preScanProfitThresholdDollars: 0.03,
+      preScanConfidenceThreshold: 0.90,
+      preScanRetracementStopDollars: 0.01,
+      preScanWindowMinutesBefore: 1
     }
   },
   {

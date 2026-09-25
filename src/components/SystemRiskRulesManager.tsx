@@ -38,6 +38,17 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     }
   },
   {
+    id: 'pre_scan_profit_flush',
+    enabled: true,
+    type: 'PRE_SCAN_PROFIT_FLUSH',
+    parameters: {
+      preScanProfitThresholdDollars: 0.03,
+      preScanConfidenceThreshold: 0.90,
+      preScanRetracementStopDollars: 0.01,
+      preScanWindowMinutesBefore: 1
+    }
+  },
+  {
     id: 'eod_buy_lock',
     enabled: true,
     type: 'EOD_BUY_LOCK',
@@ -371,6 +382,7 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
   const pnlRule = getRule('PNL_PREVENTIVE_CLOSE');
   const sentRule = getRule('SENTIMENT_LIQUIDITY_SELL');
   const stagRule = getRule('TIME_STAGNATION_CLOSE');
+  const preScanRule = getRule('PRE_SCAN_PROFIT_FLUSH');
   const eodRule = getRule('EOD_BUY_LOCK');
   const exposureRule = getRule('CUSTOM_MAX_EXPOSURE');
   const semiconRule = getRule('SPY_QQQ_CORRELATION_SEMICON_CAP');
@@ -664,6 +676,91 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                 }))}
                 disabled={!stagRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Rule 3b: Pre-Scan Profit Flush (Chiusura >= 3 centesimi a T-1m & Stop -1c su certezza 90%) */}
+        <div className={`p-4 rounded-xl border transition-all ${preScanRule.enabled ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Zap className={`w-4 h-4 ${preScanRule.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
+              <h3 className="text-xs font-bold text-slate-900">3b. Chiusura Pre-Scansione (1m prima) &gt; 3 Centesimi</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={preScanRule.enabled}
+                onChange={(e) => updateRule('PRE_SCAN_PROFIT_FLUSH', r => ({ ...r, enabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-600 mb-3">
+            <strong>Monetizzazione Pre-Scansione:</strong> 1 minuto prima di ogni nuova scansione a 15 minuti, chiude tutte le operazioni in profitto &ge; $0.03 (+3 centesimi). L'unica eccezione è una certezza rialzista &ge; 90%, con chiusura immediata se il titolo ritraccia anche di 1 solo centesimo (-$0.01).
+          </p>
+
+          <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Soglia Profitto Chiusura Rapida:</span>
+                <span className="font-mono text-amber-700 font-bold">${(preScanRule.parameters.preScanProfitThresholdDollars ?? 0.03).toFixed(2)} (+3 centesimi)</span>
+              </div>
+              <input
+                type="range"
+                min="0.01"
+                max="0.20"
+                step="0.01"
+                value={preScanRule.parameters.preScanProfitThresholdDollars ?? 0.03}
+                onChange={(e) => updateRule('PRE_SCAN_PROFIT_FLUSH', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, preScanProfitThresholdDollars: parseFloat(e.target.value) }
+                }))}
+                disabled={!preScanRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Certezza Minima per Eccezione (Sentiment):</span>
+                <span className="font-mono text-amber-700 font-bold">{Math.round((preScanRule.parameters.preScanConfidenceThreshold ?? 0.90) * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.70"
+                max="0.99"
+                step="0.01"
+                value={preScanRule.parameters.preScanConfidenceThreshold ?? 0.90}
+                onChange={(e) => updateRule('PRE_SCAN_PROFIT_FLUSH', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, preScanConfidenceThreshold: parseFloat(e.target.value) }
+                }))}
+                disabled={!preScanRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-700 font-medium mb-1">
+                <span>Stop Tolleranza Zero su Rintracciamento:</span>
+                <span className="font-mono text-amber-700 font-bold">-${(preScanRule.parameters.preScanRetracementStopDollars ?? 0.01).toFixed(2)} (1 centesimo)</span>
+              </div>
+              <input
+                type="range"
+                min="0.01"
+                max="0.05"
+                step="0.01"
+                value={preScanRule.parameters.preScanRetracementStopDollars ?? 0.01}
+                onChange={(e) => updateRule('PRE_SCAN_PROFIT_FLUSH', r => ({
+                  ...r,
+                  parameters: { ...r.parameters, preScanRetracementStopDollars: parseFloat(e.target.value) }
+                }))}
+                disabled={!preScanRule.enabled}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
               />
             </div>
           </div>

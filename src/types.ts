@@ -1,7 +1,7 @@
 export interface RiskRuleConfig {
   id: string;
   enabled: boolean;
-  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK' | 'CORRELATION_MOMENTUM_FILTER' | 'DYNAMIC_RISK_MANAGEMENT' | 'AFTERNOON_SESSION_SUSPENSION' | 'HIGH_CORRELATION_REGIME_FILTER';
+  type: 'PNL_PREVENTIVE_CLOSE' | 'SENTIMENT_LIQUIDITY_SELL' | 'EOD_BUY_LOCK' | 'TIME_STAGNATION_CLOSE' | 'PRE_SCAN_PROFIT_FLUSH' | 'CUSTOM_MAX_EXPOSURE' | 'SPY_QQQ_CORRELATION_SEMICON_CAP' | 'ADX_VOLATILITY_FILTER' | 'ATR_INDIVIDUAL_TRAILING_STOP' | 'MAX_CONCURRENT_POSITIONS_CAP' | 'VOLATILITY_TIME_WINDOW_LOCK' | 'EMA_TREND_CONFIRMATION' | 'CATASTROPHIC_CIRCUIT_BREAKER_SL' | 'ATR_VOLATILITY_FILTER' | 'DYNAMIC_TIME_WINDOW_LOCK' | 'HARD_RISK_MANAGEMENT' | 'TRADING_WINDOW_LOCKDOWN' | 'TIME_BASED_HOLDING' | 'MACRO_VOLATILITY_VIX_FILTER' | 'TIME_BASED_VOLATILITY_THRESHOLD' | 'ADAPTIVE_EMA_FILTER' | 'ATR_VOLATILITY_LOCK' | 'CORRELATION_MOMENTUM_FILTER' | 'DYNAMIC_RISK_MANAGEMENT' | 'AFTERNOON_SESSION_SUSPENSION' | 'HIGH_CORRELATION_REGIME_FILTER';
   parameters: {
     maxLossPct?: number;           // es. -0.80 per P&L <= -0.80%
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
@@ -10,6 +10,11 @@ export interface RiskRuleConfig {
     stagnationMinutes?: number;     // es. 30 minuti di stasi per sentiment 0.20 - 0.29
     stagnationMinutesHighSentiment?: number; // es. 60 minuti di stasi per sentiment > 0.30
     stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
+    // --- Regola Pre-Scansione 1m: Chiusura >= 3 centesimi / Tolleranza Zero -1c su certezza >= 90% ---
+    preScanProfitThresholdDollars?: number; // default 0.03 (chiudi sopra i 3 centesimi)
+    preScanConfidenceThreshold?: number;    // default 0.90 (certezza/confidenza 90% per eccezione)
+    preScanRetracementStopDollars?: number; // default 0.01 (chiudi subito se ritraccia di 1 centesimo)
+    preScanWindowMinutesBefore?: number;    // default 1 (1 minuto prima della scansione periodica)
     maxSectorExposurePct?: number;  // es. 35 per il 35%
     minSectorsForBullishCoherent?: number; // es. 3 per almeno 3 settori diversi se BULLISH_COHERENT
     minCorrelationThreshold?: number; // es. 0.95 per correlazione SPY-QQQ >= 0.95

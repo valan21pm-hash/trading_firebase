@@ -82,6 +82,50 @@ export class RiskManagementService {
       };
     }
 
+    // --- 0.15 REGOLA PRE-SCANSIONE (1 MINUTO PRIMA DEI 15M): CHIUSURA PROFITTO >= 3 CENTESIMI (SALVO CERTEZZA >= 90% CON STOP -1 CENTESIMO) ---
+    const preScanRule = systemRules?.find(r => r.type === 'PRE_SCAN_PROFIT_FLUSH');
+    const isPreScanRuleEnabled = preScanRule?.enabled ?? true;
+    const profitThresholdDollars = preScanRule?.parameters?.preScanProfitThresholdDollars ?? 0.03;
+    const confidenceThreshold = preScanRule?.parameters?.preScanConfidenceThreshold ?? 0.90;
+    const retraceStopDollars = preScanRule?.parameters?.preScanRetracementStopDollars ?? 0.01;
+    
+    // Rileva se siamo esattamente a 1 minuto dalla nuova scansione dei 15 minuti (es. minuto 14, 29, 44, 59)
+    const currentMinute = new Date().getMinutes();
+    const timeframeMins = 15;
+    const isPreScanWindow = (currentMinute % timeframeMins === timeframeMins - 1);
+
+    if (isPreScanRuleEnabled && (unrealizedProfit >= profitThresholdDollars || currentProfitPct >= 0.03)) {
+      if (isPreScanWindow) {
+        const hasHighCertainty = (sentimentScore !== undefined && sentimentScore >= confidenceThreshold);
+        if (!hasHighCertainty) {
+          return {
+            action: 'CLOSE',
+            reason: `[Regola Pre-Scansione: PRE_SCAN_PROFIT_FLUSH] Posizione ${asset} in profitto ($${unrealizedProfit.toFixed(2)} >= $${profitThresholdDollars.toFixed(2)} / +${currentProfitPct.toFixed(2)}%) a 1 minuto dalla nuova scansione. Chiusura preventiva eseguita per monetizzare e liberare slot per il nuovo ciclo.`
+          };
+        } else {
+          // Eccezione: certezza rialzista >= 90%. Tolleranza zero se ritraccia anche di 1 solo centesimo dal picco
+          const dropFromPeakDollars = peakPrice - currentPrice;
+          if (dropFromPeakDollars >= retraceStopDollars || (highestProfitPct - currentProfitPct) >= 0.01) {
+            return {
+              action: 'CLOSE',
+              reason: `[Regola Pre-Scansione: Tolleranza Zero -1c] Posizione ${asset} mantenuta con certezza >= 90% (Sentiment: ${(sentimentScore ?? 0).toFixed(2)}), ma ha ritracciato di $${dropFromPeakDollars.toFixed(2)} (>= $${retraceStopDollars.toFixed(2)} dal picco $${peakPrice.toFixed(2)}). Chiusura immediata di protezione del profitto.`
+            };
+          }
+        }
+      } else {
+        // Fuori dalla finestra T-1m: se ha certezza >= 90% ed è in profitto >= 3c, stop immediato se scende di 1 centesimo
+        if (sentimentScore !== undefined && sentimentScore >= confidenceThreshold) {
+          const dropFromPeakDollars = peakPrice - currentPrice;
+          if (dropFromPeakDollars >= retraceStopDollars) {
+            return {
+              action: 'CLOSE',
+              reason: `[Tolleranza Zero -1c su Asset ad Alta Certezza] Posizione ${asset} ha ritracciato di $${dropFromPeakDollars.toFixed(2)} dal massimo ($${peakPrice.toFixed(2)}). Chiusura immediata di salvaguardia.`
+            };
+          }
+        }
+      }
+    }
+
     // --- 0.2 REGOLE VINCOLANTI STRATEGICHE (y=1, Target Max 3.00€) ---
     const yVal = config.y !== undefined && config.y > 0 ? config.y : 1;
     const yHistoricalTarget = Math.min(3.00, 2 * yVal);
