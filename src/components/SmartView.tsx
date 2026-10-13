@@ -394,45 +394,96 @@ export const SmartView: React.FC<SmartViewProps> = ({
             </button>
           </div>
         ) : (
-          /* GRIGLIA AD ALTA DENSITÀ DELLE POSIZIONI */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {openPositions.map((pos: any, idx: number) => {
-              const qty = parseFloat(pos.qty || '0');
-              const avgPrice = parseFloat(pos.avg_entry_price || '0');
-              const currPrice = parseFloat(pos.current_price || '0');
-              const marketVal = parseFloat(pos.market_value || '0');
-              const plVal = parseFloat(pos.unrealized_pl || '0');
-              const plPct = parseFloat(pos.unrealized_plpc || '0') * 100;
-              const isProfit = plVal >= 0;
-              const isClosing = closingSymbols.includes(pos.symbol);
+          <>
+            {/* Avviso Riepilogativo: Posizioni che superano il limite di 3h senza profitto */}
+            {openPositions.some((p: any) => {
+              const pAvg = parseFloat(p.avg_entry_price || '0');
+              const pCurr = parseFloat(p.current_price || '0');
+              const pVal = parseFloat(p.unrealized_pl || '0');
+              const pPct = p.unrealized_plpc !== undefined ? (parseFloat(p.unrealized_plpc) * 100) : (pAvg > 0 ? ((pCurr - pAvg) / pAvg) * 100 : 0);
+              const pEntry = p.entryTimestamp || p.entry_timestamp;
+              const pMins = p.ageMinutes !== undefined ? p.ageMinutes : (pEntry ? Math.max(0, (Date.now() - pEntry) / (60 * 1000)) : 0);
+              const pReached = p.reachedProfitThreshold !== undefined ? p.reachedProfitThreshold : (pVal >= 0.04 || pPct >= 0.04);
+              const pExceeds = p.exceedsThreeHours !== undefined ? p.exceedsThreeHours : (pMins >= 180);
+              return p.isSubjectToAutoClosure || (pExceeds && !pReached);
+            }) && (
+              <div className="p-3 rounded-xl border border-amber-500/50 bg-amber-950/30 text-amber-200 flex items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong>Avviso Operativo:</strong> Rilevate posizioni aperte da oltre 3 ore cumulative sotto la soglia di profitto (+0.04). Soggette a liquidazione automatica non appena recuperano la soglia.
+                  </span>
+                </div>
+                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[10px] uppercase font-bold border border-amber-500/30 shrink-0">
+                  Auto-Close Attivo
+                </span>
+              </div>
+            )}
 
-              // Calcolo soglia di attivazione del Trailing Stop con profitto minimo garantito (identico al principale)
-              const atrMultiplier = 1.5;
-              const posQty = qty > 0 ? qty : 1;
-              const currentAtr = pos.atr ? parseFloat(pos.atr) : (pos.atr_14 ? parseFloat(pos.atr_14) : 1.25);
-              const minRequiredAtrStop = pos.minRequiredAtrStopPrice ? parseFloat(pos.minRequiredAtrStopPrice) : (avgPrice + (0.04 / posQty));
-              const activationPrice = pos.atrActivationPrice ? parseFloat(pos.atrActivationPrice) : (minRequiredAtrStop + (atrMultiplier * currentAtr));
-              const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && parseFloat(pos.atrTrailingStopPrice) >= minRequiredAtrStop) || (currPrice >= activationPrice && activationPrice > 0);
-              const trailingStopVal = pos.atrTrailingStopPrice ? parseFloat(pos.atrTrailingStopPrice) : (currPrice - (atrMultiplier * currentAtr));
-              const lockedProfit = Math.max(0, (trailingStopVal - avgPrice) * posQty);
-              const catastrophicStopPrice = avgPrice * 0.97;
+            {/* GRIGLIA AD ALTA DENSITÀ DELLE POSIZIONI */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {openPositions.map((pos: any, idx: number) => {
+                const qty = parseFloat(pos.qty || '0');
+                const avgPrice = parseFloat(pos.avg_entry_price || '0');
+                const currPrice = parseFloat(pos.current_price || '0');
+                const marketVal = parseFloat(pos.market_value || '0');
+                const plVal = parseFloat(pos.unrealized_pl || '0');
+                const plPct = parseFloat(pos.unrealized_plpc || '0') * 100;
+                const isProfit = plVal >= 0;
+                const isClosing = closingSymbols.includes(pos.symbol);
 
-              return (
-                <div 
-                  key={pos.symbol || idx}
-                  className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 shadow-md flex flex-col justify-between gap-3 hover:border-slate-700 transition-all"
-                >
-                  {/* Header Card: Ticker + P&L */}
-                  <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-2.5">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-lg sm:text-xl text-white tracking-tight font-mono">
-                          {pos.symbol}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono text-[9px] font-bold uppercase border border-emerald-500/30">
-                          {pos.side ? pos.side.toUpperCase() : 'LONG'}
-                        </span>
-                      </div>
+                // Calcolo tempo trascorso e stato Limite 3h Cumulative dall'apertura
+                const entryTimestamp = pos.entryTimestamp || pos.entry_timestamp;
+                const ageMinutes = pos.ageMinutes !== undefined 
+                  ? pos.ageMinutes 
+                  : (entryTimestamp ? Math.max(0, (Date.now() - entryTimestamp) / (60 * 1000)) : 0);
+                const ageHours = pos.ageHours !== undefined ? pos.ageHours : (ageMinutes / 60);
+                const profitThreshold = pos.profitThreshold ?? 0.04;
+                const reachedProfitThreshold = pos.reachedProfitThreshold !== undefined
+                  ? pos.reachedProfitThreshold
+                  : (plVal >= profitThreshold || plPct >= profitThreshold);
+                const exceedsThreeHours = pos.exceedsThreeHours !== undefined
+                  ? pos.exceedsThreeHours
+                  : (ageMinutes >= 180);
+                const isSubjectToAutoClosure = pos.isSubjectToAutoClosure !== undefined
+                  ? pos.isSubjectToAutoClosure
+                  : (exceedsThreeHours && !reachedProfitThreshold);
+
+                // Calcolo soglia di attivazione del Trailing Stop con profitto minimo garantito (identico al principale)
+                const atrMultiplier = 1.5;
+                const posQty = qty > 0 ? qty : 1;
+                const currentAtr = pos.atr ? parseFloat(pos.atr) : (pos.atr_14 ? parseFloat(pos.atr_14) : 1.25);
+                const minRequiredAtrStop = pos.minRequiredAtrStopPrice ? parseFloat(pos.minRequiredAtrStopPrice) : (avgPrice + (0.04 / posQty));
+                const activationPrice = pos.atrActivationPrice ? parseFloat(pos.atrActivationPrice) : (minRequiredAtrStop + (atrMultiplier * currentAtr));
+                const isReached = pos.isAtrTrailingActive || (pos.atrTrailingStopPrice !== undefined && parseFloat(pos.atrTrailingStopPrice) >= minRequiredAtrStop) || (currPrice >= activationPrice && activationPrice > 0);
+                const trailingStopVal = pos.atrTrailingStopPrice ? parseFloat(pos.atrTrailingStopPrice) : (currPrice - (atrMultiplier * currentAtr));
+                const lockedProfit = Math.max(0, (trailingStopVal - avgPrice) * posQty);
+                const catastrophicStopPrice = avgPrice * 0.97;
+
+                return (
+                  <div 
+                    key={pos.symbol || idx}
+                    className={`bg-slate-900/90 rounded-2xl border p-4 shadow-md flex flex-col justify-between gap-3 hover:border-slate-700 transition-all ${
+                      isSubjectToAutoClosure ? 'border-amber-500/60 ring-1 ring-amber-500/40 bg-linear-to-b from-amber-950/20 to-slate-900/90' : 'border-slate-800'
+                    }`}
+                  >
+                    {/* Header Card: Ticker + P&L */}
+                    <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-lg sm:text-xl text-white tracking-tight font-mono">
+                            {pos.symbol}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono text-[9px] font-bold uppercase border border-emerald-500/30">
+                            {pos.side ? pos.side.toUpperCase() : 'LONG'}
+                          </span>
+                          {isSubjectToAutoClosure && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[9px] font-bold uppercase border border-amber-500/40 flex items-center gap-1 animate-pulse" title={`Limite di 3 ore superato (${Math.floor(ageHours)}h ${Math.floor(ageMinutes % 60)}m). Soggetta a liquidazione automatica non appena recupera a +0.04.`}>
+                              <Clock className="w-2.5 h-2.5 text-amber-400" />
+                              &gt;3H AUTO-CLOSE
+                            </span>
+                          )}
+                        </div>
                       <span className="text-[11px] text-slate-400 font-mono">
                         {qty} quote • Valore: <strong className="text-slate-200">${marketVal.toFixed(2)}</strong>
                       </span>
@@ -466,6 +517,37 @@ export const SmartView: React.FC<SmartViewProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {/* ALLERTA VISIVA LIMITE 3H SUPERATO SENZA SOGLIA DI PROFITTO */}
+                  {isSubjectToAutoClosure && (
+                    <div className="p-3 rounded-xl border border-amber-500/50 bg-amber-950/40 text-amber-200 flex flex-col gap-2 shadow-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0">
+                            <AlertTriangle className="w-3.5 h-3.5 animate-bounce" />
+                          </div>
+                          <div>
+                            <div className="font-extrabold text-xs text-amber-300 flex items-center gap-1.5 flex-wrap">
+                              <span>LIMITE 3H SUPERATO</span>
+                              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+                                Soggetto ad Auto-Close
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-amber-300/80">
+                              Aperta da <strong className="text-amber-200 font-bold">{Math.floor(ageHours)}h {Math.floor(ageMinutes % 60)}m</strong> (oltre il limite di 3h) sotto la soglia di profitto (+0.04).
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right font-mono text-xs text-amber-400 font-extrabold shrink-0">
+                          {Math.floor(ageHours)}h {Math.floor(ageMinutes % 60)}m
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-amber-200/90 font-mono bg-black/40 p-2 rounded-lg border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
+                        <span>Chiusura automatica garantita al primo recupero a <strong>+0.04</strong> (salvo sentiment &ge; 90% con stop -1¢).</span>
+                        <span className="font-bold text-amber-300 shrink-0">Target: +0.04</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* BOX PUNTO DI INNESTO TRAILING STOP (Come nel cruscotto principale) */}
                   <div className={`p-2.5 rounded-xl border flex flex-col gap-1.5 text-xs font-mono transition-all ${
@@ -569,7 +651,8 @@ export const SmartView: React.FC<SmartViewProps> = ({
               );
             })}
           </div>
-        )}
+        </>
+      )}
       </main>
 
       {/* MODAL CONFERMA CHIUSURA SINGOLA POSIZIONE */}

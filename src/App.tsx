@@ -1257,6 +1257,35 @@ function AccountPanel({
                 <span>Forza Acquisto</span>
               </button>
             </div>
+
+            {/* Avviso Riepilogativo: Posizioni che superano il limite di 3h senza profitto */}
+            {account.positions.some((p: any) => {
+              const pAvg = parseFloat(p.avg_entry_price || '0');
+              const pCurr = parseFloat(p.current_price || '0');
+              const pVal = parseFloat(p.unrealized_pl || '0');
+              const pPct = p.unrealized_plpc !== undefined ? (parseFloat(p.unrealized_plpc) * 100) : (pAvg > 0 ? ((pCurr - pAvg) / pAvg) * 100 : 0);
+              const pEntry = p.entryTimestamp || p.entry_timestamp;
+              const pMins = p.ageMinutes !== undefined ? p.ageMinutes : (pEntry ? Math.max(0, (Date.now() - pEntry) / (60 * 1000)) : 0);
+              const pReached = p.reachedProfitThreshold !== undefined ? p.reachedProfitThreshold : (pVal >= 0.04 || pPct >= 0.04);
+              const pExceeds = p.exceedsThreeHours !== undefined ? p.exceedsThreeHours : (pMins >= 180);
+              return p.isSubjectToAutoClosure || (pExceeds && !pReached);
+            }) && (
+              <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-300 text-amber-900 flex items-start gap-2.5 shadow-2xs">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <div className="font-bold flex items-center gap-2 flex-wrap">
+                    <span>Avviso Operativo: Posizioni che superano il limite massimo di 3 ore cumulative</span>
+                    <span className="px-1.5 py-0.2 rounded bg-amber-200 text-amber-900 text-[10px] uppercase font-bold tracking-wider">
+                      Soggette a Chiusura Automatica
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-amber-800">
+                    Le posizioni contrassegnate in arancione hanno superato la finestra massima di 3 ore cumulative dall'apertura senza aver raggiunto la soglia di profitto (+0.04). In base al vincolo no-perdite, il sistema le liquiderà automaticamente non appena recuperano a +0.04 per liberare slot e capitale.
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2">
               {account.positions.map((pos, i) => {
                 const qtyNum = parseFloat(pos.qty);
@@ -1267,6 +1296,23 @@ function AccountPanel({
                 const unRealizedVal = parseFloat(pos.unrealized_pl || '0');
                 const unRealizedPct = pos.unrealized_plpc !== undefined ? (parseFloat(pos.unrealized_plpc) * 100) : (avgPrice > 0 ? ((currPrice - avgPrice) / avgPrice) * 100 : 0);
                 const posQty = qtyNum > 0 ? qtyNum : 1;
+
+                // Calcolo tempo trascorso e stato Limite 3h Cumulative dall'apertura
+                const entryTimestamp = pos.entryTimestamp || pos.entry_timestamp;
+                const ageMinutes = pos.ageMinutes !== undefined 
+                  ? pos.ageMinutes 
+                  : (entryTimestamp ? Math.max(0, (Date.now() - entryTimestamp) / (60 * 1000)) : 0);
+                const ageHours = pos.ageHours !== undefined ? pos.ageHours : (ageMinutes / 60);
+                const profitThreshold = pos.profitThreshold ?? 0.04;
+                const reachedProfitThreshold = pos.reachedProfitThreshold !== undefined
+                  ? pos.reachedProfitThreshold
+                  : (unRealizedVal >= profitThreshold || unRealizedPct >= profitThreshold);
+                const exceedsThreeHours = pos.exceedsThreeHours !== undefined
+                  ? pos.exceedsThreeHours
+                  : (ageMinutes >= 180);
+                const isSubjectToAutoClosure = pos.isSubjectToAutoClosure !== undefined
+                  ? pos.isSubjectToAutoClosure
+                  : (exceedsThreeHours && !reachedProfitThreshold);
                 
                 // Calcolo soglia di attivazione del Trailing Stop con profitto minimo garantito
                 const atrMultiplier = 1.5;
@@ -1279,12 +1325,23 @@ function AccountPanel({
                 const catastrophicStopPrice = avgPrice * 0.97;
 
                 return (
-                  <div key={i} className="flex flex-col bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs gap-3">
+                  <div key={i} className={`flex flex-col bg-white p-3.5 rounded-xl border shadow-xs gap-3 transition-colors ${
+                    isSubjectToAutoClosure ? 'border-amber-400 bg-amber-50/20 ring-1 ring-amber-300' : 'border-slate-200'
+                  }`}>
                     {/* 1. Header Ticker, Sentiment, Quantità e P&L */}
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
                       <div className="flex items-center gap-2.5 flex-wrap">
                         <span className="font-extrabold text-slate-900 text-lg tracking-tight">{pos.symbol}</span>
                         <SentimentBadge symbol={pos.symbol} signals={status?.geminiSignals} showReasoning={true} />
+                        {isSubjectToAutoClosure && (
+                          <span 
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300 shadow-2xs animate-pulse"
+                            title={`Limite di 3 ore cumulative superato (${Math.floor(ageHours)}h ${Math.floor(ageMinutes % 60)}m). Soggetta a chiusura automatica non appena recupera a +0.04.`}
+                          >
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            <span>&gt;3H AUTO-CLOSE</span>
+                          </span>
+                        )}
                         <span className="text-slate-600 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded-md font-medium">
                           {formattedQty} quote
                         </span>
@@ -1353,6 +1410,51 @@ function AccountPanel({
                         <span className="font-mono font-extrabold text-slate-900 text-base">${currPrice.toFixed(2)}</span>
                       </div>
                     </div>
+
+                    {/* 2.5 AVVISO VISIVO: LIMITE 3H CUMULATIVE SUPERATO SENZA RAGGIUNGERE LA SOGLIA DI PROFITTO (+0.04) */}
+                    {isSubjectToAutoClosure && (
+                      <div className="p-3.5 rounded-xl border-2 border-amber-400 bg-linear-to-r from-amber-50 via-orange-50/50 to-amber-50 text-amber-950 flex flex-col gap-2.5 shadow-xs">
+                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                          <div className="flex items-start sm:items-center gap-2.5">
+                            <div className="p-2 bg-amber-500 text-white rounded-lg shrink-0 shadow-2xs mt-0.5 sm:mt-0">
+                              <AlertTriangle className="w-4 h-4 animate-bounce" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-extrabold text-xs sm:text-sm text-amber-950">
+                                  AVVISO: LIMITE 3 ORE CUMULATIVE SUPERATO
+                                </span>
+                                <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-md bg-amber-200 text-amber-900 border border-amber-300 uppercase tracking-wide">
+                                  Soggetta a Chiusura Automatica
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-amber-800 font-medium mt-0.5">
+                                Posizione aperta da <strong className="font-bold text-amber-950">{Math.floor(ageHours)}h {Math.floor(ageMinutes % 60)}m</strong> (oltre il limite massimo di 3h / 180 min) senza aver ancora raggiunto la soglia di profitto (+0.04).
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="bg-white/90 border border-amber-300 px-3 py-1.5 rounded-lg text-right shrink-0 font-mono shadow-2xs">
+                            <span className="text-[9px] text-amber-700 block uppercase font-bold tracking-wider">Tempo Attivo</span>
+                            <span className="font-extrabold text-amber-950 text-xs sm:text-sm">
+                              {Math.floor(ageHours)}h {Math.floor(ageMinutes % 60)}m <span className="text-[10px] text-amber-600 font-normal">/ 3h</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="border-t border-amber-200/90 pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px]">
+                          <div className="flex items-center gap-2 text-amber-900">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping shrink-0" />
+                            <span>
+                              <strong>Protocollo di Uscita:</strong> Nessuna chiusura in perdita. Verrà eseguita la <strong>chiusura automatica</strong> al primo recupero a <strong>+0.04</strong> (salvo sentiment &ge; 90% con stop immediato su calo di 1 centesimo).
+                            </span>
+                          </div>
+                          <div className="shrink-0 font-mono text-[11px] font-bold text-amber-900 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
+                            Soglia: +0.04 | Attuale: {unRealizedVal >= 0 ? '+' : ''}${unRealizedVal.toFixed(2)} ({unRealizedPct >= 0 ? '+' : ''}{unRealizedPct.toFixed(2)}%)
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 3. Trailing Stop Status Box: VERDE se Raggiunto, ROSSO se Non Raggiunto */}
                     <div className={`p-3 rounded-lg border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 text-xs ${

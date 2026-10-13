@@ -32,9 +32,9 @@ const DEFAULT_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 60,
-      stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.05
+      stagnationMinutes: 180,
+      stagnationMinutesHighSentiment: 180,
+      stagnationMaxPnlPct: 0.04
     }
   },
   {
@@ -597,11 +597,12 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
         </div>
 
         {/* Rule 3: Time Stagnation Close (Anti-StopLoss-Drain) */}
+        {/* Rule 3: Time Stagnation Close / Limite 3h Cumulative & Chiusura a +0.04 */}
         <div className={`p-4 rounded-xl border transition-all ${stagRule.enabled ? 'bg-emerald-50/50 border-emerald-200' : 'bg-slate-50 border-slate-200 opacity-75'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Clock className={`w-4 h-4 ${stagRule.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
-              <h3 className="text-xs font-bold text-slate-900">3. Chiusura per Stagnazione (Time-Stop)</h3>
+              <h3 className="text-xs font-bold text-slate-900">3. Limite 3h Cumulative dall'Apertura (Chiusura a +0.04)</h3>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -615,24 +616,26 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
           </div>
 
           <p className="text-[11px] text-slate-600 mb-3">
-            <strong>Protezione Guadagni:</strong> Se una posizione non si muove o resta in stasi per oltre il tempo limite, viene chiusa per liberare capitale invece di attendere lo Stop Loss.
+            <strong>Limite 3 Ore Cumulative:</strong> Se una posizione raggiunge le 3 ore (180 minuti cumulativi) dall'apertura, viene chiusa comunque al raggiungimento di <strong>+0.04</strong> (+0.04% / 4 centesimi) per liberare capitale e slot.
+            <br />
+            <strong>Eccezione Sentimento:</strong> Mantenuta solo se vi è certezza al <strong>&ge; 90%</strong> di rialzo, con <strong>chiusura immediata</strong> se ritraccia anche di 1 solo centesimo (-$0.01) dal picco massimo.
           </p>
 
           <div className="space-y-3 text-xs bg-white p-3 rounded-lg border border-slate-100">
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Stasi per Sentiment tra 0.20 e 0.29:</span>
-                <span className="font-mono text-emerald-700 font-bold">{stagRule.parameters.stagnationMinutes ?? 30} minuti</span>
+                <span>Limite Tempo Cumulativo dall'Apertura:</span>
+                <span className="font-mono text-emerald-700 font-bold">{stagRule.parameters.stagnationMinutes ?? 180} minuti ({((stagRule.parameters.stagnationMinutes ?? 180) / 60).toFixed(1)}h)</span>
               </div>
               <input
                 type="range"
-                min="10"
-                max="120"
-                step="5"
-                value={stagRule.parameters.stagnationMinutes ?? 30}
+                min="30"
+                max="360"
+                step="15"
+                value={stagRule.parameters.stagnationMinutes ?? 180}
                 onChange={(e) => updateRule('TIME_STAGNATION_CLOSE', r => ({
                   ...r,
-                  parameters: { ...r.parameters, stagnationMinutes: parseInt(e.target.value, 10) }
+                  parameters: { ...r.parameters, stagnationMinutes: parseInt(e.target.value, 10), stagnationMinutesHighSentiment: parseInt(e.target.value, 10) }
                 }))}
                 disabled={!stagRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
@@ -641,35 +644,15 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
 
             <div>
               <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>Stasi per Sentiment &gt; 0.30:</span>
-                <span className="font-mono text-emerald-700 font-bold">{stagRule.parameters.stagnationMinutesHighSentiment ?? 60} minuti</span>
+                <span>Soglia Chiusura Rapida P&L (Target +0.04):</span>
+                <span className="font-mono text-emerald-700 font-bold">+{stagRule.parameters.stagnationMaxPnlPct ?? 0.04}% / $0.04</span>
               </div>
               <input
                 type="range"
-                min="15"
-                max="180"
-                step="5"
-                value={stagRule.parameters.stagnationMinutesHighSentiment ?? 60}
-                onChange={(e) => updateRule('TIME_STAGNATION_CLOSE', r => ({
-                  ...r,
-                  parameters: { ...r.parameters, stagnationMinutesHighSentiment: parseInt(e.target.value, 10) }
-                }))}
-                disabled={!stagRule.enabled}
-                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-slate-700 font-medium mb-1">
-                <span>P&L Max per Considerare Stasi:</span>
-                <span className="font-mono text-emerald-700 font-bold">+{stagRule.parameters.stagnationMaxPnlPct ?? 0.10}%</span>
-              </div>
-              <input
-                type="range"
-                min="-0.20"
-                max="0.50"
-                step="0.05"
-                value={stagRule.parameters.stagnationMaxPnlPct ?? 0.10}
+                min="0.01"
+                max="0.20"
+                step="0.01"
+                value={stagRule.parameters.stagnationMaxPnlPct ?? 0.04}
                 onChange={(e) => updateRule('TIME_STAGNATION_CLOSE', r => ({
                   ...r,
                   parameters: { ...r.parameters, stagnationMaxPnlPct: parseFloat(e.target.value) }
@@ -677,6 +660,11 @@ export function SystemRiskRulesManager({ initialRules, onRulesUpdated, showToast
                 disabled={!stagRule.enabled}
                 className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
               />
+            </div>
+
+            <div className="p-2 bg-emerald-50 rounded border border-emerald-100 text-[10px] text-emerald-800 space-y-1">
+              <div>🎯 <strong>Uscita a +0.04:</strong> Chiude a +0.04 per non tenere il capitale immobilizzato oltre le 3 ore.</div>
+              <div>⚡ <strong>Filtro Sentimento &ge; 90%:</strong> Se il sentiment segnala certezza &ge; 90% di rialzo la corsa continua, ma se il prezzo scende anche solo di 1 centesimo (-$0.01) dal picco la posizione viene liquidata istantaneamente.</div>
             </div>
           </div>
         </div>

@@ -105,9 +105,9 @@ const DEFAULT_SYSTEM_RISK_RULES: RiskRuleConfig[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 60,
-      stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.05
+      stagnationMinutes: 180,
+      stagnationMinutesHighSentiment: 180,
+      stagnationMaxPnlPct: 0.04
     }
   },
   {
@@ -4065,10 +4065,21 @@ async function executeTradingCycleForMode(mode: 'paper' | 'live', force: boolean
         const ageMinutes = (Date.now() - entryTime) / (60 * 1000);
         const currentPlPct = avgEntryPrice > 0 ? ((currentPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0;
 
-        // Se la posizione è aperta da più di 1 ora ed è tornata in positivo anche solo al +0.05%: chiudi subito!
-        if (ageMinutes >= 60 && (currentPlPct >= 0.05 || profitAmt >= 0.01)) {
-          shouldClose = true;
-          closeReason = `[Uscita Rapida Post-Sofferenza >1h] Posizione su ${symbol} rimasta aperta per ${ageMinutes.toFixed(0)} min (>= 60 min). Raggiunto il profitto positivo di recupero (+${currentPlPct.toFixed(2)}% >= +0.05%). Chiusura immediata in profitto eseguita con successo.`;
+        // Limite 3h cumulative dall'apertura (180 min): chiusura comunque a +0.04 (+0.04% o +$0.04)
+        // A meno che il sentiment non indichi certezza al 90% di rialzo (con stop immediato se ritraccia di 1 centesimo)
+        const has90Certainty = sentimentScore !== undefined && sentimentScore >= 0.90;
+        const highestProfitPct = avgEntryPrice > 0 ? ((peakPrice - avgEntryPrice) / avgEntryPrice) * 100 : currentPlPct;
+        const dropFromPeak = peakPrice - currentPrice;
+        const dropFromPeakPct = highestProfitPct - currentPlPct;
+
+        if (ageMinutes >= 180 && (currentPlPct >= 0.04 || profitAmt >= 0.04)) {
+          if (!has90Certainty) {
+            shouldClose = true;
+            closeReason = `[Limite 3h Cumulative a +0.04] Posizione su ${symbol} rimasta aperta per ${ageMinutes.toFixed(0)} min (>= 3h cumulative). Raggiunto il target di chiusura (+${currentPlPct.toFixed(2)}% / +$${profitAmt.toFixed(2)} >= +0.04) con sentiment (${sentimentScore !== undefined ? sentimentScore.toFixed(2) : 'N/A'} < 0.90). Chiusura eseguita per liberare capitale e slot.`;
+          } else if (dropFromPeak >= 0.01 || dropFromPeakPct >= 0.01) {
+            shouldClose = true;
+            closeReason = `[Limite 3h - Stop Rintracciamento -1c] Posizione su ${symbol} mantenuta con certezza >= 90% (${(sentimentScore ?? 0).toFixed(2)}), ma ha ritracciato di $${dropFromPeak.toFixed(2)} (>= $0.01 dal massimo $${peakPrice.toFixed(2)}). Chiusura immediata di protezione.`;
+          }
         } else if (riskDecision && riskDecision.action === 'CLOSE') {
           shouldClose = true;
           closeReason = riskDecision.reason;
@@ -5030,9 +5041,9 @@ const DEFAULT_SERVER_RISK_RULES: any[] = [
     enabled: true,
     type: 'TIME_STAGNATION_CLOSE',
     parameters: {
-      stagnationMinutes: 60,
-      stagnationMinutesHighSentiment: 60,
-      stagnationMaxPnlPct: 0.05
+      stagnationMinutes: 180,
+      stagnationMinutesHighSentiment: 180,
+      stagnationMaxPnlPct: 0.04
     }
   },
   {
@@ -6616,6 +6627,26 @@ async function getStatusData() {
             const lockedProfitDollars = Math.max(0, (effectiveTrailingStopPrice - avgEntry) * posQty);
             const lockedProfitPct = avgEntry > 0 ? ((effectiveTrailingStopPrice - avgEntry) / avgEntry) * 100 : 0;
 
+            if (!positionEntryTimes[mode]) {
+              positionEntryTimes[mode] = {};
+            }
+            if (!positionEntryTimes[mode][sym]) {
+              positionEntryTimes[mode][sym] = Date.now();
+            }
+            const entryTimestamp = positionEntryTimes[mode][sym];
+            const ageMinutes = Math.max(0, (Date.now() - entryTimestamp) / (60 * 1000));
+            const ageHours = ageMinutes / 60;
+            const currentPlPct = avgEntry > 0 ? ((currP - avgEntry) / avgEntry) * 100 : 0;
+            const stagnationRule = botStatus.systemRiskRules?.find(r => r.type === 'TIME_STAGNATION_CLOSE');
+            const maxLimitMinutes = stagnationRule?.parameters?.stagnationMinutes ?? 180;
+            const profitThreshold = stagnationRule?.parameters?.stagnationMaxPnlPct ?? 0.04;
+            const reachedProfitThreshold = (currentPlPct >= profitThreshold || unrealizedPL >= profitThreshold);
+            const exceedsThreeHours = ageMinutes >= maxLimitMinutes;
+            const isSubjectToAutoClosure = exceedsThreeHours && !reachedProfitThreshold;
+            const autoClosureAlertMessage = isSubjectToAutoClosure
+              ? `Avviso: la posizione su ${sym} supera il limite di 3 ore cumulative (${Math.floor(ageHours)}h ${Math.floor(ageMinutes % 60)}m / ${maxLimitMinutes} min) senza aver raggiunto la soglia di profitto (+${profitThreshold.toFixed(2)}). È soggetta a chiusura automatica programmata appena recupera a +${profitThreshold.toFixed(2)} (salvo sentiment ≥90% con stop -1¢).`
+              : undefined;
+
             return {
               ...pos,
               activeStrategy,
@@ -6649,7 +6680,16 @@ async function getStatusData() {
               manualTrailingDistancePct: overrides?.manualTrailingDistancePct,
               isManualTrailingSet,
               enableTechnicalStop: overrides?.enableTechnicalStop ?? true,
-              enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true
+              enableCatastrophicStop: overrides?.enableCatastrophicStop ?? true,
+              // Campi Limite 3h Cumulative e Chiusura Automatica
+              entryTimestamp,
+              ageMinutes: parseFloat(ageMinutes.toFixed(1)),
+              ageHours: parseFloat(ageHours.toFixed(2)),
+              exceedsThreeHours,
+              profitThreshold,
+              reachedProfitThreshold,
+              isSubjectToAutoClosure,
+              autoClosureAlertMessage
             };
           }));
         } else {

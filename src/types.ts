@@ -7,9 +7,9 @@ export interface RiskRuleConfig {
     minSentimentThreshold?: number; // default 0.20 (ingresso rapido su primi rimbalzi)
     vixDropExemptionPct?: number;   // es. -2.0 per calo VIX > 2%
     eodWindowMinutes?: number;      // es. 30 minuti prima della chiusura
-    stagnationMinutes?: number;     // es. 30 minuti di stasi per sentiment 0.20 - 0.29
-    stagnationMinutesHighSentiment?: number; // es. 60 minuti di stasi per sentiment > 0.30
-    stagnationMaxPnlPct?: number;   // es. 0.10% (P&L massimo per considerare posizione stagnante)
+    stagnationMinutes?: number;     // default 180 minuti (3 ore cumulative dall'apertura della posizione)
+    stagnationMinutesHighSentiment?: number; // default 180 minuti di stasi per sentiment
+    stagnationMaxPnlPct?: number;   // default 0.04 (chiude comunque a +0.04 / 4 centesimi)
     // --- Regola Pre-Scansione 1m: Chiusura >= 3 centesimi / Tolleranza Zero -1c su certezza >= 90% ---
     preScanProfitThresholdDollars?: number; // default 0.03 (chiudi sopra i 3 centesimi)
     preScanConfidenceThreshold?: number;    // default 0.90 (certezza/confidenza 90% per eccezione)
@@ -152,9 +152,18 @@ export interface Position {
   distanceToStopPct?: number;
   manualTrailingStopPrice?: number;   // Prezzo Stop manuale impostato dall'utente
   manualTrailingDistancePct?: number; // Distanza % manuale impostata dall'utente (es. 0.25%)
-  isManualTrailingSet?: boolean;      // True se è attivo un override manuale
   enableTechnicalStop?: boolean; // Se true o undefined (default true), applica lo Stop Tecnico Dinamico 1.5x ATR
   enableCatastrophicStop?: boolean; // Se true o undefined (default true), applica il Circuit Breaker Catastrofico (-3%)
+  // Campi Limite 3h Cumulative e Chiusura Automatica
+  entryTimestamp?: number;           // Timestamp (ms) apertura posizione
+  entry_timestamp?: number;          // Alias timestamp (ms) apertura posizione
+  ageMinutes?: number;               // Minuti cumulativi dall'apertura
+  ageHours?: number;                 // Ore cumulative dall'apertura
+  exceedsThreeHours?: boolean;       // True se ageMinutes >= 180 (3 ore cumulative)
+  profitThreshold?: number;          // Soglia profitto di svincolo (+0.04)
+  reachedProfitThreshold?: boolean;  // True se PnL >= +0.04
+  isSubjectToAutoClosure?: boolean;  // True se ha superato le 3 ore senza raggiungere la soglia di profitto (+0.04)
+  autoClosureAlertMessage?: string;  // Messaggio descrittivo per l'avviso visivo
 }
 
 export interface AccountData {

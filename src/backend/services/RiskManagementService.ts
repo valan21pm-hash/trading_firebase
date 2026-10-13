@@ -73,13 +73,31 @@ export class RiskManagementService {
       };
     }
 
-    // --- 0.1 REGOLA DI RECUPERO POST-1H (> 60 MINUTI): USCITA RAPIDA AL MINIMO PROFITTO (+0.05%) ---
-    // Se la posizione è rimasta aperta per oltre 1 ora ed è tornata in positivo anche solo al +0.05%: chiudi subito!
-    if (ageMinutes !== null && ageMinutes >= 60 && (currentProfitPct >= 0.05 || unrealizedProfit >= 0.01)) {
-      return {
-        action: 'CLOSE',
-        reason: `[Uscita Rapida Post-Sofferenza >1h] Posizione ${asset} rimasta aperta per ${ageMinutes.toFixed(0)} min (>= 60 min). Raggiunto il profitto positivo di recupero (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% >= +0.05%). Chiusura immediata in profitto eseguita con successo per liberare capitale.`
-      };
+    // --- 0.1 REGOLA LIMITE 3H CUMULATIVE DALL'APERTURA: CHIUSURA COMUNQUE A +0.04 (SALVO CERTEZZA SENTIMENT >= 90% CON STOP -1 CENTESIMO) ---
+    // Se la posizione ha accumulato 3 ore (>= 180 min) dall'apertura ed è a +0.04 (+0.04% o unrealizedProfit >= 0.04):
+    // Deve chiudere comunque a +0.04 per liberare capitale e slot.
+    // A meno che il sentiment non indichi certezza al 90% di aumento (>= 0.90).
+    // Ma se scende anche solo di 1 centesimo ($0.01 dal picco) chiudila subito!
+    const stagHoldingMins = 180; // 3h cumulative dall'apertura
+    if (ageMinutes !== null && ageMinutes >= stagHoldingMins && (currentProfitPct >= 0.04 || unrealizedProfit >= 0.04)) {
+      const has90PctCertainty = (sentimentScore !== undefined && sentimentScore >= 0.90);
+      if (!has90PctCertainty) {
+        return {
+          action: 'CLOSE',
+          reason: `[Limite 3h Cumulative a +0.04] Posizione ${asset} aperta da ${ageMinutes.toFixed(0)} min (>= 3h cumulative). Raggiunto il target di chiusura (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% / +$${unrealizedProfit.toFixed(2)} >= +0.04) con sentiment (${sentimentScore !== undefined ? sentimentScore.toFixed(2) : 'N/A'} < 0.90). Chiusura immediata per liberare capitale e slot.`
+        };
+      } else {
+        // Eccezione: certezza al 90% che ci sarà un aumento.
+        // Ma se scende anche solo di 1 centesimo ($0.01 dal picco o -0.01% dal massimo), chiudila subito!
+        const dropFromPeakDollars = peakPrice - currentPrice;
+        const dropFromPeakPct = highestProfitPct - currentProfitPct;
+        if (dropFromPeakDollars >= 0.01 || dropFromPeakPct >= 0.01) {
+          return {
+            action: 'CLOSE',
+            reason: `[Limite 3h - Stop Rintracciamento -1c] Posizione ${asset} aperta da ${ageMinutes.toFixed(0)} min con certezza sentiment >= 90% (${(sentimentScore ?? 0).toFixed(2)}), ma ha ritracciato di $${dropFromPeakDollars.toFixed(2)} (>= $0.01 dal picco $${peakPrice.toFixed(2)}). Chiusura immediata di salvaguardia.`
+          };
+        }
+      }
     }
 
     // --- 0.15 REGOLA PRE-SCANSIONE (1 MINUTO PRIMA DEI 15M): CHIUSURA PROFITTO >= 3 CENTESIMI (SALVO CERTEZZA >= 90% CON STOP -1 CENTESIMO) ---
@@ -301,27 +319,34 @@ export class RiskManagementService {
           }
         }
 
-        // Regola: TIME_STAGNATION_CLOSE (Chiusura per Stagnazione / Time-Stop / Uscita Rapida a 5 Centesimi dopo 60 min)
+        // Regola: TIME_STAGNATION_CLOSE (Chiusura Limite 3h Cumulative dall'Apertura a +0.04)
         if (rule.type === 'TIME_STAGNATION_CLOSE' && ageMinutes !== null) {
-          const baseStagMins = Math.max(rule.parameters.stagnationMinutes ?? 30, isTimeHoldingEnabled ? minHoldingMinutes : 30);
-          const highStagMins = Math.max(rule.parameters.stagnationMinutesHighSentiment ?? 60, isTimeHoldingEnabled ? minHoldingMinutes : 60);
-          const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.05;
+          const effectiveStagMins = rule.parameters.stagnationMinutes ?? 180;
+          const stagMaxPnl = rule.parameters.stagnationMaxPnlPct ?? 0.04;
+          const confidenceThresh = 0.90;
+          const retraceStopDollars = 0.01;
 
-          let effectiveStagMins = baseStagMins;
-          let sentimentDetail = '';
+          const has90Certainty = (sentimentScore !== undefined && sentimentScore >= confidenceThresh);
 
-          if (sentimentScore !== undefined && sentimentScore > 0.30) {
-            effectiveStagMins = highStagMins;
-            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} > 0.30 -> limite ${effectiveStagMins}m)`;
-          } else if (sentimentScore !== undefined) {
-            sentimentDetail = ` (Sentiment ${sentimentScore.toFixed(2)} -> limite ${effectiveStagMins}m)`;
-          }
-
-          if (ageMinutes >= effectiveStagMins && currentProfitPct <= stagMaxPnl) {
-            return {
-              action: 'CLOSE',
-              reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min limite)${sentimentDetail} rimasta in stasi/negativo e ora con profitto/P&L debole (${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +${stagMaxPnl}% / ~5 centesimi). Chiusura immediata per liberare capitale e slot per un asset più promettente.`
-            };
+          if (ageMinutes >= effectiveStagMins) {
+            if (!has90Certainty) {
+              if (currentProfitPct >= stagMaxPnl || unrealizedProfit >= 0.04 || currentProfitPct <= stagMaxPnl) {
+                return {
+                  action: 'CLOSE',
+                  reason: `[Regola Sistema: TIME_STAGNATION_CLOSE] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min (>= ${effectiveStagMins} min / 3h cumulative). Soglia di chiusura a +${stagMaxPnl}% / +$0.04 raggiunta con sentiment (${sentimentScore !== undefined ? sentimentScore.toFixed(2) : 'N/A'} < ${confidenceThresh}). Chiusura immediata per liberare capitale e slot per un asset più promettente.`
+                };
+              }
+            } else {
+              // Eccezione: Certezza al 90% di aumento. Se scende anche solo di 1 centesimo ($0.01) chiudila subito!
+              const dropFromPeakDollars = peakPrice - currentPrice;
+              const dropFromPeakPct = highestProfitPct - currentProfitPct;
+              if (dropFromPeakDollars >= retraceStopDollars || dropFromPeakPct >= 0.01) {
+                return {
+                  action: 'CLOSE',
+                  reason: `[Regola Sistema: TIME_STAGNATION_CLOSE - Stop Rintracciamento -1c] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min con certezza sentiment >= 90% (${sentimentScore.toFixed(2)}), ma ha ritracciato di $${dropFromPeakDollars.toFixed(2)} (>= $${retraceStopDollars.toFixed(2)}) dal picco $${peakPrice.toFixed(2)}. Chiusura immediata di protezione.`
+                };
+              }
+            }
           }
         }
       }
@@ -345,13 +370,24 @@ export class RiskManagementService {
         }
       }
 
-      const defaultStagMins = (sentimentScore !== undefined && sentimentScore > 0.30) ? 60 : 30;
-      if (ageMinutes !== null && ageMinutes >= defaultStagMins && currentProfitPct <= 0.10) {
-        const sentDetail = sentimentScore !== undefined ? ` (Sentiment: ${sentimentScore.toFixed(2)} -> limite ${defaultStagMins}m)` : '';
-        return {
-          action: 'CLOSE',
-          reason: `[Chiusura Stagnazione Temporale] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min senza variazioni positive rilevanti (P&L: ${currentProfitPct >= 0 ? '+' : ''}${currentProfitPct.toFixed(2)}% <= +0.10%${sentDetail}). Chiusura automatica per evitare di rimanere bloccati.`
-        };
+      const defaultStagMins = 180;
+      if (ageMinutes !== null && ageMinutes >= defaultStagMins && (currentProfitPct >= 0.04 || unrealizedProfit >= 0.04)) {
+        const sentDetail = sentimentScore !== undefined ? ` (Sentiment: ${sentimentScore.toFixed(2)})` : '';
+        const has90Certainty = sentimentScore !== undefined && sentimentScore >= 0.90;
+        if (!has90Certainty) {
+          return {
+            action: 'CLOSE',
+            reason: `[Chiusura Limite 3h Cumulative a +0.04] Posizione ${asset} aperta da ${ageMinutes.toFixed(1)} min (>= 180 min / 3h cumulative) con target +0.04 raggiunto${sentDetail}. Chiusura per liberare capitale.`
+          };
+        } else {
+          const dropFromPeakDollars = peakPrice - currentPrice;
+          if (dropFromPeakDollars >= 0.01) {
+            return {
+              action: 'CLOSE',
+              reason: `[Limite 3h - Stop Rintracciamento -1c] Posizione ${asset} ha ritracciato di $${dropFromPeakDollars.toFixed(2)} (>= $0.01 dal massimo $${peakPrice.toFixed(2)}). Chiusura immediata.`
+            };
+          }
+        }
       }
     }
 

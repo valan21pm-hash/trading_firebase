@@ -1312,10 +1312,39 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                           const lockedAmt = pos.lockedProfitDollars !== undefined ? pos.lockedProfitDollars : 0.04;
                           const distanceStop = pos.distanceToStopDollars !== undefined ? pos.distanceToStopDollars : Math.max(0, currentPrice - effectiveStop);
 
+                          // Calcolo Limite 3h Cumulative e Chiusura Automatica
+                          const entryTimestamp = pos.entryTimestamp || pos.entry_timestamp;
+                          const ageMinutes = pos.ageMinutes !== undefined 
+                            ? pos.ageMinutes 
+                            : (entryTimestamp ? Math.max(0, (Date.now() - entryTimestamp) / (60 * 1000)) : 0);
+                          const ageHours = ageMinutes / 60;
+                          const reachedProfit = pos.reachedProfitThreshold !== undefined 
+                            ? pos.reachedProfitThreshold 
+                            : (unrealizedPL >= 0.04 || unrealizedPLPC >= 0.04);
+                          const exceeds3h = pos.exceedsThreeHours !== undefined ? pos.exceedsThreeHours : (ageMinutes >= 180);
+                          const isSubjectToAutoClosure = pos.isSubjectToAutoClosure !== undefined 
+                            ? pos.isSubjectToAutoClosure 
+                            : (exceeds3h && !reachedProfit);
+
                           return (
-                            <tr key={pos.symbol} className="bg-[#090D16] hover:bg-[#0E1526] transition">
+                            <tr key={pos.symbol} className={`transition ${
+                              isSubjectToAutoClosure 
+                                ? 'bg-amber-950/20 hover:bg-amber-950/30 border-l-2 border-l-amber-500' 
+                                : 'bg-[#090D16] hover:bg-[#0E1526]'
+                            }`}>
                               <td className="py-3 px-3">
-                                <span className="font-bold text-white text-xs">{pos.symbol}</span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-white text-xs">{pos.symbol}</span>
+                                  {isSubjectToAutoClosure && (
+                                    <span 
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-amber-950/80 text-amber-300 border border-amber-600/70 animate-pulse" 
+                                      title={`Limite di 3 ore superato (${Math.floor(ageHours)}h ${Math.floor(ageMinutes % 60)}m). Soggetta a liquidazione automatica appena raggiunge +0.04.`}
+                                    >
+                                      <Clock className="w-2.5 h-2.5 text-amber-400" />
+                                      &gt;3H AUTO-CLOSE
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="block text-[9px] text-slate-500 uppercase">{pos.exchange || 'NASDAQ/NYSE'}</span>
                               </td>
                               <td className="py-3 px-3 font-semibold text-slate-200">
@@ -1495,13 +1524,42 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                       const lockedAmt = pos.lockedProfitDollars !== undefined ? pos.lockedProfitDollars : 0.04;
                       const distanceStop = pos.distanceToStopDollars !== undefined ? pos.distanceToStopDollars : Math.max(0, currentPrice - effectiveStop);
 
+                      // Calcolo Limite 3h Cumulative e Chiusura Automatica
+                      const entryTimestamp = pos.entryTimestamp || pos.entry_timestamp;
+                      const ageMinutes = pos.ageMinutes !== undefined 
+                        ? pos.ageMinutes 
+                        : (entryTimestamp ? Math.max(0, (Date.now() - entryTimestamp) / (60 * 1000)) : 0);
+                      const ageHours = ageMinutes / 60;
+                      const reachedProfit = pos.reachedProfitThreshold !== undefined 
+                        ? pos.reachedProfitThreshold 
+                        : (unrealizedPL >= 0.04 || unrealizedPLPC >= 0.04);
+                      const exceeds3h = pos.exceedsThreeHours !== undefined ? pos.exceedsThreeHours : (ageMinutes >= 180);
+                      const isSubjectToAutoClosure = pos.isSubjectToAutoClosure !== undefined 
+                        ? pos.isSubjectToAutoClosure 
+                        : (exceeds3h && !reachedProfit);
+
                       return (
-                        <div key={pos.symbol} className="bg-[#090D16] border border-slate-800 rounded-xl p-3.5 space-y-3">
+                        <div key={pos.symbol} className={`border rounded-xl p-3.5 space-y-3 transition-colors ${
+                          isSubjectToAutoClosure 
+                            ? 'bg-linear-to-b from-amber-950/30 to-[#090D16] border-amber-600/70 ring-1 ring-amber-500/40' 
+                            : 'bg-[#090D16] border-slate-800'
+                        }`}>
                           {/* Header: Symbol & P&L Totale */}
                           <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
                             <div>
-                              <span className="font-bold text-sm text-white">{pos.symbol}</span>
-                              <span className="text-[9px] text-slate-500 ml-2 font-mono">{pos.exchange || 'NASDAQ'}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-sm text-white">{pos.symbol}</span>
+                                {isSubjectToAutoClosure && (
+                                  <span 
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-amber-950/80 text-amber-300 border border-amber-600/70 animate-pulse" 
+                                    title={`Limite di 3 ore superato (${Math.floor(ageHours)}h ${Math.floor(ageMinutes % 60)}m). Soggetta a liquidazione automatica appena recupera +0.04.`}
+                                  >
+                                    <Clock className="w-2.5 h-2.5 text-amber-400" />
+                                    &gt;3H AUTO-CLOSE
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[9px] text-slate-500 font-mono">{pos.exchange || 'NASDAQ'}</span>
                             </div>
                             <div className="text-right">
                               <span className={`text-xs font-bold px-2 py-0.5 rounded ${unrealizedPL >= 0 ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-rose-950/80 text-rose-400 border border-rose-800/50'}`}>
@@ -1529,6 +1587,22 @@ export function ProTradingTerminal({ onClose, botStatus }: ProTradingTerminalPro
                               <span className="text-white font-bold">${currentPrice.toFixed(2)}</span>
                             </div>
                           </div>
+
+                          {/* ALLERTA VISIVA LIMITE 3H SUPERATO SENZA SOGLIA DI PROFITTO */}
+                          {isSubjectToAutoClosure && (
+                            <div className="p-2.5 rounded-lg border border-amber-500/50 bg-amber-950/40 text-amber-200 flex flex-col gap-1.5 shadow-xs">
+                              <div className="flex items-center justify-between gap-1 text-xs font-bold text-amber-300">
+                                <span className="flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
+                                  LIMITE 3H SUPERATO (AUTO-CLOSE)
+                                </span>
+                                <span className="font-mono text-[10px] text-amber-400 font-extrabold">{Math.floor(ageHours)}h {Math.floor(ageMinutes % 60)}m</span>
+                              </div>
+                              <p className="text-[10px] text-amber-200/90 leading-tight">
+                                Posizione aperta da oltre 3 ore sotto la soglia di profitto (+0.04). Soggetta a liquidazione automatica immediata non appena recupera a +0.04.
+                              </p>
+                            </div>
+                          )}
 
                           {/* Trailing Stop Activation Status Card */}
                           <div className={`p-2.5 rounded-lg border text-xs font-mono flex flex-col gap-1.5 ${
